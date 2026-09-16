@@ -1,22 +1,25 @@
-<svg width="520" height="360" viewBox="0 0 520 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="FermionWallet logo: a fermion juggling a quantum like a hot potato">
+<svg width="520" height="360" viewBox="0 0 520 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="FermionWallet logo: a fermion holding a quantum in cupped hands">
   <defs>
-    <radialGradient id="bodyGrad" cx="40%" cy="35%" r="75%">
-      <stop offset="0%" stop-color="#7f9cf5"/>
-      <stop offset="55%" stop-color="#4c51bf"/>
-      <stop offset="100%" stop-color="#1a1f4b"/>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0e1a2f"/>
+      <stop offset="100%" stop-color="#0a1220"/>
+    </linearGradient>
+    <radialGradient id="bodyGrad" cx="42%" cy="36%" r="72%">
+      <stop offset="0%" stop-color="#3f6ea5"/>
+      <stop offset="60%" stop-color="#1f4571"/>
+      <stop offset="100%" stop-color="#122a47"/>
     </radialGradient>
     <radialGradient id="quantumGrad" cx="50%" cy="45%" r="60%">
-      <stop offset="0%" stop-color="#fff7ae"/>
-      <stop offset="35%" stop-color="#ffb347"/>
-      <stop offset="75%" stop-color="#68f0d0"/>
-      <stop offset="100%" stop-color="#0bc5ea" stop-opacity="0.15"/>
+      <stop offset="0%" stop-color="#e8fbf7"/>
+      <stop offset="45%" stop-color="#57d6c0"/>
+      <stop offset="100%" stop-color="#2a9d8f" stop-opacity="0.12"/>
     </radialGradient>
     <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#68f0d0"/>
-      <stop offset="100%" stop-color="#7f9cf5"/>
+      <stop offset="0%" stop-color="#57d6c0"/>
+      <stop offset="100%" stop-color="#3f6ea5"/>
     </linearGradient>
-    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
-      <feGaussianBlur stdDeviation="6" result="blur"/>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
       <feMerge>
         <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
@@ -25,102 +28,70 @@
   </defs>
 
   <!-- background -->
-  <rect width="520" height="360" rx="24" fill="#0b1020"/>
+  <rect width="520" height="360" rx="16" fill="url(#bgGrad)"/>
+  <!-- thin corporate keyline -->
+  <rect x="10" y="10" width="500" height="340" rx="12" fill="none" stroke="#2c4a6e" stroke-width="1" opacity="0.6"/>
 
-  <!-- faint starfield -->
-  <g fill="#ffffff" opacity="0.35">
-    <circle cx="60" cy="50" r="1.5"/>
-    <circle cx="470" cy="70" r="1.2"/>
-    <circle cx="420" cy="300" r="1.4"/>
-    <circle cx="90" cy="300" r="1.1"/>
-    <circle cx="190" cy="30" r="1.3"/>
-    <circle cx="500" cy="180" r="1.0"/>
-    <circle cx="30" cy="180" r="1.0"/>
-  </g>
-
-  <!-- orbital rings around the fermion (spin-1/2 vibes) -->
-  <g fill="none" stroke="url(#ringGrad)" stroke-width="3" opacity="0.75">
-    <ellipse cx="255" cy="195" rx="150" ry="55" transform="rotate(-18 255 195)"/>
-    <ellipse cx="255" cy="195" rx="150" ry="55" transform="rotate(38 255 195)"/>
+  <!-- orbital rings: precise, engineering-drawing style -->
+  <g fill="none" stroke="url(#ringGrad)" stroke-width="2" opacity="0.55">
+    <ellipse cx="255" cy="180" rx="148" ry="52" transform="rotate(-16 255 180)"/>
+    <ellipse cx="255" cy="180" rx="148" ry="52" transform="rotate(36 255 180)"/>
   </g>
   <!-- electrons on the rings -->
-  <circle cx="118" cy="233" r="6" fill="#68f0d0" filter="url(#glow)"/>
-  <circle cx="370" cy="103" r="6" fill="#7f9cf5" filter="url(#glow)"/>
+  <circle cx="122" cy="216" r="4.5" fill="#57d6c0" filter="url(#softGlow)"/>
+  <circle cx="366" cy="96" r="4.5" fill="#3f6ea5" filter="url(#softGlow)"/>
 
   <!-- fermion body -->
-  <circle cx="255" cy="195" r="78" fill="url(#bodyGrad)"/>
-  <!-- subtle highlight -->
-  <ellipse cx="230" cy="165" rx="30" ry="18" fill="#ffffff" opacity="0.18"/>
+  <circle cx="255" cy="180" r="74" fill="url(#bodyGrad)"/>
+  <ellipse cx="232" cy="152" rx="27" ry="15" fill="#ffffff" opacity="0.10"/>
 
-  <!-- startled hot-potato face -->
+  <!-- composed, confident face -->
   <g>
-    <!-- wide eyes -->
-    <circle cx="230" cy="182" r="10" fill="#ffffff"/>
-    <circle cx="273" cy="182" r="10" fill="#ffffff"/>
-    <circle cx="232" cy="184" r="5" fill="#0b1020"/>
-    <circle cx="275" cy="184" r="5" fill="#0b1020"/>
-    <!-- raised eyebrows -->
-    <path d="M218 165 Q230 158 242 164" stroke="#0b1020" stroke-width="4" fill="none" stroke-linecap="round"/>
-    <path d="M261 164 Q273 158 285 165" stroke="#0b1020" stroke-width="4" fill="none" stroke-linecap="round"/>
-    <!-- yikes mouth -->
-    <ellipse cx="252" cy="216" rx="10" ry="13" fill="#0b1020"/>
-    <!-- sweat drops -->
-    <path d="M186 150 q-6 10 0 14 q7 -4 0 -14" fill="#68f0d0"/>
-    <path d="M318 158 q-6 10 0 14 q7 -4 0 -14" fill="#68f0d0"/>
+    <!-- calm eyes -->
+    <circle cx="232" cy="168" r="7" fill="#0a1220"/>
+    <circle cx="274" cy="168" r="7" fill="#0a1220"/>
+    <circle cx="234.5" cy="165.5" r="2.2" fill="#ffffff"/>
+    <circle cx="276.5" cy="165.5" r="2.2" fill="#ffffff"/>
+    <!-- confident smile (as in the original mark) -->
+    <path d="M230 196 Q253 214 278 194" stroke="#0a1220" stroke-width="5" fill="none" stroke-linecap="round"/>
   </g>
 
-  <!-- both arms out front, hands cupped under the hot quantum -->
-  <path d="M198 240 Q160 265 152 235 Q148 210 175 196" stroke="#4c51bf" stroke-width="14" fill="none" stroke-linecap="round"/>
-  <path d="M312 240 Q350 265 358 235 Q362 210 335 196" stroke="#4c51bf" stroke-width="14" fill="none" stroke-linecap="round"/>
-  <!-- cupped hands, fingers spread barely touching the orb -->
-  <g fill="#4c51bf">
-    <circle cx="178" cy="192" r="9"/>
-    <circle cx="190" cy="182" r="7"/>
-    <circle cx="332" cy="192" r="9"/>
-    <circle cx="320" cy="182" r="7"/>
+  <!-- both arms forward, hands cupped, presenting the quantum -->
+  <path d="M202 224 Q170 244 166 216 Q164 196 186 184" stroke="#1f4571" stroke-width="13" fill="none" stroke-linecap="round"/>
+  <path d="M308 224 Q340 244 344 216 Q346 196 324 184" stroke="#1f4571" stroke-width="13" fill="none" stroke-linecap="round"/>
+  <!-- cupped hands -->
+  <g fill="#1f4571">
+    <circle cx="189" cy="180" r="8"/>
+    <circle cx="200" cy="171" r="6"/>
+    <circle cx="321" cy="180" r="8"/>
+    <circle cx="310" cy="171" r="6"/>
   </g>
 
-  <!-- the quantum: hot glowing wave-packet orb, tossed just above the hands -->
-  <g filter="url(#glow)">
-    <circle cx="255" cy="120" r="36" fill="url(#quantumGrad)"/>
+  <!-- the quantum: precise glowing orb held just above the cupped hands -->
+  <g filter="url(#softGlow)">
+    <circle cx="255" cy="112" r="33" fill="url(#quantumGrad)"/>
     <!-- psi wave inside -->
-    <path d="M229 120 q6 -16 13 0 t13 0 t13 0 t13 0"
-          stroke="#0b1020" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-    <!-- superposition sparkles -->
-    <circle cx="226" cy="93" r="2.5" fill="#fefcbf"/>
-    <circle cx="288" cy="98" r="2" fill="#68f0d0"/>
-    <circle cx="284" cy="145" r="2.2" fill="#7f9cf5"/>
+    <path d="M231 112 q6 -15 12 0 t12 0 t12 0 t12 0"
+          stroke="#0a1220" stroke-width="3" fill="none" stroke-linecap="round"/>
   </g>
+  <!-- fine containment ring around the quantum: custody, not chaos -->
+  <circle cx="255" cy="112" r="42" fill="none" stroke="#57d6c0" stroke-width="1.5" stroke-dasharray="4 6" opacity="0.7"/>
 
-  <!-- heat wisps rising off the quantum -->
-  <g stroke="#ffb347" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.85">
-    <path d="M238 74 q-5 -9 2 -16 q6 -6 2 -14"/>
-    <path d="M256 70 q-5 -9 2 -16 q6 -6 2 -14"/>
-    <path d="M274 74 q-5 -9 2 -16 q6 -6 2 -14"/>
-  </g>
+  <!-- h-bar mark, understated -->
+  <text x="306" y="76" font-family="Georgia, serif" font-style="italic" font-size="18" fill="#57d6c0" opacity="0.9">&#8463;</text>
 
-  <!-- juggle motion lines: it just bounced between hands -->
-  <g stroke="#7f9cf5" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.7">
-    <path d="M198 154 q10 -22 30 -32"/>
-    <path d="M312 154 q-10 -22 -30 -32"/>
-  </g>
-  <g stroke="#68f0d0" stroke-width="2.5" stroke-linecap="round" opacity="0.8">
-    <line x1="207" y1="128" x2="217" y2="118"/>
-    <line x1="303" y1="128" x2="293" y2="118"/>
-  </g>
+  <!-- feet -->
+  <ellipse cx="226" cy="260" rx="15" ry="7" fill="#122a47"/>
+  <ellipse cx="284" cy="260" rx="15" ry="7" fill="#122a47"/>
 
-  <!-- "Ouch, hot!" h-bar tag -->
-  <text x="308" y="66" font-family="Georgia, serif" font-style="italic" font-size="22" fill="#ffb347">&#8463;</text>
-
-  <!-- feet, braced apart to keep juggling -->
-  <ellipse cx="222" cy="278" rx="17" ry="8" fill="#1a1f4b"/>
-  <ellipse cx="288" cy="278" rx="17" ry="8" fill="#1a1f4b"/>
+  <!-- baseline rule -->
+  <line x1="80" y1="288" x2="440" y2="288" stroke="#2c4a6e" stroke-width="1" opacity="0.7"/>
 
   <!-- wordmark -->
-  <text x="260" y="330" text-anchor="middle" font-family="Verdana, Geneva, sans-serif" font-size="30" font-weight="bold" fill="#ffffff" letter-spacing="1">
-    Fermion<tspan fill="#68f0d0">Wallet</tspan>
+  <text x="260" y="322" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="30" font-weight="bold" fill="#ffffff" letter-spacing="2">
+    FERMION<tspan fill="#57d6c0">WALLET</tspan>
   </text>
-  <text x="260" y="350" text-anchor="middle" font-family="Verdana, Geneva, sans-serif" font-size="12" fill="#7f9cf5" opacity="0.9">
-    handle the quantum before it handles you
+  <text x="260" y="342" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#8fa9c4" letter-spacing="3">
+    QUANTUM-READY INSTITUTIONAL CUSTODY
   </text>
 </svg>
