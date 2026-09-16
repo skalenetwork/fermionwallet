@@ -1,7 +1,7 @@
 # FermionWallet
 
 <p align="center">
-  <img src="./assets/fermionwallet-logo.svg" alt="FermionWallet logo — a fermion holding a quantum" width="420"/>
+  <img src="./assets/fermionwallet-logo.svg?v=2" alt="FermionWallet logo — a fermion holding a quantum" width="420"/>
 </p>
 
 **The quantum-ready second authorization layer for institutional digital-asset custody.**
