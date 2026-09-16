@@ -1,5 +1,9 @@
 # FermionWallet
 
+<p align="center">
+  <img src="./assets/fermionwallet-logo.svg" alt="FermionWallet logo — a fermion holding a quantum" width="420"/>
+</p>
+
 **The quantum-ready second authorization layer for institutional digital-asset custody.**
 
 Banks, qualified custodians, and enterprise treasuries already run the gold-standard stack: Gnosis Safe, policy engines, hardware keys, and regulated operations. FermionWallet does not replace that stack. It **hardens it** — adding a cryptographically independent second gate that sits in the execution path of every high-value transfer.
@@ -7,6 +11,20 @@ Banks, qualified custodians, and enterprise treasuries already run the gold-stan
 If a signer is compromised, a policy is misconfigured, or classical signatures eventually fall to quantum computers, the transfer still does not move. Not until a separate, domain-bound, post-quantum authorization says yes.
 
 That is the product: **keep the wallets you already trust. Make the next decade of cryptographic risk irrelevant.**
+
+## About the author
+
+**Stan (Konstantin) Kladko** — the rare builder who has worked on both sides of the quantum threat: the physics that creates it and the cryptography that must survive it.
+
+- **Quantum physicist by training** — Ph.D. from the Max Planck Institute, M.S. from Kharkov University; Otto Hahn Research Fellow at Stanford University, where he worked with Nobel laureate Robert B. Laughlin on strongly correlated quantum systems; Director's Fellow in the Theoretical Division at Los Alamos National Laboratory, conducting national-security research in quantum materials.
+- **Production cryptographer by trade** — Core Cryptography Lead at Ingrian Networks (enterprise data-privacy infrastructure later absorbed into SafeNet/Thales HSM lineage) and core computer-science team member at Sun Microsystems.
+- **Ran the lab that certifies the world's crypto** — Director of Aspect Labs / BKP Security, a Silicon Valley cryptographic-module testing laboratory operating under NIST's Cryptographic Module Validation Program (CMVP), delivering FIPS 140-2 validations, Common Criteria evaluations, and FISMA assessments for government-grade cryptography. His lab work included side-channel security — presenting SPA/DPA (power-analysis) testing methodology to the NIST community. He hasn't just built secure cryptography; he has been the examiner that governments trust to certify it.
+- **Proven at blockchain scale** — Co-founder and CTO of SKALE, an Ethereum-aligned blockchain network securing real value in production with BLS threshold cryptography his team took from paper to mainnet.
+- **Serial infrastructure founder** — previously co-founded Galactic Exchange (big-data container clusters) and Cloudessa (cloud network-access security).
+
+Few people on earth have run quantum-materials research at a national lab, directed a NIST-accredited cryptographic validation laboratory, shipped enterprise-grade cryptography, and operated a live blockchain network. That intersection is exactly what post-quantum custody requires — and it is why institutions evaluating their PQ migration path start the conversation with Stan.
+
+FermionWallet is his answer to the question every custody board is now asking: *what protects the vault the day classical signatures stop being enough?*
 
 ---
 
@@ -162,22 +180,6 @@ npm test
 If you already custody on Safe, FermionWallet is the smallest possible change with the largest possible security delta: one Guard, one second key domain, one on-chain veto.
 
 If you are allocating to the infrastructure that will still be standing when classical signatures are a footnote, this is the layer to underwrite.
-
----
-
-## About the author
-
-**Stan (Konstantin) Kladko** — the rare builder who has worked on both sides of the quantum threat: the physics that creates it and the cryptography that must survive it.
-
-- **Quantum physicist by training** — Ph.D. from the Max Planck Institute, M.S. from Kharkov University; Otto Hahn Research Fellow at Stanford University, where he worked with Nobel laureate Robert B. Laughlin on strongly correlated quantum systems; Director's Fellow in the Theoretical Division at Los Alamos National Laboratory, conducting national-security research in quantum materials.
-- **Production cryptographer by trade** — Core Cryptography Lead at Ingrian Networks (enterprise data-privacy infrastructure later absorbed into SafeNet/Thales HSM lineage) and core computer-science team member at Sun Microsystems.
-- **Ran the lab that certifies the world's crypto** — Director of Aspect Labs / BKP Security, a Silicon Valley cryptographic-module testing laboratory operating under NIST's Cryptographic Module Validation Program (CMVP), delivering FIPS 140-2 validations, Common Criteria evaluations, and FISMA assessments for government-grade cryptography. His lab work included side-channel security — presenting SPA/DPA (power-analysis) testing methodology to the NIST community. He hasn't just built secure cryptography; he has been the examiner that governments trust to certify it.
-- **Proven at blockchain scale** — Co-founder and CTO of SKALE, an Ethereum-aligned blockchain network securing real value in production with BLS threshold cryptography his team took from paper to mainnet.
-- **Serial infrastructure founder** — previously co-founded Galactic Exchange (big-data container clusters) and Cloudessa (cloud network-access security).
-
-Few people on earth have run quantum-materials research at a national lab, directed a NIST-accredited cryptographic validation laboratory, shipped enterprise-grade cryptography, and operated a live blockchain network. That intersection is exactly what post-quantum custody requires — and it is why institutions evaluating their PQ migration path start the conversation with Stan.
-
-FermionWallet is his answer to the question every custody board is now asking: *what protects the vault the day classical signatures stop being enough?*
 
 ---
 
