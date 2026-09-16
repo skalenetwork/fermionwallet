@@ -1,0 +1,9 @@
+{
+  "name": "fermionwallet",
+  "version": "1.0.0",
+  "description": "Quantum-protected ERC-20 compatible wallet prototype",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
