@@ -7,6 +7,8 @@
 - [FermionWallet Add-on Service](./fermionwallet-add-on-service.md)
 - [Quantum Key Registry](./quantum-key-registry.md)
 - [Pre-approval Engine](./pre-approval-engine.md)
+- [Ledger XMSS App](./ledger-xmss-app.md)
+- [UI Help (with screenshots)](./ui-help.md)
 - [On-chain Enforcement Layer](./on-chain-enforcement-layer.md)
 
 ## Architecture diagram
@@ -48,7 +50,7 @@
 
 ## 1. Product summary
 
-FermionWallet is a security add-on for a standard Gnosis Safe wallet. It adds a second authorization step for high-value token transfers by validating a JavaScript-generated quantum key before the transfer is executed.
+FermionWallet is a security add-on for a standard Gnosis Safe wallet. It adds a second authorization step for high-value token transfers by validating an XMSS quantum signature — from a hardware-generated key held by the Quantum Administrator — before the transfer is executed.
 
 The MVP is intentionally narrow:
 - it plugs into an existing Gnosis Safe using the standard Safe Guard pattern,
@@ -74,11 +76,10 @@ FermionWallet adds a second approval path that is tied to a quantum-safe signing
 
 Build an MVP add-on that:
 - integrates with normal Gnosis Safe wallets,
-- generates and manages a quantum-safe signing key in JavaScript,
+- generates and manages the Quantum Administrator's XMSS key in hardware (Ledger / HSM — never in browser or Node.js process memory),
 - creates a pre-approval for a transfer,
 - requires the quantum key as second authorization before execution,
-- supports standard ERC-20 token transfer flows,
-- supports optional ERC-20 wrap/unwrap flows under the same approval model.
+- supports standard ERC-20 token transfer flows.
 
 ## 4. MVP architecture
 
@@ -95,13 +96,13 @@ Build an MVP add-on that:
 
 3. FermionWallet add-on service
    - runs as a policy and validation layer
-   - generates quantum keys in JavaScript
+   - orchestrates quantum key generation in hardware (Ledger / HSM)
    - creates and validates pre-approvals
    - confirms whether a transfer meets policy and key requirements
 
 4. Quantum key registry
    - stores public key metadata and key usage status
-   - can be implemented as a smart contract registry or backend registry for MVP
+   - **must be on-chain**: the used-leaf-index bitmap is consensus-critical (XMSS leaf reuse = forgery), so key state and leaf tracking live in the registry/Guard contract; any backend copy is a read-only cache/index, never a source of truth
 
 5. Pre-approval engine
    - creates time-bound, nonce-protected approvals
@@ -174,7 +175,7 @@ The validation sequence is:
 2. The Safe verifies the owners’ signatures as part of the normal Safe execution flow.
 3. If a guard is set, the Safe calls the configured Guard through `checkTransaction` before executing the target call.
 4. The Guard reads the transaction metadata: `to`, `value`, `data`, `operation`, `safeTxGas`, `baseGas`, `gasPrice`, `gasToken`, `refundReceiver`, `signatures`, and `msgSender`.
-5. The Guard decodes the target call and ensures it is an allowed ERC-20 transfer, wrap, or unwrap operation.
+5. The Guard classifies the target call and dispatches by pre-approval class: ERC-20 `transfer` → `TRANSFER`; native ETH or allowlisted call → `PAYLOAD` (exact-payload binding); Safe self-call (`setGuard`, modules, owners) → `ADMIN` (exact payload + mandatory timelock). Delegatecall always reverts. See the Guard spec's "Pre-approval classes".
 6. The Guard resolves the relevant FermionWallet pre-approval and verifies the matching policyHash, nonce, amount, token, and recipient.
 7. The Guard verifies that the stored quantum signature matches the registered public key and the exact Safe transaction payload.
 8. The Guard checks that the approval is active, not expired, not revoked, and not replayed.
@@ -197,7 +198,7 @@ The actual Safe Guard model is defined by the Gnosis Safe GuardManager. The impo
 7. If the guard reverts, the Safe transaction fails before execution reaches the destination contract.
 
 For FermionWallet, the Guard logic is:
-- decode the target transaction and confirm it is an allowable ERC-20 transfer, wrap, or unwrap call,
+- decode the target transaction and confirm it is an allowable ERC-20 `transfer` call,
 - extract the target token, destination, amount, and calldata selector,
 - match the transaction against the stored FermionWallet pre-approval,
 - require the quantum signature to validate against the public key stored in the FermionWallet registry,
@@ -243,7 +244,7 @@ The initial draft of the MVP had several major security gaps. The following requ
    - The second authorization must only be validated in the Safe Guard execution path, not as an independent generic `execute` call.
 
 6. Token transfers must be checked at the ABI level, not just by amount string
-   - The Guard must decode the actual transaction calldata and confirm it is a supported ERC-20 transfer or wrap/unwrap operation.
+   - The Guard must decode the actual transaction calldata and confirm it is a supported ERC-20 `transfer` operation.
    - It must reject unexpected function selectors, unknown token calls, or mismatched recipients.
 
 7. Key revocation and emergency recovery are mandatory
@@ -299,7 +300,7 @@ The initial draft of the MVP had several major security gaps. The following requ
     - Reuse of expired approvals or stale `policyHash` values must be rejected.
 
 19. No implicit trust in an off-chain registry without on-chain verification
-    - A backend registry is acceptable for MVP convenience, but all critical decisions must be verifiable against on-chain state or a signed attestation that includes relevant policy and key metadata.
+    - Key state and the XMSS used-leaf bitmap must live on-chain; leaf tracking is consensus-critical and a backend copy can only be a read-only cache.
     - The registry cannot be the only source of truth for authorization.
 
 20. Do not allow unbounded token/recipient authorization surfaces
@@ -307,7 +308,7 @@ The initial draft of the MVP had several major security gaps. The following requ
     - The registry must not allow a key to authorize arbitrary token transfers without policy restrictions.
 
 21. Use explicit authorized call types only
-    - The Guard must permit only known safe function calls, such as ERC-20 `transfer`, `transferFrom`, or the explicit wrapped token functionality stated in the spec.
+    - The Guard must permit only known safe function calls: ERC-20 `transfer` for the MVP. `approve`, `increaseAllowance`, `permit`, and `transferFrom` are explicitly denied (allowance-exfiltration surface — see the Guard spec).
     - It must reject arbitrary contract calls, delegatecalls, or broad calls that could trigger unpredictable logic.
 
 22. Guard must be non-upgradeable or upgradeable only with strict governance controls
@@ -421,81 +422,66 @@ This is the minimal protocol for integrating FermionWallet as a Safe Guard. This
 }
 ```
 
-#### 4. `POST /api/v1/gnosis/keys/register`
+#### 4. ~~`POST /api/v1/gnosis/keys/register`~~ — **Removed (security)**
 
-- Purpose: register a JavaScript-generated quantum key for a Safe.
-- Body:
+> Removed. The backend must never accept or originate key material. Keys are hardware-generated on the Ledger and registered **only on-chain** via the co-signed `registerQuantumKey` (see §7.1 and `quantum-key-registry.md`). A backend write path would reintroduce the ID-indirection attack and contradict the on-chain-only registry mandate. The old body also bound the key to a single `erc20Token`; the current model is one Active key per Safe covering all assets.
 
-```json
-{
-  "safeAddress": "0xSafeAddress",
-  "quantumKeyId": "qk-123",
-  "publicKeyHash": "0xabc...",
-  "quantumSignature": "0xdef...",
-  "erc20Token": "0xTokenAddress"
-}
-```
+#### 5. `GET /api/v1/gnosis/keys/:safeAddress`
 
+- Purpose: read-only cache of the on-chain registry state (never authoritative).
 - Response:
 
 ```json
 {
-  "status": "registered",
-  "quantumKeyId": "qk-123",
-  "safeAddress": "0xSafeAddress"
-}
-```
-
-#### 5. `POST /api/v1/gnosis/keys/rotate`
-
-- Purpose: rotate a Safe-linked quantum key.
-- Body:
-
-```json
-{
   "safeAddress": "0xSafeAddress",
-  "quantumKeyId": "qk-123",
-  "publicKeyHash": "0xnewkey..."
+  "quantumKeyId": "0xkeyid...",
+  "xmssRoot": "0xroot...",
+  "status": "Active",
+  "treeHeight": 20,
+  "leafUsage": { "used": 1042, "total": 1048576 },
+  "source": "on-chain (block 21504233)"
 }
 ```
 
-- Response:
+#### 6. ~~`POST /api/v1/gnosis/keys/rotate`~~ — **Removed (security)**
 
-```json
-{
-  "status": "rotated",
-  "oldQuantumKeyId": "qk-123",
-  "newQuantumKeyId": "qk-456"
-}
-```
+> Removed for the same reason as endpoint 4 — the old body accepted a bare `publicKeyHash` with **no authentication whatsoever** (no old-key proof, no owner signatures), letting anyone who reached the backend swap the quantum key. Rotation happens only on-chain via `rotateQuantumKey` (old-key XMSS proof + attestation + owner co-signatures, §7.1).
 
 ### 7.1 Solidity smart-contract API
 
-#### 1. `registerQuantumKeyPair(bytes32 quantumKeyId, bytes32 publicKeyHash, bytes calldata quantumSignature, address erc20Token)`
+> **No custom execution entrypoints.** This contract has **no function that moves tokens**. All transfers flow exclusively through `Safe.execTransaction` → Guard `checkTransaction` → target ERC-20 `transfer`. Any function that could execute, wrap, or forward a transfer outside that path would bypass both the Safe multisig and the Guard, and is forbidden (see security rule 5 and the Guard spec's "Forbidden original code").
 
-- Purpose: register a JavaScript-generated quantum key and bind it to a supported ERC-20 token context.
-- Signature: `function registerQuantumKeyPair(bytes32 quantumKeyId, bytes32 publicKeyHash, bytes calldata quantumSignature, address erc20Token) external returns (bool success);`
+#### 1. `registerQuantumKey(bytes32 xmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata ledgerAttestation, bytes calldata ownerSignatures)`
+
+- Purpose: register the Quantum Administrator's hardware-generated XMSS root as the Safe's quantum approval key, in one co-signed transaction.
+- Signature: `function registerQuantumKey(bytes32 xmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata ledgerAttestation, bytes calldata ownerSignatures) external returns (bytes32 quantumKeyId);`
 - Inputs:
-  - `quantumKeyId`: unique key ID created off-chain
-  - `publicKeyHash`: public key hash generated in JavaScript
-  - `quantumSignature`: signature proving ownership and validity of the key
-  - `erc20Token`: the target ERC-20 token for the key
-- Returns: `success`
-- Emits: `QuantumKeyCreated`
+  - `xmssRoot`: public XMSS root exported from the Ledger secure element / HSM
+  - `treeHeight`, `parameterSet`: key parameters, fixed for the key's lifetime
+  - `ledgerAttestation`: the Administrator's EIP-712 hardware attestation over the root
+  - `ownerSignatures`: Safe-owner-threshold EIP-712 signatures over `ApproveQuantumKey { safe, xmssRoot, treeHeight, parameterSet, registryNonce, validUntil }` — owners sign the root itself, never an opaque ID
+- Returns: `quantumKeyId`
+- Emits: `QuantumKeyRegistered`
 - Validation rules:
-  - signature must verify against the key and public key hash
-  - token must be supported by the Safe policy or vault
-  - duplicate registration for same key or same token must reject
+  - owner threshold verified via the Safe's own `checkSignatures`
+  - attestation must verify against the registered `quantumAdmin` address
+  - `registryNonce` must be current (bumped on success — stale ceremonies unusable)
+  - duplicate root registration must reject
+  - see [quantum-key-registry.md](./quantum-key-registry.md) for the full lifecycle
 
-#### 2. `rotateQuantumKey(bytes32 quantumKeyId, bytes32 publicKeyHash)`
+#### 2. `rotateQuantumKey(bytes32 newXmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata oldKeyXmssProof, bytes calldata ledgerAttestation, bytes calldata ownerSignatures)`
 
-- Purpose: rotate a quantum key and bind the new public key hash.
-- Signature: `function rotateQuantumKey(bytes32 quantumKeyId, bytes32 publicKeyHash) external returns (bytes32 newQuantumKeyId, bytes32 newPublicKeyHash);`
+- Purpose: rotate to a new XMSS root. **Authentication is mandatory**: proof of the old key, hardware attestation of the new key, and owner-threshold co-signatures.
+- Signature: `function rotateQuantumKey(bytes32 newXmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata oldKeyXmssProof, bytes calldata ledgerAttestation, bytes calldata ownerSignatures) external returns (bytes32 newQuantumKeyId);`
 - Inputs:
-  - current key ID
-  - new public key hash generated in JavaScript
-- Returns: new key ID and new public key hash
+  - `oldKeyXmssProof`: XMSS signature by the current active key over the rotation payload (consumes one leaf)
+  - remaining inputs as in `registerQuantumKey`, bound to the rotation payload
+- Returns: `newQuantumKeyId`
 - Emits: `QuantumKeyRotated`
+- Validation rules:
+  - old key must be `Active`; it transitions to `Rotated` atomically
+  - emergency rotation without the old key requires Safe governance plus the Guard's time-locked path
+  - unauthenticated rotation must be impossible: missing any of the three proofs reverts
 
 #### 3. `getQuantumKeyStatus(bytes32 quantumKeyId)`
 
@@ -505,35 +491,49 @@ This is the minimal protocol for integrating FermionWallet as a Safe Guard. This
 
 #### 4. `createPreApproval(...)`
 
-- Purpose: create a time-bounded approval for a transfer or wrapped token operation.
+- Purpose: create a time-bounded approval for a transfer.
 - Signature:
 
 ```solidity
 function createPreApproval(
+    address safe,       // the enrolled Safe this approval is for — the creator is the
+                        // Administrator's relayer, so the Safe must be explicit; the
+                        // XMSS-signed payload binds (safe, chainid, ...) against replay
     address token,
-    address spender,
+    address recipient,
     uint256 amount,
     uint64 validFrom,
     uint64 validTo,
     bytes32 nonce,
     bytes32 quantumKeyId,
+    uint32 xmssLeafIndex,
     bytes32 policyHash,
+    bytes32 txHash,     // optional exact safeTxHash pin; bytes32(0) = match by fields
     bytes calldata signature
 ) external returns (bytes32 preApprovalId);
 ```
 
 - Inputs:
+  - safe
   - token
-  - spender
+  - recipient
   - amount
   - validFrom
   - validTo
   - nonce
   - quantumKeyId
+  - xmssLeafIndex
   - policyHash
+  - txHash (optional)
   - signature
 - Returns: `preApprovalId`
 - Emits: `PreApprovalCreated`
+
+#### 4b. `createPayloadPreApproval(...)` and `createAdminPreApproval(...)`
+
+- Purpose: authorize what the `TRANSFER` struct cannot represent — **native ETH transfers**, **administrative Safe self-calls**, and **`MultiSendCallOnly` batches** (one approval, one leaf per batch; `dataHash` binds the full batch calldata) — via exact-payload binding (`target`, `value`, `dataHash = keccak256(data)`). Both take `address safe` as the first parameter, like `createPreApproval`.
+- `createAdminPreApproval` covers `setGuard` (including `address(0)` — the sanctioned Guard-removal path), `setModuleGuard`, `enableModule`/`disableModule`, and owner/threshold changes. It reverts unless `validFrom ≥ block.timestamp + ADMIN_TIMELOCK` and emits a loud `AdminPreApprovalCreated` event so watchers can revoke during the delay.
+- Together with the quantum-key-independent emergency de-guard path, this guarantees the **no-brick invariant**: the Safe can always, eventually, remove the Guard. Full signatures and dispatch rules in [fermionwallet-guard-module.md → Pre-approval classes](./fermionwallet-guard-module.md#pre-approval-classes).
 
 #### 5. `validatePreApproval(bytes32 preApprovalId)`
 
@@ -541,49 +541,31 @@ function createPreApproval(
 - Signature: `function validatePreApproval(bytes32 preApprovalId) external view returns (bool valid, string memory reason);`
 - Returns: valid flag and reason
 
-#### 6. `executePreApprovedTransfer(bytes32 preApprovalId, address recipient, uint256 amount)`
-
-- Purpose: execute a transfer only when the Safe and the quantum approval are both valid.
-- Signature: `function executePreApprovedTransfer(bytes32 preApprovalId, address recipient, uint256 amount) external returns (bool success);`
-- Returns: success flag
-- Emits: `PreApprovalExecuted`
-
-#### 7. `revokePreApproval(bytes32 preApprovalId)`
+#### 6. `revokePreApproval(bytes32 preApprovalId)`
 
 - Purpose: revoke a pending pre-approval.
 - Signature: `function revokePreApproval(bytes32 preApprovalId) external returns (bool revoked);`
 - Returns: revocation status
 
-#### 8. `wrapERC20(address token, uint256 amount, bytes32 preApprovalId)`
-
-- Purpose: wrap ERC-20 tokens only if a valid quantum pre-approval exists.
-- Signature: `function wrapERC20(address token, uint256 amount, bytes32 preApprovalId) external returns (uint256 wrappedAmount);`
-- Returns: wrapped amount
-- Requires: valid pre-approval and policy compliance
-
-#### 9. `unwrapERC20(address token, uint256 amount, bytes32 preApprovalId)`
-
-- Purpose: unwrap only after explicit quantum-safe authorization.
-- Signature: `function unwrapERC20(address token, uint256 amount, bytes32 preApprovalId) external returns (uint256 unwrappedAmount);`
-- Returns: unwrapped amount
-- Requires: valid pre-approval and remaining wrapped balance
+> **Removed (security):** earlier drafts defined `executePreApprovedTransfer`, `wrapERC20`, and `unwrapERC20`. These were custom execution entrypoints that would let any holder of a valid pre-approval move tokens **without** the Safe multisig or the Guard — bypassing both authorization layers. They are deleted; pre-approvals are consumed only inside the Guard's `checkTransaction` path during `Safe.execTransaction`.
 
 ### 7.2 JavaScript client API
 
-#### 1. `generateQuantumKeyPair()`
+> The client is an **orchestration layer only** — it never generates or holds quantum key material (hardware does), and it never executes transfers (the Safe does).
 
-- Purpose: generate a quantum-safe key pair in JavaScript.
-- Signature: `generateQuantumKeyPair()`
+#### 1. `generateQuantumKey()`
+
+- Purpose: orchestrate XMSS key generation on the Ledger secure element / HSM and return the public metadata.
+- Signature: `generateQuantumKey()`
 - Returns:
-  - `quantumKeyId`
-  - `publicKey`
-  - `algorithm`
-  - `status`
+  - `xmssRoot`, `treeHeight`, `parameterSet`
+  - `ledgerAttestation`
+  - `ceremonyCode` (6 BIP-39 words derived from the root)
 
-#### 2. `rotateQuantumKey(quantumKeyId, publicKey)`
+#### 2. `rotateQuantumKey(params)`
 
-- Purpose: rotate the quantum key.
-- Signature: `rotateQuantumKey(quantumKeyId, publicKey)`
+- Purpose: run the rotation ceremony (old-key proof + new-key attestation + owner co-signatures) and submit `rotateQuantumKey` on-chain.
+- Signature: `rotateQuantumKey({ oldQuantumKeyId })`
 - Returns: rotated key metadata
 
 #### 3. `getQuantumKeyStatus(quantumKeyId)`
@@ -599,8 +581,9 @@ function createPreApproval(
 
 ```js
 async function createPreApproval({
+  safe,
   token,
-  spender,
+  recipient,
   amount,
   validFrom,
   validTo,
@@ -618,29 +601,13 @@ async function createPreApproval({
 - Signature: `validatePreApproval(preApprovalId)`
 - Returns: `{ valid, reason?, preApproval? }`
 
-#### 6. `executePreApprovedTransfer(preApprovalId, recipient, amount)`
-
-- Purpose: execute a pre-approved transfer.
-- Signature: `executePreApprovedTransfer(preApprovalId, recipient, amount)`
-- Returns: success payload
-
-#### 7. `revokePreApproval(preApprovalId)`
+#### 6. `revokePreApproval(preApprovalId)`
 
 - Purpose: revoke an active pre-approval.
 - Signature: `revokePreApproval(preApprovalId)`
 - Returns: revocation status
 
-#### 8. `wrapERC20(token, amount, preApprovalId)`
-
-- Purpose: wrap ERC-20 tokens with a valid quantum pre-approval.
-- Signature: `wrapERC20(token, amount, preApprovalId)`
-- Returns: wrapped amount status
-
-#### 9. `unwrapERC20(token, amount, preApprovalId)`
-
-- Purpose: unwrap tokens after validation.
-- Signature: `unwrapERC20(token, amount, preApprovalId)`
-- Returns: unwrapped amount status
+> **Removed (security):** `executePreApprovedTransfer`, `wrapERC20`, `unwrapERC20` — see the note in §7.1. Execution happens only via `Safe.execTransaction`; the client's job ends when the pre-approval exists on-chain.
 
 ## 8. MVP non-goals
 
@@ -654,10 +621,10 @@ The MVP does not include:
 
 The MVP is complete when:
 - a normal Gnosis Safe wallet can integrate FermionWallet as a second authorization layer,
-- a JavaScript-generated quantum key can be registered and rotated,
+- a hardware-generated (Ledger/HSM) XMSS key can be registered and rotated with full authentication (owner co-signatures + attestation + old-key proof),
 - a transfer can only proceed when both Safe and quantum approvals are valid,
 - expired, revoked, or replayed pre-approvals are rejected,
-- wrap and unwrap flows require valid quantum pre-approvals,
+- no code path can move tokens outside `Safe.execTransaction` → Guard → ERC-20 `transfer`,
 - all critical actions emit structured audit metadata.
 
 ## 10. MVP summary
