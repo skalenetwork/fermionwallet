@@ -30,7 +30,7 @@ Custom Ledger embedded app giving the Quantum Administrator a hardware-held, sta
 | `0x04` | `GET_LEAF_INDEX` | returns next unused index (read-only) |
 | `0x06` | `SIGN_PREAPPROVAL` | streams the EIP-712 payload in chunks; device displays fields; on confirm, commits counter then returns **both hybrid halves over the same EIP-712 digest**: the ECDSA signature by the `quantumAdmin` key and the XMSS signature. One confirmation, released together — the host never obtains one half without the other |
 | `0x08` | `GET_APP_CONFIG` | version, parameter set, remaining signatures |
-| `0x0A` | `SIGN_ROTATION` | streams the `RotateQuantumKey` payload (new root, new admin, registryNonce); device shows the ROTATE QUANTUM KEY flow (old vs new ceremony words, abandoned-leaf count); on confirm, commits counter then returns the old key's XMSS possession proof |
+| `0x0A` | `SIGN_ROTATION` | streams the full EIP-712 `RotateQuantumKey { safe, oldQuantumKeyId, newQuantumAdmin, newXmssRoot, newXmssSeed, treeHeight, parameterSet, registryNonce, validUntil }` and its domain (chain ID, verifying contract = the Guard). The device recomputes the digest from the fields it displays — it never signs a host-supplied hash — and refuses a `newXmssRoot` equal to its own root. Shows the ROTATE QUANTUM KEY flow (Flow 3); on confirm, commits counter then returns the old key's XMSS possession proof over that digest (the same digest the owners co-sign) |
 | `0x0E` | `GET_ADMIN_ADDRESS` | returns the `quantumAdmin` address (the ECDSA key above); with the display flag set, shows the full address on-device for the ceremony preflight to compare |
 | `0x10` | `SIGN_KEY_ATTESTATION` | signs the EIP-712 `QuantumKeyAttestation { safe, xmssRoot, xmssSeed, treeHeight, parameterSet, registryNonce }` with the `quantumAdmin` key (the `ledgerAttestation` that `registerQuantumKey` and `rotateQuantumKey` verify). The host supplies only `safe`, the chain, and `registryNonce`; the device fills root, SEED, height, and parameter set **from its own key**, so a host cannot attest a substituted root. Device shows the Safe address (chunked), chain, ceremony words, and registryNonce. No counter commit, no leaf consumed |
 | `0x0C` | `SIGN_DENIAL` | streams the denial record (payload hash + reason hash); device shows the red DENY flow; on confirm returns a plain ECDSA signature by the `quantumAdmin` key — **no counter commit, no leaf consumed** |
@@ -104,6 +104,15 @@ On approve: NVM counter commits, *then* both hybrid halves stream out — the EC
 
 Identical to Flow 1 with a red/emphasized header "ROTATE QUANTUM KEY", a screen showing old-root ceremony words vs new-root ceremony words, and the old key's remaining-leaf count ("You are abandoning 61,204 unused approvals") so an attacker cannot socially engineer a pointless rotation invisibly.
 
+The possession proof is an XMSS signature over the **full** `RotateQuantumKey { safe, oldQuantumKeyId, newQuantumAdmin, newXmssRoot, newXmssSeed, treeHeight, parameterSet, registryNonce, validUntil }` digest, so every signed field is shown before the decision screen — no field is signed blind:
+
+- Safe address (full, chunked) and chain;
+- new Administrator address (full, chunked), flagged "CHANGES ADMINISTRATOR" when it differs from this device's own `quantumAdmin`;
+- new key: ceremony words, first/last 4 bytes of root and SEED, tree height (as lifetime approvals) and parameter set;
+- `registryNonce` and `validUntil` as an absolute UTC time.
+
+`oldQuantumKeyId` is not human-meaningful and is shown only as a short fingerprint; it is bound by the owners' co-signatures over the same digest.
+
 ### Flow 4 — Deny (`SIGN_DENIAL`, ECDSA receipt, no leaf)
 
 ![Denial screens](./assets/ui/ledger/ledger-deny.svg)
@@ -151,7 +160,7 @@ The on-chain used-leaf bitmap in the Guard/registry stays in place even after th
 
 - [ ] Rust app implementing the APDU interface above
 - [ ] `speculos`/`ragger` CI suite: signing flow, counter monotonicity across power cycles, exhaustion refusal, chunked payload edge cases, and UI snapshot tests for every screen of every flow on both NBGL (Stax/Flex) and BAGL (Nano) targets
-- [ ] Cross-verification test: 10k device signatures verified by the Solidity XMSS verifier in Foundry, and device-produced hybrid pairs plus key attestations accepted end to end by `createPreApproval` and `registerQuantumKey` (a real Safe in Foundry)
+- [ ] Cross-verification test: 10k device signatures verified by the Solidity XMSS verifier in Foundry, and device-produced hybrid pairs plus key attestations accepted end to end by `createPreApproval`, `registerQuantumKey`, and `rotateQuantumKey` (a real Safe in Foundry; the rotation test uses a device-produced possession proof)
 - [ ] Host SDK in the add-on service (`ledger-xmss.ts`) replacing the Phase 1 software keystore path behind the same interface
 - [ ] Ledger security review submission
 

@@ -48,7 +48,7 @@ Five screens: intent (parameter set + lifetime), the amber **NO BACKUP** acknowl
 
 ![Rotation flow](./assets/ui/ledger/ledger-rotate.svg)
 
-Run on the **old** device as the possession proof of the [rotation procedure](./quantum-key-registry.md). The device shows old vs. new ceremony words (verify both out-of-band), the number of approvals being abandoned (so a pointless rotation can't be socially engineered invisibly), and a decision screen that names its cost: one old-key leaf.
+Run on the **old** device as the possession proof of the [rotation procedure](./quantum-key-registry.md). The device shows every field of the signed `RotateQuantumKey` payload: the Safe and chain, the new Administrator address (flagged when it changes), the new key's ceremony words, height and parameter set, and `validUntil` in UTC. It also shows old vs. new ceremony words (verify both out-of-band), the number of approvals being abandoned (so a pointless rotation can't be socially engineered invisibly), and a decision screen that names its cost: one old-key leaf. The device hashes these displayed fields itself; it never signs a digest supplied by the host.
 
 ## Ambient and error screens
 
