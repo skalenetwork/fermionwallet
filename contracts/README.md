@@ -34,6 +34,13 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
 - `test/GuardIntegration.t.sol`, `test/FermionWalletGuard.t.sol` — leaf
   consumption, reuse rejection, invalid-signature rollback, height binding,
   zero-key rejection (through the registry), plus the Guard and engine suites.
+- `test/LegacySafeSignatures.t.sol` — contract owners co-signing on Safe
+  v1.3.0, v1.4.1 and v1.5.0 (bytecode in `test/vectors/safe-v*`).
+- `test/properties/` — fuzz properties of the Guard, a stateful invariant
+  test against a reference model, and XMSS mutation properties.
+- `py/sign_digest.py`, `test/ffi/sign_batch.py` — test-only helpers that the
+  Foundry tests call through FFI to sign digests with the deterministic test
+  XMSS key.
 
 ## Measured gas
 
@@ -54,6 +61,17 @@ Within the 0.4–1M target set in `../fermionwallet-guard-module.md`
 - Not audited yet; audit is an acceptance criterion before mainnet.
 
 ## Usage
+
+You need [Foundry](https://getfoundry.sh) (the release workflow and the demo image pin v1.8.3:
+`curl -L https://foundry.paradigm.xyz | bash`, then `foundryup --install v1.8.3`)
+and `python3`: the tests sign with the Python reference implementation through
+Foundry FFI (`ffi = true` in `foundry.toml`). Fetch the OpenZeppelin and Safe
+libraries once from the repository root, then run everything from `contracts/`:
+
+```shell
+git submodule update --init --recursive   # from the repository root
+cd contracts
+```
 
 ```shell
 forge test -vv                 # run tests + gas benchmarks
