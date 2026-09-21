@@ -102,8 +102,6 @@ Do **not** use OpenZeppelin upgradeable proxies for the Guard. The Guard is non-
 
 Do **not** mix OpenZeppelin `IERC165` with a locally copied `ITransactionGuard`. The interface IDs for the Guard come from Safe’s own `ITransactionGuard` and `IModuleGuard`.
 
-### Post-quantum / hybrid cryptography — no home-grown “quantum HMAC”
-
 ### Post-quantum cryptography — the Quantum Administrator's XMSS key
 
 The second authorization is produced by a designated **Quantum Administrator** holding a **permanent, stateful XMSS key** (RFC 8391; NIST-approved via SP 800-208). XMSS verification is pure hashing, which the EVM executes cheaply — enabling **full on-chain PQ verification** with no commit-verify trust boundary.
