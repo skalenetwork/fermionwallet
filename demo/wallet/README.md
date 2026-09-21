@@ -16,7 +16,9 @@ You need Docker with Compose v2. The images total about 3 GB.
 docker compose up -d --wait
 ```
 
-Open http://localhost:8000. To stop the demo and reset it to a fresh chain, run `docker compose down -v`.
+It takes about a minute: `--wait` returns once Safe{Wallet} can load the demo Safe. Then open http://localhost:8000.
+
+Nothing is kept between runs. Any restart, including `docker compose restart`, starts a fresh chain. To stop the demo, run `docker compose down -v`.
 
 | Port | What |
 |---|---|
@@ -37,11 +39,19 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build -
 3. **Open FermionWallet.** Go to **Apps** and open **FermionWallet**.
 4. **Pay without approval.** Click **Propose payout in Safe{Wallet}**. Safe{Wallet} opens its normal review. Trust the Safe when asked, then click **Continue**.
    - Safe{Wallet} warns *"This transaction will most likely fail"*.
-   - If you press **Execute** anyway, execution fails. The owner's signature is valid, but the Guard reverts the transfer because no quantum pre-approval exists.
+   - If you press **Execute** anyway, Safe{Wallet} shows *"Error submitting the transaction"* and sends nothing. The owner's signature is valid, but the Guard reverts the transfer because no quantum pre-approval exists. Under **Details**, the revert data starts with `0x95828945`, the selector of `NoMatchingPreApproval`.
+   - To go back to the app, close the review with ✕ and confirm. Close the red notification first if it covers the ✕.
 5. **Approve on the Ledger.** Click **Send to Ledger for approval**. On the simulated device, page through all eight screens with ▶, then press **Approve**.
    - The device signs the exact payment twice over one EIP-712 digest: once with ECDSA and once with XMSS. This uses one of its 16 one-time leaves.
    - The pre-approval is then stored in the Guard.
 6. **Pay again.** Click the second **Propose payout in Safe{Wallet}**. The failure warning is gone, **Execute** succeeds, and the payment appears in Safe{Wallet}'s transaction history.
+
+## Good to know
+
+- **16 approvals per run.** Each Ledger approval uses one of the demo key's 16 one-time XMSS leaves. When they are all used, the app says so and disables approving. Run `docker compose down -v`, then `docker compose up -d --wait`, to start again with a fresh key.
+- **Other ways to pay.** An approval covers one dUSD payment to the vendor for exactly the approved amount. The payment can also be made with Safe{Wallet}'s own **Send** flow, for the same token, recipient and amount. ETH transfers, batches (Safe{Wallet} sends them through MultiSendCallOnly) and Safe settings changes need kinds of approval this demo's Ledger does not sign, so the Guard always blocks them.
+- **Sign instead of Execute.** If you only sign a payout, it waits in **Transactions → Queue** and holds its nonce. Later payouts queue behind it and cannot execute. Rejecting it in Safe{Wallet} does not work either, because the rejection is itself a Safe transaction that the Guard blocks. To clear it, approve exactly its amount in the app, then execute it from the queue. The app shows this when it sees such a payout.
+- **Demo Safe only.** The app only works on the demo Safe, because that is the Safe with the Guard and the Ledger key. On any other Safe it shows a notice and its buttons stay disabled.
 
 ## What's inside
 
@@ -69,3 +79,5 @@ How the stack is put together:
 ```sh
 cd e2e && npm ci && node e2e.js   # CHROME=/path/to/chrome if not /usr/bin/google-chrome
 ```
+
+Each run uses one of the 16 XMSS leaves, so reset the stack after 16 runs.
