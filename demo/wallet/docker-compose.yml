@@ -13,14 +13,17 @@
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
 #
 # Ports: 8000 Safe{Wallet} + services (RPC at /rpc), 8001 the FermionWallet Safe App.
-# Every container keeps its state in anonymous volumes, so `down -v` resets the
-# demo and a fresh chain never meets stale indexer data.
+# Nothing is persisted: the chain and the Safe services' databases live in memory,
+# so any restart (or `down -v`) resets the demo to a fresh, consistent state.
 name: fermionwallet-demo
 
 x-pg: &pg
   image: postgres:14-alpine
   environment:
     POSTGRES_PASSWORD: postgres
+  # The chain lives only in anvil's memory, so the indexes must too: after a
+  # stop/start or a reboot, every service starts fresh with the fresh chain.
+  tmpfs: /var/lib/postgresql/data
   healthcheck:
     test: ["CMD-SHELL", "pg_isready -U postgres"]
     interval: 3s

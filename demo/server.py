@@ -222,7 +222,7 @@ def _run_flow_locked(flow, amount):
 
 def friendly_error(out):
     if "demo key exhausted" in out:
-        return "All 16 XMSS demo leaves are consumed — restart the container to reset."
+        return "All 16 XMSS demo leaves are used. Restart the demo to reset it (docker restart, or docker compose down -v && up for the Safe{Wallet} stack)."
     if ERR_NO_MATCHING in out:
         return ("Blocked by the Guard: no matching quantum pre-approval. "
                 "Create a pre-approval for this exact amount first.")

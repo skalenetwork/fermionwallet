@@ -16,7 +16,8 @@ const WALLET = process.env.WALLET_URL || 'http://localhost:8000';
 const APP = process.env.APP_URL || 'http://localhost:8001/safe-app';
 const APP_ORIGIN = new URL(APP).origin;
 const OWNER_PK = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d'; // anvil #1
-const AMOUNT = process.env.AMOUNT || '100';
+// Random by default so an approval left over on a reused stack can't match.
+const AMOUNT = process.env.AMOUNT || String(100 + Math.floor(Math.random() * 900));
 const SHOTS = process.env.SCREENSHOTS; // optional directory for screenshots
 
 const step = msg => console.log(`[e2e] ${msg}`);
