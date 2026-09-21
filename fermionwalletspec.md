@@ -10,6 +10,7 @@
 - [Ledger XMSS App](./ledger-xmss-app.md)
 - [UI Help (with screenshots)](./ui-help.md)
 - [On-chain Enforcement Layer](./on-chain-enforcement-layer.md)
+- [Release Specification](./release-spec.md)
 
 ## Architecture diagram
 

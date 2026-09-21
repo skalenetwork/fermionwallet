@@ -283,8 +283,10 @@ interface IFermionWalletGuard is ITransactionGuard {
         address safe,
         address quantumAdmin,
         bytes32 xmssRoot,
+        bytes32 xmssSeed,   // XMSS public SEED — a mandatory verification input (RFC 8391)
         uint32 treeHeight,
         bytes32 parameterSet,
+        uint256 validUntil, // ceremony deadline; stale owner signatures are unusable past it
         bytes calldata ledgerAttestation,
         bytes calldata ownerSignatures
     ) external returns (bytes32 quantumKeyId);
@@ -295,8 +297,10 @@ interface IFermionWalletGuard is ITransactionGuard {
         address safe,
         address newQuantumAdmin,   // may equal the current one (rotating only the XMSS tree)
         bytes32 newXmssRoot,
+        bytes32 newXmssSeed,
         uint32 treeHeight,
         bytes32 parameterSet,
+        uint256 validUntil,
         bytes calldata oldKeyXmssProof,
         bytes calldata ledgerAttestation,
         bytes calldata ownerSignatures
@@ -345,19 +349,30 @@ interface IFermionWalletGuard is ITransactionGuard {
     //   then Tier 2; ADMIN-class approvals additionally require the timelock
     //   to have elapsed regardless of tier.
 
+    // All three create functions take the same calldata request struct — one shape,
+    // three class-specific validators. Class-irrelevant fields must be zero
+    // (creation reverts otherwise), so a TRANSFER request cannot smuggle PAYLOAD
+    // fields and vice versa.
+    struct PreApprovalRequest {
+        address safe;
+        address token;      // TRANSFER only
+        address recipient;  // TRANSFER only
+        uint256 amount;     // TRANSFER only
+        address target;     // PAYLOAD / ADMIN only
+        uint256 value;      // PAYLOAD / ADMIN only
+        bytes32 dataHash;   // PAYLOAD / ADMIN only: keccak256 of the exact calldata
+        uint64 validFrom;
+        uint64 validTo;
+        bytes32 nonce;
+        bytes32 quantumKeyId;
+        uint32 xmssLeafIndex;
+        bytes32 policyHash;
+        bytes32 txHash;     // exact safeTxHash pin (Tier 1); bytes32(0) = field-matched queue (Tier 2)
+    }
+
     // TRANSFER class (fast path, no timelock)
     function createPreApproval(
-        address safe,
-        address token,
-        address recipient,
-        uint256 amount,
-        uint64 validFrom,
-        uint64 validTo,
-        bytes32 nonce,
-        bytes32 quantumKeyId,
-        uint32 xmssLeafIndex,
-        bytes32 policyHash,
-        bytes32 txHash,     // exact safeTxHash pin (Tier 1); bytes32(0) = field-matched queue (Tier 2)
+        PreApprovalRequest calldata req,
         bytes calldata ecdsaSignature,
         bytes calldata xmssSignature
     ) external returns (bytes32 preApprovalId);
@@ -365,36 +380,19 @@ interface IFermionWalletGuard is ITransactionGuard {
     // PAYLOAD class: native ETH sends and policy-allowlisted non-transfer calls.
     // Binds the exact payload via dataHash = keccak256(data); operation is always CALL.
     function createPayloadPreApproval(
-        address safe,
-        address target,
-        uint256 value,
-        bytes32 dataHash,
-        uint64 validFrom,
-        uint64 validTo,
-        bytes32 nonce,
-        bytes32 quantumKeyId,
-        uint32 xmssLeafIndex,
-        bytes32 policyHash,
-        bytes32 txHash,     // exact safeTxHash pin (Tier 1); bytes32(0) = field-matched queue (Tier 2)
+        PreApprovalRequest calldata req,
         bytes calldata ecdsaSignature,
         bytes calldata xmssSignature
     ) external returns (bytes32 preApprovalId);
 
-    // ADMIN class: self-calls only (setGuard incl. address(0), setModuleGuard,
-    // enable/disableModule, owner/threshold changes). Reverts unless
-    // validFrom >= block.timestamp + ADMIN_TIMELOCK. Emits AdminPreApprovalCreated
-    // so watchers can revoke during the delay. This is the sanctioned unbrick path.
+    // ADMIN class: req.target must be the Safe itself (setGuard incl. address(0),
+    // setModuleGuard, enable/disableModule, owner/threshold changes) or this Guard
+    // (setSelectorPolicy — Guard policy mutations are ADMIN-governed too). Reverts
+    // unless req.validFrom >= block.timestamp + ADMIN_TIMELOCK. Emits
+    // AdminPreApprovalCreated so watchers can revoke during the delay. This is the
+    // sanctioned unbrick path.
     function createAdminPreApproval(
-        address safe,   // also the call target: ADMIN is self-call only
-        uint256 value,
-        bytes32 dataHash,
-        uint64 validFrom,
-        uint64 validTo,
-        bytes32 nonce,
-        bytes32 quantumKeyId,
-        uint32 xmssLeafIndex,
-        bytes32 policyHash,
-        bytes32 txHash,     // exact safeTxHash pin (Tier 1); bytes32(0) = field-matched queue (Tier 2)
+        PreApprovalRequest calldata req,
         bytes calldata ecdsaSignature,
         bytes calldata xmssSignature
     ) external returns (bytes32 preApprovalId);
@@ -405,13 +403,24 @@ interface IFermionWalletGuard is ITransactionGuard {
     function validatePreApproval(bytes32 preApprovalId) external view returns (bool valid, string memory reason);
     function revokePreApproval(bytes32 preApprovalId) external returns (bool revoked);
 
-    // Emergency circuit breaker: deny-all mode. Pausing is fast (guardian or Safe);
-    // unpausing requires Safe governance plus time lock.
+    // Emergency circuit breakers — two levels, both deny-all for their scope:
+    //   * Global pause: guardian only (on a shared singleton, any enrolled Safe must
+    //     not be able to freeze all others). Unpause: governance role + ADMIN_TIMELOCK.
+    //   * Per-Safe pause: fast and low-privilege — any single owner of the Safe, the
+    //     Safe itself, or its Quantum Administrator. Unpause: the Safe only, behind
+    //     ADMIN_TIMELOCK. Escape-hatch calls keep working while paused (no-brick).
     event GuardPaused(address indexed by);
     event GuardUnpaused(address indexed by);
-    function pause() external;
-    function unpause() external;
+    event SafePaused(address indexed safe, address indexed by);
+    event SafeUnpaused(address indexed safe);
+    function pause() external;                 // guardian
+    function requestUnpause() external;        // governance, starts ADMIN_TIMELOCK
+    function unpause() external;               // governance, after the timelock
     function paused() external view returns (bool);
+    function pauseSafe(address safe) external; // any owner / the Safe / its Administrator
+    function requestUnpauseSafe() external;    // the Safe, starts ADMIN_TIMELOCK
+    function unpauseSafe() external;           // the Safe, after the timelock
+    function safePaused(address safe) external view returns (bool);
 }
 ```
 
