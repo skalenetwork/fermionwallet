@@ -662,11 +662,38 @@ contract FermionWalletGuard is
         revert ModulesEnabledWithoutModuleGuard(safe);
     }
 
-    /// True iff this contract is wired as the Safe's module guard (Safe >= 1.5).
-    /// Always false on Safe <= 1.4.1 (slot empty / no module-guard support).
+    /// True iff this contract is wired as the Safe's module guard AND the Safe
+    /// actually consults it. Safe <= 1.4.1 never reads MODULE_GUARD_SLOT — its
+    /// execTransactionFromModule runs no guard at all — yet the slot is ordinary
+    /// storage there: a Safe downgraded from 1.5 keeps a stale value, and a pre-
+    /// enrollment delegatecall can plant one. Trusting the slot alone let such a
+    /// Safe enroll with, or enable, a module that bypasses this Guard entirely.
     function _isModuleGuard(address safe) private view returns (bool) {
         (bool ok, address moduleGuard) = _readSafeSlotAddress(safe, MODULE_GUARD_SLOT);
-        return ok && moduleGuard == address(this);
+        return ok && moduleGuard == address(this) && _honorsModuleGuard(safe);
+    }
+
+    /// Does this Safe's singleton call the module guard? Safe VERSION() "1.5"–"1.9"
+    /// or "2"–"9" major. Fails closed: no VERSION(), a non-canonical ABI string, or
+    /// an unrecognised shape (e.g. "1.10") counts as no module-guard support — which
+    /// only ever refuses modules, never admits one.
+    function _honorsModuleGuard(address safe) private view returns (bool) {
+        (bool ok, bytes memory ret) = safe.staticcall(abi.encodeWithSelector(ISafe.VERSION.selector));
+        // Canonical `string` return: offset 0x20, length >= 3, then the bytes.
+        if (!ok || ret.length < 96) return false;
+        uint256 offset;
+        uint256 len;
+        bytes32 w;
+        assembly ("memory-safe") {
+            offset := mload(add(ret, 32))
+            len := mload(add(ret, 64))
+            w := mload(add(ret, 96))
+        }
+        if (offset != 32 || len < 3) return false;
+        bytes1 major = w[0];
+        bytes1 minor = w[2];
+        if (w[1] != "." || minor < "0" || minor > "9") return false;
+        return (major == "1" && minor >= "5") || (major >= "2" && major <= "9");
     }
 
     /// ERC-1271 bypass re-check: a guarded Safe must have no fallback handler.
