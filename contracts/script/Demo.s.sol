@@ -7,33 +7,17 @@ import {Safe} from "@safe-global/safe-contracts/contracts/Safe.sol";
 import {SafeProxyFactory} from "@safe-global/safe-contracts/contracts/proxies/SafeProxyFactory.sol";
 import {MultiSendCallOnly} from "@safe-global/safe-contracts/contracts/libraries/MultiSendCallOnly.sol";
 import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
 import {PreApprovalEngine} from "../src/PreApprovalEngine.sol";
 import {XMSS} from "../src/XMSS.sol";
 
 /// Minimal ERC-20 for the demo treasury.
-contract DemoToken {
-    string public constant name = "Demo USD";
-    string public constant symbol = "dUSD";
-    uint8 public constant decimals = 18;
-    uint256 public totalSupply;
-    mapping(address => uint256) public balanceOf;
-    mapping(address => mapping(address => uint256)) public allowance;
-
-    event Transfer(address indexed from, address indexed to, uint256 value);
-
+contract DemoToken is ERC20("Demo USD", "dUSD") {
     function mint(address to, uint256 amount) external {
-        totalSupply += amount;
-        balanceOf[to] += amount;
-        emit Transfer(address(0), to, amount);
-    }
-
-    function transfer(address to, uint256 amount) external returns (bool) {
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
-        emit Transfer(msg.sender, to, amount);
-        return true;
+        _mint(to, amount);
     }
 }
 
@@ -133,7 +117,7 @@ contract Demo is Script {
     /// carries no quantum pre-approval. The Guard must revert it.
     function blocked(uint256 tokens) external {
         _load();
-        bytes memory data = abi.encodeCall(DemoToken.transfer, (vendor, tokens * 1 ether));
+        bytes memory data = abi.encodeCall(IERC20.transfer, (vendor, tokens * 1 ether));
         bytes32 txHash = safe.getTransactionHash(
             address(token), 0, data, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
         );
@@ -204,7 +188,7 @@ contract Demo is Script {
     function execute(uint256 tokens) external {
         _load();
         vm.startBroadcast(DEPLOYER_PK);
-        _safeExec(address(token), 0, abi.encodeCall(DemoToken.transfer, (vendor, tokens * 1 ether)));
+        _safeExec(address(token), 0, abi.encodeCall(IERC20.transfer, (vendor, tokens * 1 ether)));
         vm.stopBroadcast();
         console2.log("RESULT EXECUTED vendorBalance=%s", token.balanceOf(vendor) / 1 ether);
     }
