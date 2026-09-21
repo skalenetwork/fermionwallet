@@ -1,0 +1,10 @@
+# Foundry build output
+contracts/out/
+contracts/cache/
+
+# Python
+__pycache__/
+*.pyc
+
+# Pages build
+_site/
