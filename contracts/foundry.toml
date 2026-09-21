@@ -6,6 +6,9 @@ ffi = true
 optimizer = true
 optimizer_runs = 200
 via_ir = true
-fs_permissions = [{ access = "read", path = "./test/vectors" }]
+fs_permissions = [
+    { access = "read", path = "./test/vectors" },
+    { access = "read-write", path = "./demo-state" },
+]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

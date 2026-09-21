@@ -32,15 +32,20 @@ A key becomes **the quantum approval key** for a Safe in a single on-chain trans
 
 1. **Generate.** The Quantum Administrator generates the XMSS key with Ledger (see the key ceremony in [fermionwallet-add-on-service.md](./fermionwallet-add-on-service.md)); only the public root leaves the hardware boundary, attested by a Ledger-signed EIP-712 `QuantumKeyAttestation`.
 2. **Owners co-sign the root itself, off-chain.** Each Safe owner clear-signs EIP-712 `ApproveQuantumKey { safe, quantumAdmin, xmssRoot, xmssSeed, treeHeight, parameterSet, registryNonce, validUntil }` on their own hardware wallet (the public `xmssSeed` is a mandatory RFC 8391 verification input and is registered alongside the root). No opaque key IDs are ever signed — a compromised frontend cannot substitute a root (or swap in an attacker's Administrator address) without invalidating every signature.
-3. **Activate.** The Administrator submits `registerQuantumKey(safe, quantumAdmin, root, xmssSeed, treeHeight, parameterSet, validUntil, ledgerAttestation, ownerSigs)` — `quantumAdmin` is the Administrator's Ledger EOA, stored as the classical verifier address for every hybrid pre-approval. The contract verifies the owner threshold via the Safe's `checkSignatures`, verifies the attestation is signed by `quantumAdmin`, bumps `registryNonce`, and atomically sets the key **`Active`**. Any previously active key transitions to `Rotated`.
+3. **Activate.** The Administrator submits `registerQuantumKey(safe, quantumAdmin, root, xmssSeed, treeHeight, parameterSet, validUntil, ledgerAttestation, ownerSigs)` — `quantumAdmin` is the Administrator's Ledger EOA, stored as the classical verifier address for every hybrid pre-approval. The contract verifies the owner threshold via the Safe's legacy `checkSignatures(bytes32 dataHash, bytes data, bytes signatures)` entry point, verifies the attestation is signed by `quantumAdmin`, bumps `registryNonce`, and atomically sets the key **`Active`**. Any previously active key transitions to `Rotated`.
 
 Rules:
 - exactly **one `Active` key per Safe** at any time
+- XMSS root uniqueness is scoped **per Safe**: reusing a root on another Safe is harmless and allowed, but reusing the same root for the same Safe rejects
 - owner signatures are bound to registry contract, chain, Safe, `registryNonce`, and `validUntil` — stale or aborted ceremonies are provably unusable once the nonce advances
 - the Guard rejects pre-approvals signed by keys in any status other than `Active`
 - rotation follows the same one-shot path, additionally requiring the old-key XMSS signature proof per the Guard's `rotateQuantumKey` rules
 
 Neither side can act alone: the Administrator cannot activate a key without an owner-threshold set of signatures over the root, and the Safe owners cannot activate a root that was not generated and attested by the Administrator's hardware.
+
+### Owner-signature compatibility
+
+The registry uses Safe's legacy `checkSignatures(bytes32 dataHash, bytes data, bytes signatures)` form because it exists on Safe 1.3.0, 1.4.1, and 1.5.0. The v1.5-only overload must not be used for registration or rotation. Its selector is absent on older Safes, which either makes onboarding revert through the default fallback handler or, with no handler, can silently skip owner verification. The legacy form's `msg.sender`-as-executor caveat is harmless here because `msg.sender` is the registry contract, never a Safe owner.
 
 ## Key rotation procedure (Quantum Administrator)
 
@@ -71,15 +76,17 @@ If the Administrator's address changes (`newQuantumAdmin ≠ quantumAdmin`), own
 The old-key possession proof is impossible, so the path is Safe governance with a time lock:
 
 1. **If compromise is suspected:** an owner or the Administrator immediately calls `revokePreApproval` on anything pending and the Guard's pause path (fail-closed).
-2. Owners create an **ADMIN-class pre-approval–independent** governance action per the Guard's emergency rules (`ADMIN_TIMELOCK` applies; watchers can cancel during the delay) that revokes the old key (`Active` → `Revoked`).
-3. Once revoked, a **fresh registration** (not rotation) runs on a new device: full ceremony, owner co-signatures, new `registerQuantumKey` — the one-Active-key rule is satisfied because the old key is `Revoked`, not `Active`.
-4. The time lock is the security boundary: a thief holding only the stolen Ledger cannot beat the owners to a quiet key swap, and owners alone cannot instantly bypass the quantum layer.
+2. Owners create an **ADMIN-class pre-approval–independent** governance action per the Guard's emergency rules (`ADMIN_TIMELOCK` applies; watchers can cancel during the delay) that requests revocation of the currently active key (`requestKeyRevocation` records the exact `keyId`).
+3. At execution, the registry revokes only that recorded key. If the Safe's active key changed in the meantime, `executeKeyRevocation` reverts with `RevocationSuperseded`; an owner-co-signed rotation cancels the pending revocation because the rotation itself resolves the compromise.
+4. Once revoked, a **fresh registration** (not rotation) runs on a new device: full ceremony, owner co-signatures, new `registerQuantumKey` — the one-Active-key rule is satisfied because the old key is `Revoked`, not `Active`.
+5. The time lock is the security boundary: a thief holding only the stolen Ledger cannot beat the owners to a quiet key swap, and owners alone cannot instantly bypass the quantum layer.
 
 ### Invariants (all enforced on-chain)
 
 - Exactly one `Active` key per Safe before and after; the switch is atomic — there is no window with zero or two active keys.
 - Old-key pre-approvals created before rotation remain executable; the old key can create nothing new.
 - `registryNonce` bump invalidates any concurrently-running stale ceremony.
+- A stale revocation request can never destroy the successor key; it is bound to the key that was active when requested.
 - Rotation never touches Safe ownership, the Guard, or funds — it is key-layer only.
 
 ## Key states

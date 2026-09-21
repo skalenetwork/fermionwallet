@@ -49,7 +49,7 @@ contract MockSafe {
         return keccak256(abi.encode(address(this), to, value, keccak256(data), operation, _nonce));
     }
 
-    function checkSignatures(address, bytes32, bytes memory signatures) external pure {
+    function checkSignatures(bytes32, bytes calldata, bytes memory signatures) external pure {
         require(keccak256(signatures) == keccak256("owners-ok"), "GS026");
     }
 
@@ -213,13 +213,35 @@ contract FermionWalletGuardTest is Test {
         assertFalse(guard.safePaused(address(safe)));
     }
 
-    function test_newPauseCancelsPendingUnpause() public {
+    /// Anti-veto: a single owner's re-pause must NOT cancel a pending owner-threshold
+    /// unpause, and after the unpause a single key cannot re-pause until the cooldown
+    /// elapses — so one stolen key can't freeze an M-of-N Safe indefinitely.
+    function test_singleOwnerCannotVetoUnpause() public {
         vm.prank(owner);
         guard.pauseSafe(address(safe));
         safe.exec(address(guard), 0, abi.encodeCall(guard.requestUnpauseSafe, ()));
+        uint64 executableAt = guard.safeUnpauseExecutableAt(address(safe));
+
+        // Griefing re-pause: pending unpause survives untouched.
         vm.prank(owner);
         guard.pauseSafe(address(safe));
-        assertEq(guard.safeUnpauseExecutableAt(address(safe)), 0);
+        assertEq(guard.safeUnpauseExecutableAt(address(safe)), executableAt);
+
+        // Unpause matures and executes despite the re-pause.
+        vm.warp(executableAt);
+        safe.exec(address(guard), 0, abi.encodeCall(guard.unpauseSafe, ()));
+        assertFalse(guard.safePaused(address(safe)));
+
+        // Cooldown: the single owner cannot immediately re-pause…
+        uint64 cooldownUntil = guard.safePauseCooldownUntil(address(safe));
+        assertGt(cooldownUntil, block.timestamp);
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.PauseCooldown.selector, address(safe), cooldownUntil));
+        guard.pauseSafe(address(safe));
+
+        // …but the Safe itself (threshold) still can, and the owner can after cooldown.
+        safe.exec(address(guard), 0, abi.encodeCall(guard.pauseSafe, (address(safe))));
+        assertTrue(guard.safePaused(address(safe)));
     }
 
     // ── Fix 2: quantum-approved Guard removal works while paused ─────────────
@@ -296,7 +318,49 @@ contract FermionWalletGuardTest is Test {
         assertEq(guard.keyRevocationExecutableAt(address(safe)), 0);
     }
 
+    /// A pending revocation names an exact key; an owner-co-signed rotation cancels
+    /// it, so a stale request can never destroy the successor key.
+    function test_rotationCancelsPendingRevocation_neverRevokesSuccessor() public {
+        bytes32 oldKeyId = guard.safeToQuantumKey(address(safe));
+        guard.requestKeyRevocation(address(safe), block.timestamp + 1 days, "owners-ok");
+        assertEq(guard.keyRevocationKeyId(address(safe)), oldKeyId);
+
+        _rotate(5);
+        assertEq(guard.keyRevocationExecutableAt(address(safe)), 0);
+        assertEq(guard.keyRevocationKeyId(address(safe)), bytes32(0));
+
+        vm.warp(block.timestamp + 15 days);
+        vm.expectRevert(abi.encodeWithSelector(QuantumKeyRegistry.RevocationNotRequested.selector, address(safe)));
+        guard.executeKeyRevocation(address(safe));
+        assertEq(guard.safeToQuantumKey(address(safe)) == bytes32(0), false);
+    }
+
     // ── Fix 5: routine rotation keeps already-issued approvals executable ────
+
+    /// FIFO head must not permanently skip an approval that is merely scheduled for
+    /// the future: consuming a currently-valid twin leaves the scheduled one usable.
+    function test_futureValidApprovalSurvivesQueueConsumption() public {
+        // Scheduled first (earlier in the queue), then an identical one valid now.
+        PreApprovalEngine.PreApprovalRequest memory future = _baseRequest(bytes32(0));
+        future.token = address(token);
+        future.recipient = recipient;
+        future.amount = 400;
+        future.validFrom = uint64(block.timestamp + 7 days);
+        future.validTo = uint64(block.timestamp + 8 days);
+        (bytes memory ecdsa, bytes memory xmss) = _signRequest(future, 0);
+        guard.createPreApproval(future, ecdsa, xmss);
+
+        _approveTransfer(400, bytes32(0));
+
+        // Pays with the currently-valid entry (scanning over the scheduled one)…
+        safe.exec(address(token), 0, _transferData(400));
+        assertEq(token.balanceOf(recipient), 400);
+
+        // …and next week the scheduled one still pays.
+        vm.warp(block.timestamp + 7 days);
+        safe.exec(address(token), 0, _transferData(400));
+        assertEq(token.balanceOf(recipient), 800);
+    }
 
     function test_approvalSurvivesRoutineRotation() public {
         _approveTransfer(700, bytes32(0));
@@ -333,11 +397,37 @@ contract FermionWalletGuardTest is Test {
 
     // ── Fix 7: an XMSS root can be registered only once, ever ────────────────
 
+    /// Root dedup is PER SAFE (front-run resistance): another Safe registering the
+    /// same root must SUCCEED — a global check would let an attacker with a fake
+    /// Safe squat any root seen in the mempool and permanently DoS the victim's
+    /// registration and rotation. Same-Safe reuse stays forbidden (one-shot leaf
+    /// bitmap integrity).
     function test_duplicateRootRejected() public {
+        // Cross-Safe reuse of the already-registered root: allowed by design.
         MockSafe other = new MockSafe(owner);
-        (bytes32 root,,) = _xmss(4, 0, bytes32(0));
+        bytes32 otherId = this.registerExternal(other, 4);
+        assertEq(guard.safeToQuantumKey(address(other)), otherId);
+
+        // Same-Safe reuse: still rejected. `other` is enrolled now, so the reuse
+        // check is exercised via rotation back to its own current root.
+        (bytes32 root, bytes32 seed,) = _xmss(4, 0, bytes32(0));
+        uint256 regNonce = guard.registryNonce(address(other));
+        uint256 validUntil = block.timestamp + 1 days;
+        bytes32 digest = _typed(
+            keccak256(
+                abi.encode(
+                    ROTATE_KEY_TYPEHASH, address(other), otherId, admin, root, seed, uint32(4), PARAM_SET, regNonce, validUntil
+                )
+            )
+        );
+        bytes memory attestation = _sign(
+            keccak256(abi.encode(ATTEST_KEY_TYPEHASH, address(other), root, seed, uint32(4), PARAM_SET, regNonce))
+        );
+        (,, bytes memory oldProof) = _xmss(4, 1, digest);
         vm.expectRevert(abi.encodeWithSelector(QuantumKeyRegistry.RootAlreadyRegistered.selector, root));
-        this.registerExternal(other, 4);
+        guard.rotateQuantumKey(
+            address(other), admin, root, seed, 4, PARAM_SET, validUntil, oldProof, attestation, "owners-ok"
+        );
     }
 
     function registerExternal(MockSafe s, uint32 h) external returns (bytes32) {

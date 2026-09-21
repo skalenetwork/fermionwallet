@@ -57,6 +57,9 @@ contract FermionWalletGuard is
     error UnpauseNotRequested();
     error SafePausedError(address safe);
     error SafeNotPaused(address safe);
+    error FallbackHandlerForbidden(address safe, address handler);
+    error PauseCooldown(address safe, uint64 until);
+    error ModuleGuardNotWired(address safe);
 
     // ── Events ──────────────────────────────────────────────────────────────
 
@@ -72,6 +75,7 @@ contract FermionWalletGuard is
     event SelectorPolicyChanged(address indexed safe, bytes4 indexed selector, bool allowed);
     event TransactionChecked(address indexed safe, bytes32 indexed safeTxHash, bytes32 indexed preApprovalId);
     event ModuleTransactionChecked(address indexed safe, address indexed module, bytes32 indexed preApprovalId);
+    event FallbackHandlerAllowlisted(address indexed handler, bool allowed);
 
     // ── Roles / immutables / constants ──────────────────────────────────────
 
@@ -95,6 +99,14 @@ contract FermionWalletGuard is
     bytes4 private constant SEL_PERMIT =
         bytes4(keccak256("permit(address,address,uint256,uint256,uint8,bytes32,bytes32)"));
     bytes4 private constant SEL_SET_GUARD = IGuardManager.setGuard.selector;
+    bytes4 private constant SEL_SET_FALLBACK = bytes4(keccak256("setFallbackHandler(address)"));
+    bytes4 private constant SEL_ENABLE_MODULE = bytes4(keccak256("enableModule(address)"));
+    bytes4 private constant SEL_DISABLE_MODULE = bytes4(keccak256("disableModule(address,address)"));
+    bytes4 private constant SEL_SET_MODULE_GUARD = bytes4(keccak256("setModuleGuard(address)"));
+
+    /// Safe FallbackManager storage slot: keccak256("fallback_manager.handler.address").
+    uint256 private constant FALLBACK_HANDLER_SLOT =
+        0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
 
     /// MultiSendCallOnly packed leg header: uint8 op + address to + uint256 value + uint256 dataLength.
     uint256 private constant LEG_HEADER = 85;
@@ -111,6 +123,20 @@ contract FermionWalletGuard is
     /// Administrator) pauses instantly; only the Safe unpauses, after ADMIN_TIMELOCK.
     mapping(address safe => bool) public safePaused;
     mapping(address safe => uint64) public safeUnpauseExecutableAt;
+    /// Anti-veto cooldown: after an unpause, single-key actors (one owner, or the
+    /// Quantum Administrator) cannot re-pause until this timestamp — only the Safe
+    /// itself (owner threshold) can. Without it, one stolen/disgruntled key could
+    /// freeze an M-of-N Safe forever by re-pausing before every unpause matured.
+    mapping(address safe => uint64) public safePauseCooldownUntil;
+    /// ERC-1271 bypass mitigation: fallback handlers vetted to refuse (or quantum-gate)
+    /// isValidSignature. The Safe's handler answers off-chain owner-signature queries
+    /// (Permit, Permit2, order protocols) with NO Safe transaction and therefore no
+    /// Guard check — a quantum attacker with forged owner ECDSA signatures could drain
+    /// ERC-1271-accepting tokens without ever touching execTransaction. Enrollment and
+    /// every checked transaction require handler == 0 or an allowlisted handler.
+    /// Governance-curated (DEFAULT_ADMIN_ROLE); the stock CompatibilityFallbackHandler
+    /// must never be listed.
+    mapping(address handler => bool) public allowedFallbackHandlers;
 
     constructor(
         address multiSendCallOnly,
@@ -195,8 +221,33 @@ contract FermionWalletGuard is
         depth.tstore(true);
 
         // 5. Module-bypass mitigation: no enabled modules, or this contract wired
-        //    as the module guard (Safe >= 1.5).
-        _checkModulePosture(safe);
+        //    as the module guard (Safe >= 1.5). Exemptions so a bad posture can
+        //    always be remediated (no-brick): the quantum-approved Guard removal,
+        //    and the ADMIN self-calls that fix the posture itself (disableModule,
+        //    setModuleGuard). Entering the state is gated instead: enableModule is
+        //    rejected unless this Guard is already the module guard — which also
+        //    rejects it outright on Safe <= 1.4.1, where module transactions can
+        //    never be guarded and would bypass the quantum layer entirely.
+        bytes4 selfSelector =
+            (to == safe && operation == Enum.Operation.Call && data.length >= 4) ? bytes4(data) : bytes4(0);
+        bool moduleRemediation = selfSelector == SEL_DISABLE_MODULE || selfSelector == SEL_SET_MODULE_GUARD;
+        if (selfSelector == SEL_ENABLE_MODULE && !_isModuleGuard(safe)) revert ModuleGuardNotWired(safe);
+        if (!(isSetGuard && newGuard == address(0)) && !moduleRemediation) _checkModulePosture(safe);
+
+        // 5b. ERC-1271 bypass mitigation: a non-allowlisted fallback handler can
+        //     validate owner-signed messages (isValidSignature) with no Safe
+        //     transaction — Permit / Permit2 / order protocols would then move
+        //     funds without the Guard ever running. Skipped only for the quantum-
+        //     approved Guard removal (no-brick) and for the ADMIN self-call that
+        //     remediates the handler itself; the replacement handler must be
+        //     address(0) or allowlisted, and still needs a matured ADMIN approval.
+        (bool isSetFallback, address newHandler) = _setFallbackHandlerCall(safe, to, value, data, operation);
+        if (isSetFallback && newHandler != address(0) && !allowedFallbackHandlers[newHandler]) {
+            revert FallbackHandlerForbidden(safe, newHandler);
+        }
+        if (!(isSetGuard && newGuard == address(0)) && !isSetFallback) {
+            _checkFallbackPosture(safe);
+        }
 
         // 6. Gas-refund drain protection (MVP: no refunds at all).
         if (gasPrice != 0) revert GasRefundForbidden();
@@ -252,6 +303,7 @@ contract FermionWalletGuard is
         if (safePaused[safe]) revert SafePausedError(safe);
         _requireEnrolledActive(safe);
         if (operation != Enum.Operation.Call) revert ModuleDelegateCallForbidden(module);
+        _checkFallbackPosture(safe);
 
         moduleTxHash = keccak256(abi.encode(safe, to, value, keccak256(data), module));
         bytes32 id = _dispatch(safe, to, value, data, operation, bytes32(0));
@@ -337,6 +389,20 @@ contract FermionWalletGuard is
         return (true, newGuard);
     }
 
+    /// @dev Is this a Safe self-call to setFallbackHandler(newHandler)?
+    function _setFallbackHandlerCall(address safe, address to, uint256 value, bytes memory data, Enum.Operation operation)
+        private
+        pure
+        returns (bool isSetFallback, address newHandler)
+    {
+        if (to != safe || operation != Enum.Operation.Call || value != 0 || data.length != 36) return (false, address(0));
+        if (bytes4(data) != SEL_SET_FALLBACK) return (false, address(0));
+        assembly ("memory-safe") {
+            newHandler := mload(add(data, 36))
+        }
+        return (true, newHandler);
+    }
+
     // ── Per-Safe pause (fast, any owner) / unpause (slow, Safe governance) ──
 
     /// @notice Freeze all Guard-checked activity of one Safe, instantly. Callable by
@@ -344,14 +410,20 @@ contract FermionWalletGuard is
     ///         Administrator — fast and low-privilege so a compromised key holder
     ///         cannot front-run revocations. The emergency de-guard and the quantum-
     ///         approved Guard removal both keep working while paused (no-brick).
+    ///         Two anti-veto rules keep one stolen key from freezing the Safe forever:
+    ///         a re-pause never cancels a pending owner-threshold unpause, and after an
+    ///         unpause only the Safe itself may re-pause until the cooldown elapses.
     function pauseSafe(address safe) external {
         if (!enrolledSafe[safe]) revert NotEnrolledSafe(safe);
-        if (msg.sender != safe && !_isSafeOwner(safe, msg.sender)) {
-            bytes32 keyId = safeToQuantumKey[safe];
-            if (keyId == bytes32(0) || msg.sender != _keys[keyId].quantumAdmin) revert NotAuthorized();
+        if (msg.sender != safe) {
+            if (!_isSafeOwner(safe, msg.sender)) {
+                bytes32 keyId = safeToQuantumKey[safe];
+                if (keyId == bytes32(0) || msg.sender != _keys[keyId].quantumAdmin) revert NotAuthorized();
+            }
+            uint64 cooldownUntil = safePauseCooldownUntil[safe];
+            if (block.timestamp < cooldownUntil) revert PauseCooldown(safe, cooldownUntil);
         }
         safePaused[safe] = true;
-        safeUnpauseExecutableAt[safe] = 0; // a fresh pause cancels any pending unpause
         emit SafePaused(safe, msg.sender);
     }
 
@@ -372,6 +444,10 @@ contract FermionWalletGuard is
         if (block.timestamp < executableAt) revert UnpauseTimelocked(executableAt);
         safeUnpauseExecutableAt[safe] = 0;
         safePaused[safe] = false;
+        // Single-key actors (one owner / the Quantum Administrator) cannot re-pause
+        // during the cooldown — the threshold gets a guaranteed window to operate,
+        // e.g. to remove a griefing owner.
+        safePauseCooldownUntil[safe] = uint64(block.timestamp) + ADMIN_TIMELOCK;
         emit SafeUnpaused(safe);
     }
 
@@ -415,10 +491,25 @@ contract FermionWalletGuard is
         emit SelectorPolicyChanged(safe, selector, allowed);
     }
 
-    /// Enrollment hook: permit-list initialized to {transfer} only.
+    /// Enrollment hook: permit-list initialized to {transfer} only. Enrollment is
+    /// refused while the Safe carries a non-allowlisted fallback handler — the
+    /// onboarding flow must remove/replace it (and revoke pre-existing token and
+    /// Permit2 allowances) BEFORE the quantum key ceremony.
     function _afterEnrollment(address safe) internal override {
+        _checkFallbackPosture(safe);
+        // A Safe enrolling with modules already enabled (and unguarded) would be
+        // locked out from its first protected transaction — reject at the door.
+        _checkModulePosture(safe);
         allowedSelectors[safe][SEL_TRANSFER] = true;
         emit SelectorPolicyChanged(safe, SEL_TRANSFER, true);
+    }
+
+    /// @notice Governance curation of ERC-1271-safe fallback handlers. Handlers must
+    ///         refuse isValidSignature outright or gate it on a quantum approval.
+    function setFallbackHandlerAllowlist(address handler, bool allowed) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (handler == address(0)) revert ZeroAddress(); // zero means "no handler", always acceptable
+        allowedFallbackHandlers[handler] = allowed;
+        emit FallbackHandlerAllowlisted(handler, allowed);
     }
 
     // ── Class dispatch ──────────────────────────────────────────────────────
@@ -587,6 +678,32 @@ contract FermionWalletGuard is
             if (moduleGuard == address(this)) return;
         }
         revert ModulesEnabledWithoutModuleGuard(safe);
+    }
+
+    /// True iff this contract is wired as the Safe's module guard (Safe >= 1.5).
+    /// Always false on Safe <= 1.4.1 (slot empty / no module-guard support).
+    function _isModuleGuard(address safe) private view returns (bool) {
+        (bool ok, bytes memory slot) = safe.staticcall(
+            abi.encodeWithSignature(
+                "getStorageAt(uint256,uint256)",
+                uint256(0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947), // MODULE_GUARD_STORAGE_SLOT
+                1
+            )
+        );
+        if (!ok || slot.length < 96) return false;
+        return abi.decode(abi.decode(slot, (bytes)), (address)) == address(this);
+    }
+
+    /// ERC-1271 bypass re-check: the Safe must have no fallback handler, or one the
+    /// governance allowlist has vetted to refuse quantum-unsafe isValidSignature.
+    function _checkFallbackPosture(address safe) private view {
+        (bool ok, bytes memory slot) =
+            safe.staticcall(abi.encodeWithSignature("getStorageAt(uint256,uint256)", FALLBACK_HANDLER_SLOT, 1));
+        if (!ok || slot.length < 96) return; // no FallbackManager: nothing to bypass with
+        address handler = abi.decode(abi.decode(slot, (bytes)), (address));
+        if (handler != address(0) && !allowedFallbackHandlers[handler]) {
+            revert FallbackHandlerForbidden(safe, handler);
+        }
     }
 
     function _isDeniedSelector(bytes4 selector) private pure returns (bool) {

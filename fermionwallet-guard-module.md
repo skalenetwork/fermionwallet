@@ -266,6 +266,7 @@ interface IFermionWalletGuard is ITransactionGuard {
     event AdminPreApprovalCreated(bytes32 indexed id, address indexed safe, address indexed target, bytes32 dataHash, uint64 executableAt);
     event PreApprovalUsed(bytes32 indexed id, address indexed safe, address indexed recipient, uint256 amount);
     event PreApprovalRevoked(bytes32 indexed id, address indexed safe);
+    event FallbackHandlerAllowlistUpdated(address indexed handler, bool allowed);
 
     // Co-signed one-shot registration (see quantum-key-registry.md). Not bound to
     // any token: one Active key per Safe covers all assets. This contract is a
@@ -342,8 +343,10 @@ interface IFermionWalletGuard is ITransactionGuard {
     //       approvalQueue[commitment] → bytes32[] ids  (+ uint32 head pointer)
     //   Creation APPENDS (it does not revert on an existing entry), so identical
     //   recurring payouts — two 5,000 USDC transfers to the same vendor — queue
-    //   naturally. Consumption pops from head, skipping expired/revoked entries
-    //   (lazily advancing head, so stale approvals cannot block live ones).
+    //   naturally. Consumption pops from head, skipping only permanently dead entries
+    //   (used/revoked/expired/dead-key). A not-yet-valid head entry freezes
+    //   head advancement; later currently-valid entries may be consumed in place,
+    //   so scheduled approvals are not silently lost.
     //   The queue is bounded (MAX_COMMITMENT_QUEUE, default 16; creation reverts
     //   beyond it) to cap traversal gas. checkTransaction tries Tier 1 first,
     //   then Tier 2; ADMIN-class approvals additionally require the timelock
@@ -386,8 +389,9 @@ interface IFermionWalletGuard is ITransactionGuard {
     ) external returns (bytes32 preApprovalId);
 
     // ADMIN class: req.target must be the Safe itself (setGuard incl. address(0),
-    // setModuleGuard, enable/disableModule, owner/threshold changes) or this Guard
-    // (setSelectorPolicy — Guard policy mutations are ADMIN-governed too). Reverts
+    // setFallbackHandler, setModuleGuard, enable/disableModule, owner/threshold
+    // changes) or this Guard (setSelectorPolicy, setFallbackHandlerAllowlist —
+    // Guard policy mutations are ADMIN-governed too). Reverts
     // unless req.validFrom >= block.timestamp + ADMIN_TIMELOCK. Emits
     // AdminPreApprovalCreated so watchers can revoke during the delay. This is the
     // sanctioned unbrick path.
@@ -408,7 +412,10 @@ interface IFermionWalletGuard is ITransactionGuard {
     //     not be able to freeze all others). Unpause: governance role + ADMIN_TIMELOCK.
     //   * Per-Safe pause: fast and low-privilege — any single owner of the Safe, the
     //     Safe itself, or its Quantum Administrator. Unpause: the Safe only, behind
-    //     ADMIN_TIMELOCK. Escape-hatch calls keep working while paused (no-brick).
+    //     ADMIN_TIMELOCK. Re-pausing does not cancel a pending Safe unpause, and
+    //     after unpause a per-Safe ADMIN_TIMELOCK cooldown blocks single-key actors
+    //     from pausing again; only the Safe itself may pause during the cooldown.
+    //     Escape-hatch calls keep working while paused (no-brick).
     event GuardPaused(address indexed by);
     event GuardUnpaused(address indexed by);
     event SafePaused(address indexed safe, address indexed by);
@@ -421,6 +428,11 @@ interface IFermionWalletGuard is ITransactionGuard {
     function requestUnpauseSafe() external;    // the Safe, starts ADMIN_TIMELOCK
     function unpauseSafe() external;           // the Safe, after the timelock
     function safePaused(address safe) external view returns (bool);
+
+    // Governance-managed mitigation for Safe ERC-1271 fallback-handler bypasses.
+    // DEFAULT_ADMIN_ROLE may allowlist vetted handlers; zero handler is always OK.
+    function setFallbackHandlerAllowlist(address handler, bool allowed) external;
+    function fallbackHandlerAllowed(address handler) external view returns (bool);
 }
 ```
 
@@ -439,10 +451,11 @@ interface IFermionWalletGuard is ITransactionGuard {
 ## Access control rules
 
 - `checkTransaction(...)` must require that `msg.sender` is an enrolled Safe. Without this, anyone can call it directly and consume single-use pre-approvals, creating a denial-of-service on legitimate transfers.
-- `registerQuantumKey(...)` runs on a **shared singleton** whose caller is the Administrator's relayer EOA, so the target `safe` is an explicit parameter — it determines which Safe's `checkSignatures` is consulted and which `safeToQuantumKey[safe]` slot is written; `msg.sender` must never be used to infer the Safe. It must verify the owner co-signatures (Safe threshold, via `ISafe(safe).checkSignatures`) over an EIP-712 struct that binds the XMSS root itself, the `quantumAdmin` address, the `safe` address, chain ID, `registryNonce`, and a validity deadline — so a mempool front-runner cannot redirect a ceremony to a different Safe. It must verify that `ledgerAttestation` is signed by `quantumAdmin`, reject if the Safe already has an Active key, and bump the per-safe `registryNonce` on success.
+- `registerQuantumKey(...)` runs on a **shared singleton** whose caller is the Administrator's relayer EOA, so the target `safe` is an explicit parameter — it determines which Safe's `checkSignatures` is consulted and which `safeToQuantumKey[safe]` slot is written; `msg.sender` must never be used to infer the Safe. It must verify the owner co-signatures (Safe threshold, via the legacy `checkSignatures(bytes32,bytes,bytes)` form for Safe 1.3/1.4/1.5 portability) over an EIP-712 struct that binds the XMSS root itself, the `quantumAdmin` address, the `safe` address, chain ID, `registryNonce`, and a validity deadline — so a mempool front-runner cannot redirect a ceremony to a different Safe. It must verify that `ledgerAttestation` is signed by `quantumAdmin`, reject if the Safe already has an Active key, reject same-Safe root reuse while allowing cross-Safe reuse, and bump the per-safe `registryNonce` on success.
 - `rotateQuantumKey(...)` must additionally verify an XMSS possession proof by the **old** key over the new root (consuming one leaf), plus owner co-signatures as above. Emergency rotation without the old key must go through Safe governance with a time lock.
 - `revokePreApproval(...)` must only be callable by the enrolled Safe or the key holder that created the approval.
 - `createPreApproval(...)` (all classes) must verify **both hybrid halves** on-chain before storing the approval: the ECDSA half via `SignatureChecker.isValidSignatureNow` against the registered `quantumAdmin`, and the XMSS half against the registered `xmssRoot` with leaf-bitmap consumption. It must not accept unverified records, and a valid XMSS half with a missing/invalid ECDSA half must revert (the Ledger anchor is not optional).
+- Enrollment must verify Safe posture before accepting a Safe: no non-allowlisted fallback handler, and no unguarded modules. Operators must also revoke pre-existing token/Permit2 allowances before enrollment; allowances granted before the Guard cannot be policed by it.
 
 ## Module bypass — mandatory mitigation
 
@@ -451,10 +464,11 @@ Safe transaction guards are only invoked in the `execTransaction` path. Transact
 Required mitigations:
 
 - The Safe must have **no enabled modules**, verified at enrollment and re-checked in `checkTransaction`, or
-- On Safe v1.5.0+, a FermionWallet `IModuleGuard` must also be installed via `setModuleGuard(...)`, implementing `checkModuleTransaction(...)` and `checkAfterModuleExecution(...)` with the same policy checks.
+- On Safe v1.5.0+, this same FermionWallet contract must already be installed as the Safe's `IModuleGuard` via `setModuleGuard(...)`, implementing `checkModuleTransaction(...)` and `checkAfterModuleExecution(...)` with the same policy checks.
 
-**Module-guard architecture (resolved):** the tx guard and the module guard are **one contract**. `FermionWalletGuard` inherits `BaseTransactionGuard` *and* `BaseModuleGuard`, overrides `supportsInterface` to report both `type(ITransactionGuard).interfaceId` and `type(IModuleGuard).interfaceId` (per the note in "Contract header" above), and routes `checkModuleTransaction(to, value, data, operation, module)` through the same class-dispatch pipeline as `checkTransaction` — with two module-specific rules: `operation == DELEGATECALL` from a module is always rejected (no MultiSend exception), and the module address is logged in the consumption event. On Safe < 1.5.0 the same contract is deployed; the module-guard entry points are simply never wired, and enrollment enforces the "no enabled modules" rule instead. The Safe is enrolled with two calls in one ADMIN batch: `setGuard(guard)` and, on 1.5+, `setModuleGuard(guard)` — same address for both.
-- The Guard must reject any Safe transaction that calls `enableModule(...)` on the Safe itself unless it carries an explicit quantum authorization for a module change.
+**Module-guard architecture (resolved):** the tx guard and the module guard are **one contract**. `FermionWalletGuard` inherits `BaseTransactionGuard` *and* `BaseModuleGuard`, overrides `supportsInterface` to report both `type(ITransactionGuard).interfaceId` and `type(IModuleGuard).interfaceId` (per the note in "Contract header" above), and routes `checkModuleTransaction(to, value, data, operation, module)` through the same class-dispatch pipeline as `checkTransaction` — with two module-specific rules: `operation == DELEGATECALL` from a module is always rejected (no MultiSend exception), and the module address is logged in the consumption event. On Safe < 1.5.0 the module-guard entry points are never wired, so `enableModule` is rejected outright and enrollment enforces the "no enabled modules" rule.
+- `enableModule(...)` is rejected with `ModuleGuardNotWired` unless this Guard is already wired as the Safe's module guard. On Safe v1.5 the required order is two separate quantum-approved admin actions: `setModuleGuard(guard)` first, then `enableModule(...)`.
+- The module-posture check must exempt remediation self-calls: `disableModule(...)`, `setModuleGuard(...)`, and the quantum-approved `setGuard(address(0))` Guard removal path, so an unsafe module posture never blocks its own repair.
 
 ## Guard-removal and self-call protection
 
@@ -463,10 +477,19 @@ A Safe transaction whose target is the Safe itself can call `setGuard(address(0)
 The Guard must therefore:
 
 - treat any transaction with `to == safe` as a restricted administrative action,
-- require a dedicated, explicitly-scoped quantum authorization (distinct policyHash class) for `setGuard`, `setModuleGuard`, `enableModule`, `disableModule`, and owner/threshold changes,
+- require a dedicated, explicitly-scoped quantum authorization (distinct policyHash class) for `setGuard`, `setFallbackHandler`, `setModuleGuard`, `enableModule`, `disableModule`, and owner/threshold changes,
 - reject all other self-calls by default.
 
 Note the operational trade-off: a buggy Guard can brick the Safe (every tx reverts, including the tx to remove the Guard). This is resolved by the **pre-approval class system** below plus the time-locked emergency de-guard path — together they guarantee the no-brick invariant.
+
+## ERC-1271 fallback-handler mitigation
+
+Safe's default `CompatibilityFallbackHandler` can validate owner ECDSA signatures through `isValidSignature` without creating a Safe transaction, which lets Permit/Permit2 and signature-order protocols bypass the Guard. FermionWallet therefore treats fallback-handler posture as part of enrollment and every checked transaction:
+
+- `DEFAULT_ADMIN_ROLE` manages a vetted handler allowlist via `setFallbackHandlerAllowlist`; `address(0)` is always allowed.
+- `checkTransaction`, `checkModuleTransaction`, and enrollment read the Safe fallback-handler slot and revert if it is nonzero and not allowlisted.
+- Remediation is exempt: quantum-approved `setGuard(address(0))` removal and the ADMIN self-call `setFallbackHandler(...)` are never blocked; the new handler must be `address(0)` or allowlisted.
+- Operators must revoke pre-existing token and Permit2 allowances before enrollment, because allowances created before the Guard was installed cannot be retroactively controlled.
 
 ## Pre-approval classes
 
@@ -591,7 +614,8 @@ The target call executed by the Safe can re-enter `Safe.execTransaction`, causin
 
 - The Guard must support a deny-all `pause()` that makes every `checkTransaction` revert.
 - Pausing must be fast and low-privilege (a designated guardian or any Safe owner) because a compromised key holder can otherwise front-run revocations with an execution.
-- Unpausing must be slow and high-privilege: Safe governance plus a time lock.
+- Unpausing must be slow and high-privilege: Safe governance plus a time lock. A re-pause must not cancel a pending owner-threshold unpause request; the timer survives and unpause executes at maturity.
+- After unpause, a per-Safe cooldown of `ADMIN_TIMELOCK` blocks single-key actors (individual owners and the Quantum Administrator) from re-pausing. Only the Safe itself, via owner-threshold transaction, may pause during the cooldown.
 - Pausing fails closed — this is the correct failure direction for a security guard.
 
 ### Signature storage and verification cost
@@ -649,7 +673,7 @@ The following checks are the minimum correctness review for the FermionWallet gu
 8. If `msgSender` is used as trust input, it must be treated as merely the initiating caller and not as proof of a valid quantum authorization.
 9. The guard must not trust the base transaction calldata alone; it must decode and validate the exact target call details.
 10. The guard must not hold the final authority to transfer funds directly. It only decides to allow or reject the Safe transaction.
-11. If a module is enabled on the Safe, the tx guard is bypassed via `execTransactionFromModule`; the guard must detect enabled modules or a module guard must be installed.
+11. If a module is enabled on the Safe, the tx guard is bypassed via `execTransactionFromModule`; the guard must detect enabled modules or a module guard must be installed. `enableModule` must be rejected unless this Guard is already wired as module guard, and remediation calls must remain possible.
 12. If a random address calls `checkTransaction` directly, it must revert (caller is not an enrolled Safe) so approvals cannot be burned by attackers.
 13. If the Safe tx targets the Safe itself (`setGuard`, `enableModule`, owner changes), it must be rejected unless explicitly quantum-authorized as an admin action.
 14. If `gasPrice != 0` with an unapproved `gasToken`/`refundReceiver`, the guard must revert (refund drain protection).
@@ -657,6 +681,7 @@ The following checks are the minimum correctness review for the FermionWallet gu
 16. If the target call re-enters `Safe.execTransaction` (nested Safe tx), the guard's depth tracking must detect it and revert.
 17. If the guard is paused, every `checkTransaction` must revert (deny-all, fail-closed).
 18. If the decoded selector is `approve`, `increaseAllowance`, `permit`, or `transferFrom`, the guard must revert — allowance grants are equivalent to transfers.
+18a. If the Safe has a non-allowlisted nonzero fallback handler, enrollment and every checked transaction must revert except remediation (`setFallbackHandler` to zero/allowlisted or approved Guard removal).
 19. If the target is `MultiSend` (the delegatecall-capable variant) the guard must revert. `MultiSendCallOnly` is permitted only at the pinned canonical address, only with a batch `PAYLOAD` pre-approval binding `keccak256` of the full batch calldata, and only after the per-leg structural checks in "Batching (MultiSend)" pass.
 20. If a pre-approval window is shorter than the minimum granularity, `createPreApproval` must revert (timestamp-manipulation margin).
 21. If `ITransactionGuard` / `BaseTransactionGuard` / `Enum` / ERC165 are copied into this repo instead of imported from `@safe-global/safe-contracts`, that is a defect (`interfaceId` can disagree with `GuardManager` → `GS300`).
@@ -677,6 +702,7 @@ The Guard must:
 - confirm key status is active and not rotated or revoked,
 - enforce chain binding and domain separation,
 - ensure the approval is within its validity window and unused,
+- enforce fallback-handler and module posture before allowing normal transactions,
 - reject any transaction that does not match the exact authorization.
 
 The Guard is the enforcement layer. The backend service creates and validates the pre-approval, but the final decision happens on-chain in the Safe Guard.
@@ -745,7 +771,7 @@ The major problems fixed here are:
 - `delegatecall` risk explicitly called out as a rejection condition for the MVP.
 - `msgSender` misuse avoided: it is not the second authorization; it is only a transaction context field.
 - Post-execution semantics clarified: `checkAfterExecution` is not the primary authorization gate.
-- Module bypass closed: enabled modules bypass the tx guard; the spec now requires no modules or a paired `IModuleGuard`.
+- Module bypass closed: enabled modules bypass the tx guard; the spec now requires no modules or a paired `IModuleGuard`, rejects `enableModule` until the module guard is wired, and exempts remediation calls.
 - `checkTransaction` caller restriction added: prevents attackers from burning single-use approvals.
 - Self-call/guard-removal bypass closed: `setGuard`, `enableModule`, and owner changes require explicit admin authorization.
 - Refund-drain attack closed: `gasPrice`/`gasToken`/`refundReceiver` constrained by policy.
@@ -753,9 +779,9 @@ The major problems fixed here are:
 - Key rotation now requires old-key + new-key signature proofs instead of an unauthenticated call.
 - Bricking risk addressed: time-locked emergency path to remove the Guard so funds cannot be permanently frozen.
 - Reentrancy via nested Safe transactions closed with depth tracking.
-- Emergency deny-all pause added (fast pause, time-locked unpause) to beat revocation front-running.
+- Emergency deny-all pause added (fast pause, time-locked unpause) to beat revocation front-running, with anti-veto cooldown so one owner or the Administrator cannot freeze the Safe forever.
 - On-chain signature-bytes storage removed (hash only); PQ verification gas bounded; `checkTransaction` kept O(1).
-- Allowance-based exfiltration closed: `approve`/`increaseAllowance`/`permit`/`transferFrom` denied by selector allowlist.
+- Allowance-based exfiltration closed: `approve`/`increaseAllowance`/`permit`/`transferFrom` denied by selector allowlist, and ERC-1271 fallback-handler bypasses blocked by a governance allowlist.
 - Batching supported via pinned `MultiSendCallOnly` only: one hash-bound pre-approval per batch, on-chain per-leg structural checks; delegatecall-capable `MultiSend` rejected always.
 - Timestamp-manipulation margin enforced via minimum approval-window granularity.
 - Non-upgradeable deployment, zero-address checks, custom errors, no `tx.origin`, locked compiler, Slither + audit required.
@@ -776,6 +802,9 @@ Before production deployment, FermionWallet must ensure:
 - the Safe policy allowlist and amount caps are enforced in the Guard,
 - an integration test exists that deploys a real Safe + Guard, pins a pre-approval to the `safeTxHash` of nonce `N`, executes at nonce `N`, and asserts the Guard's `getTransactionHash(..., nonce() - 1)` recomputation matches (catches the nonce off-by-one and Safe-version hash drift),
 - fuzz/negative tests cover malformed MultiSend batches (truncated leg header, overrunning `dataLength`, trailing bytes, > `maxBatchLegs`) — all must revert cheaply,
+- tests assert fallback-handler posture enforcement and the remediation exemptions (`setFallbackHandler` to zero/allowlisted and quantum-approved Guard removal),
+- tests assert `enableModule` rejects until the Guard is wired as module guard, while `disableModule`/`setModuleGuard` remediation is not deadlocked,
+- tests assert re-pause does not cancel a pending unpause and the post-unpause cooldown blocks single-key pausers,
 - a test asserts the emergency de-guard selector allow executes **before** the pause check (`requestEmergencyDeGuard` succeeds while the Guard is paused),
 - the contract is audited and reviewed under the actual Safe execution semantics before mainnet use.
 

@@ -6,6 +6,19 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {XMSS} from "./XMSS.sol";
 
+/// @dev Version-portable owner-threshold check. Safe v1.3.0 and v1.4.1 expose ONLY
+///      `checkSignatures(bytes32,bytes,bytes)`; v1.5.0 keeps it as a compatibility
+///      overload. The v1.5-only `checkSignatures(address,bytes32,bytes)` form must
+///      never be used here: on ≤ v1.4.1 its selector matches nothing, and a Safe
+///      WITHOUT a fallback handler then returns empty success from FallbackManager —
+///      silently skipping owner verification entirely (with the default
+///      CompatibilityFallbackHandler it reverts instead, blocking onboarding).
+///      The legacy form's `msg.sender`-as-executor hazard (owner pre-approved hashes)
+///      does not apply: msg.sender is this registry contract, never a Safe owner.
+interface ISafeLegacySignatures {
+    function checkSignatures(bytes32 dataHash, bytes calldata data, bytes memory signatures) external view;
+}
+
 /// @title QuantumKeyRegistry — co-signed lifecycle of the Quantum Administrator's XMSS key
 /// @notice On-chain registry per quantum-key-registry.md. Exactly one `Active` key per
 ///         Safe; activation is a co-signed one-shot: owner-threshold EIP-712 signatures
@@ -57,6 +70,7 @@ abstract contract QuantumKeyRegistry is EIP712 {
     error LeafIndexMismatch(uint32 expected, uint32 actual);
     error RevocationNotRequested(address safe);
     error RevocationTimelocked(uint64 executableAt);
+    error RevocationSuperseded(address safe, bytes32 requestedKeyId);
     error NotAuthorized();
     error RootAlreadyRegistered(bytes32 xmssRoot);
 
@@ -105,11 +119,24 @@ abstract contract QuantumKeyRegistry is EIP712 {
     mapping(bytes32 quantumKeyId => mapping(uint256 => uint256)) private _usedLeaves;
     /// Pending emergency revocations: safe => executableAt (0 = none pending).
     mapping(address safe => uint64) public keyRevocationExecutableAt;
-    /// Every XMSS root ever registered, on any Safe, in any status. A root is a
+    /// The exact key each pending revocation names. Execution revokes THIS key only:
+    /// revoking "whatever is active" would let a stale request destroy a key that was
+    /// legitimately rotated in (owner-co-signed) while the request matured.
+    mapping(address safe => bytes32) public keyRevocationKeyId;
+    /// Every XMSS root ever registered by a given Safe, in any status. A root is a
     /// one-shot identity: re-registering it would start a fresh, empty used-leaf
     /// bitmap under a new quantumKeyId and silently disable the on-chain leaf-reuse
     /// check that backs up the Ledger's counter.
-    mapping(bytes32 xmssRoot => bool) public rootRegistered;
+    ///
+    /// Deliberately scoped PER SAFE, not global. A global registry would let anyone
+    /// front-run a pending registration: the root is public calldata in the mempool,
+    /// and `safe` is only self-authenticated (its own `checkSignatures`), so an
+    /// attacker contract with a no-op `checkSignatures` could claim any root first
+    /// and permanently DoS the victim's enrollment and rotation for one tx of gas.
+    /// Cross-Safe root reuse harms only the reuser (desynced leaf bitmaps), and every
+    /// hybrid pre-approval digest binds the Safe address, so a squatted root under an
+    /// attacker's fake Safe is useless against the legitimate one.
+    mapping(address safe => mapping(bytes32 xmssRoot => bool)) public rootRegistered;
 
     constructor(uint64 emergencyRotationTimelock) {
         EMERGENCY_ROTATION_TIMELOCK = emergencyRotationTimelock;
@@ -166,7 +193,7 @@ abstract contract QuantumKeyRegistry is EIP712 {
     ) external returns (bytes32 quantumKeyId) {
         if (safeToQuantumKey[safe] != bytes32(0)) revert SafeAlreadyEnrolled(safe);
         _validateKeyParams(safe, quantumAdmin, xmssRoot, xmssSeed, treeHeight, parameterSet);
-        if (rootRegistered[xmssRoot]) revert RootAlreadyRegistered(xmssRoot);
+        if (rootRegistered[safe][xmssRoot]) revert RootAlreadyRegistered(xmssRoot);
         if (block.timestamp > validUntil) revert SignatureExpired(validUntil);
 
         uint256 nonce = registryNonce[safe];
@@ -179,8 +206,9 @@ abstract contract QuantumKeyRegistry is EIP712 {
                 )
             )
         );
-        // executor = address(0): the relayer must never count toward the threshold.
-        ISafe(payable(safe)).checkSignatures(address(0), ownerDigest, ownerSignatures);
+        // Verified via the legacy overload (portable across Safe 1.3.0/1.4.1/1.5.0);
+        // the relayer never counts toward the threshold (executor is this contract).
+        ISafeLegacySignatures(safe).checkSignatures(ownerDigest, "", ownerSignatures);
 
         _verifyAttestation(safe, quantumAdmin, xmssRoot, xmssSeed, treeHeight, parameterSet, nonce, ledgerAttestation);
 
@@ -209,7 +237,7 @@ abstract contract QuantumKeyRegistry is EIP712 {
     ) external returns (bytes32 newQuantumKeyId) {
         KeyRegistration storage oldKey = _activeKey(safe);
         _validateKeyParams(safe, newQuantumAdmin, newXmssRoot, newXmssSeed, treeHeight, parameterSet);
-        if (rootRegistered[newXmssRoot]) revert RootAlreadyRegistered(newXmssRoot);
+        if (rootRegistered[safe][newXmssRoot]) revert RootAlreadyRegistered(newXmssRoot);
         if (block.timestamp > validUntil) revert SignatureExpired(validUntil);
 
         uint256 nonce = registryNonce[safe];
@@ -230,7 +258,7 @@ abstract contract QuantumKeyRegistry is EIP712 {
             )
         );
 
-        ISafe(payable(safe)).checkSignatures(address(0), digest, ownerSignatures);
+        ISafeLegacySignatures(safe).checkSignatures(digest, "", ownerSignatures);
         _verifyAttestation(safe, newQuantumAdmin, newXmssRoot, newXmssSeed, treeHeight, parameterSet, nonce, ledgerAttestation);
         // Possession proof: the old key signs the same digest, one leaf consumed.
         _verifyAndConsumeXmss(oldKey.quantumKeyId, digest, oldKeyXmssProof);
@@ -238,6 +266,15 @@ abstract contract QuantumKeyRegistry is EIP712 {
         bytes32 oldId = oldKey.quantumKeyId;
         oldKey.status = KeyStatus.Rotated;
         oldKey.rotatedAt = uint64(block.timestamp);
+
+        // An owner-co-signed rotation supersedes any pending revocation of the old
+        // key: the compromise it addressed is resolved, and the successor key must
+        // never be destroyed by the stale request.
+        if (keyRevocationExecutableAt[safe] != 0) {
+            keyRevocationExecutableAt[safe] = 0;
+            keyRevocationKeyId[safe] = bytes32(0);
+            emit KeyRevocationCancelled(safe, oldId);
+        }
 
         newQuantumKeyId = _storeKey(safe, newQuantumAdmin, newXmssRoot, newXmssSeed, treeHeight, parameterSet, nonce);
         emit QuantumKeyRotated(oldId, newQuantumKeyId, safe);
@@ -256,10 +293,11 @@ abstract contract QuantumKeyRegistry is EIP712 {
         bytes32 digest = _hashTypedDataV4(
             keccak256(abi.encode(REVOKE_KEY_TYPEHASH, safe, k.quantumKeyId, registryNonce[safe], validUntil))
         );
-        ISafe(payable(safe)).checkSignatures(address(0), digest, ownerSignatures);
+        ISafeLegacySignatures(safe).checkSignatures(digest, "", ownerSignatures);
 
         uint64 executableAt = uint64(block.timestamp) + EMERGENCY_ROTATION_TIMELOCK;
         keyRevocationExecutableAt[safe] = executableAt;
+        keyRevocationKeyId[safe] = k.quantumKeyId;
         emit KeyRevocationRequested(safe, k.quantumKeyId, executableAt);
     }
 
@@ -272,6 +310,7 @@ abstract contract QuantumKeyRegistry is EIP712 {
         if (msg.sender != safe) revert NotAuthorized();
         if (keyRevocationExecutableAt[safe] == 0) revert RevocationNotRequested(safe);
         keyRevocationExecutableAt[safe] = 0;
+        keyRevocationKeyId[safe] = bytes32(0);
         emit KeyRevocationCancelled(safe, k.quantumKeyId);
     }
 
@@ -282,12 +321,19 @@ abstract contract QuantumKeyRegistry is EIP712 {
         if (executableAt == 0) revert RevocationNotRequested(safe);
         if (block.timestamp < executableAt) revert RevocationTimelocked(executableAt);
 
-        KeyRegistration storage k = _activeKey(safe);
-        k.status = KeyStatus.Revoked;
+        // Revoke exactly the key the request named. If an owner-co-signed rotation
+        // replaced it while the request matured, the request is void (the rotation
+        // already addressed the compromise) — never revoke the successor key.
+        bytes32 keyId = keyRevocationKeyId[safe];
         keyRevocationExecutableAt[safe] = 0;
+        keyRevocationKeyId[safe] = bytes32(0);
+        if (safeToQuantumKey[safe] != keyId) revert RevocationSuperseded(safe, keyId);
+
+        KeyRegistration storage k = _keys[keyId];
+        k.status = KeyStatus.Revoked;
         safeToQuantumKey[safe] = bytes32(0);
         registryNonce[safe] = registryNonce[safe] + 1; // kill concurrent stale ceremonies
-        emit QuantumKeyRevoked(k.quantumKeyId, safe);
+        emit QuantumKeyRevoked(keyId, safe);
     }
 
     // ── XMSS leaf consumption (single enforcement point) ────────────────────
@@ -382,7 +428,7 @@ abstract contract QuantumKeyRegistry is EIP712 {
             useCounter: 0
         });
         safeToQuantumKey[safe] = quantumKeyId;
-        rootRegistered[xmssRoot] = true;
+        rootRegistered[safe][xmssRoot] = true;
         enrolledSafe[safe] = true;
         registryNonce[safe] = nonce + 1;
     }

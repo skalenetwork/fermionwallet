@@ -336,29 +336,43 @@ abstract contract PreApprovalEngine is QuantumKeyRegistry {
             id = bytes32(0); // pinned but dead (expired/revoked/mismatched) — fall through
         }
 
-        // Tier 2 — field-matched FIFO with lazy head advance.
+        // Tier 2 — field-matched FIFO with lazy head advance. The head only advances
+        // past permanently dead entries (used / revoked / expired / dead key); an
+        // entry that is merely not-yet-valid (future validFrom) stays in the queue,
+        // and consuming a later entry over it does not move the head past it —
+        // otherwise a scheduled approval would be silently lost and its leaf wasted.
         bytes32 c = _commitment(expected);
         bytes32[] storage q = _queue[c];
-        uint256 head = _queueHead[c];
+        uint256 i = _queueHead[c];
         uint256 len = q.length;
-        while (head < len) {
-            PreApproval storage a = _approvals[q[head]];
+        bool advance = true;
+        while (i < len) {
+            PreApproval storage a = _approvals[q[i]];
             if (_isConsumable(a)) {
-                _queueHead[c] = head + 1;
+                if (advance) _queueHead[c] = i + 1;
                 _markUsed(a);
                 return a.id;
             }
-            // Expired, revoked, or already used: permanently skip (leaf already burned).
+            if (_isPendingValidity(a)) {
+                advance = false; // still live, just early: keep it at/behind the head
+            } else if (advance) {
+                _queueHead[c] = i + 1; // permanently dead: skip forever
+            }
             unchecked {
-                ++head;
+                ++i;
             }
         }
-        _queueHead[c] = head;
         revert NoMatchingPreApproval(safe, c, safeTxHash);
     }
 
     function _isConsumable(PreApproval storage a) private view returns (bool) {
         return a.id != bytes32(0) && !a.used && !a.revoked && block.timestamp >= a.validFrom
+            && block.timestamp <= a.validTo && _keyUsable(a.quantumKeyId);
+    }
+
+    /// Alive but not yet valid: must never be permanently skipped by the queue head.
+    function _isPendingValidity(PreApproval storage a) private view returns (bool) {
+        return a.id != bytes32(0) && !a.used && !a.revoked && block.timestamp < a.validFrom
             && block.timestamp <= a.validTo && _keyUsable(a.quantumKeyId);
     }
 
