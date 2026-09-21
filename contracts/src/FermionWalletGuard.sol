@@ -600,7 +600,9 @@ contract FermionWalletGuard is
             if (op != 0) revert MalformedBatch(); // CALL only (redundant with MultiSendCallOnly, checked anyway)
             if (dataLength > txsLen - offset - LEG_HEADER) revert MalformedBatch(); // overrun / truncation
             // No admin ops smuggled inside batches — those go through ADMIN alone.
-            if (legTo == safe || legTo == address(this) || legTo == MULTISEND_CALL_ONLY) {
+            // address(0) is the Safe too: MultiSendCallOnly rewrites a zero leg
+            // target to address(this), which under delegatecall is the Safe.
+            if (legTo == safe || legTo == address(0) || legTo == address(this) || legTo == MULTISEND_CALL_ONLY) {
                 revert ForbiddenBatchLegTarget(legTo);
             }
             if (dataLength >= 4) {
