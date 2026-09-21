@@ -48,7 +48,8 @@ A FermionWallet release is a set of versioned artifacts published together under
 | A7 | Add-on service image | service source | `ghcr.io/skalenetwork/fermionwallet-service`, pinned by digest | [Service deployment §3](./fermionwallet-gnosis-service-deployment.md#3-add-on-service-infrastructure-specification) |
 | A8 | Documentation and product site | `*.md`, `site/` | GitHub, GitHub Pages | this repository |
 | A9 | Release notes | GitHub Release | GitHub Releases | §6.7 |
-| A10 | Demo container: local anvil chain, real Safe v1.5.0, this release's Guard, web UI | `demo/Dockerfile` | `ghcr.io/skalenetwork/fermionwallet-demo:<tag>` (and `:latest` for non-prerelease tags), smoke-tested before push; digest in the release notes | `.github/workflows/release.yml` |
+| A10 | Demo container: local anvil chain, real Safe v1.5.0 (2-of-3), this release's Guard, simulated Ledger, web UI | `demo/Dockerfile` | `ghcr.io/skalenetwork/fermionwallet-demo:<tag>` (and `:latest` for non-prerelease tags), smoke-tested before push; digest in the release notes | `.github/workflows/release.yml` |
+| A11 | Safe{Wallet} demo: Compose stack running the open-source Safe{Wallet} UI, Client Gateway, Config Service and Transaction Service against A10 (`DEMO_MODE=wallet`: canonical Safe v1.4.1, 1-of-1), with FermionWallet as a listed Safe App | `demo/wallet/` | UI image `ghcr.io/skalenetwork/fermionwallet-demo-wallet:<tag>` (and `:latest`); release asset `fermionwallet-demo-wallet-<tag>.tar.gz` (Compose bundle whose `.env` pins both FermionWallet images by digest) plus its SHA-256; tested in headless Chrome before push (`demo/wallet/e2e`) | [demo/wallet/README](./demo/wallet/README.md) |
 
 Leaf consumption is enforced by the registry's used-leaf bitmap inside the Guard; there is no separate stateful XMSS wrapper.
 

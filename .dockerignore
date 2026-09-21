@@ -8,3 +8,5 @@ site
 app
 assets
 *.md
+demo/wallet/e2e/node_modules
+demo/wallet/e2e/screenshots

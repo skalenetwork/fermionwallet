@@ -12,7 +12,9 @@
 >
 > Add it in Safe{Wallet} under *Apps → My custom apps → Add custom Safe App*. Only ever copy this URL from this README — never from an email, chat message or search result. The app is a preview: it shows your Safe's FermionWallet readiness (Guard and fallback-handler status); approvals and the key ceremony are not live yet, and the contracts are not audited.
 >
-> **Try it locally:** each release ships a demo container — a local chain with a real Safe and the FermionWallet Guard, plus a web UI. Run `docker run --rm -p 8080:8080 -p 8545:8545 ghcr.io/skalenetwork/fermionwallet-demo:latest` and open http://localhost:8080 (available once the first release with the demo is tagged).
+> **Try it locally:** each release ships a demo container: a local chain with a real Safe, the FermionWallet Guard and a simulated Ledger, plus a web UI. Run `docker run --rm -p 8080:8080 -p 8545:8545 ghcr.io/skalenetwork/fermionwallet-demo:latest` and open http://localhost:8080.
+>
+> **Try it in the real Safe{Wallet}:** `cd demo/wallet && docker compose up -d --wait`, then open http://localhost:8000. This runs the open-source Safe{Wallet} stack locally with FermionWallet as a Safe App. You try to pay from the Safe and Safe{Wallet} can't execute it; you approve the payment on the simulated Ledger and it goes through. See [demo/wallet](./demo/wallet/README.md). Both demos are available once the first release that includes them is tagged.
 
 Banks, qualified custodians, and enterprise treasuries already run the gold-standard stack: Gnosis Safe, policy engines, hardware keys, and regulated operations. FermionWallet does not replace that stack. It **hardens it** — adding a cryptographically independent second gate that sits in the execution path of every high-value transfer.
 

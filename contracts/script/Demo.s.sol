@@ -23,7 +23,8 @@ contract DemoToken is ERC20("Demo USD", "dUSD") {
 
 /// Self-contained demo driver, executed by the container against a local anvil.
 /// Entry points (forge script -s):
-///   setup()            deploy Safe v1.5.0 + Guard, register the XMSS key, set the Guard
+///   setup()            deploy Safe v1.5.0 (2-of-3) + Guard, register the XMSS key, set the Guard
+///   setupWallet()      same on the canonical Safe v1.4.1 (L2, 1-of-1) for the Safe{Wallet} stack
 ///   blocked(uint256)   SIMULATION: owner-signed transfer with NO quantum approval → guard revert
 ///   approve(uint256)   create a hybrid ECDSA+XMSS pre-approval for a vendor payout
 ///   execute(uint256)   owner-signed execTransaction for that payout → allowed by the Guard
@@ -50,6 +51,11 @@ contract Demo is Script {
     bytes32 internal constant PRE_APPROVAL_TYPEHASH = keccak256(
         "PreApproval(address safe,uint8 approvalClass,address token,address recipient,uint256 amount,address target,uint256 value,bytes32 dataHash,uint64 validFrom,uint64 validTo,bytes32 nonce,bytes32 quantumKeyId,uint32 xmssLeafIndex,bytes32 policyHash,bytes32 txHash)"
     );
+    // Safe v1.4.1 canonical deployments (safe-global/safe-deployments).
+    address internal constant SAFE_L2_141 = 0x29fcB43b46531BcA003ddC8FCB67FFE91900C762;
+    address internal constant SAFE_PROXY_FACTORY_141 = 0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67;
+    address internal constant MULTI_SEND_CALL_ONLY_141 = 0x9641d764fc13c8B624c04430C7356C1C7C8102e2;
+
     bytes32 internal constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
@@ -64,27 +70,44 @@ contract Demo is Script {
     // ═════════════════════════════ setup ════════════════════════════════════
 
     function setup() external {
-        vendor = vm.addr(0xCAFE);
-
         vm.startBroadcast(DEPLOYER_PK);
         Safe singleton = new Safe();
         SafeProxyFactory factory = new SafeProxyFactory();
         MultiSendCallOnly msco = new MultiSendCallOnly();
-        token = new DemoToken();
+        vm.stopBroadcast();
 
         address[] memory owners = new address[](3);
         owners[0] = vm.addr(OWNER1_PK);
         owners[1] = vm.addr(OWNER2_PK);
         owners[2] = vm.addr(OWNER3_PK);
+        _setup(address(singleton), address(factory), address(msco), owners, 2);
+    }
+
+    /// Safe{Wallet} variant: the chain already carries Safe v1.4.1 at its canonical
+    /// addresses (demo/wallet/safe-1.4.1-code.json, installed with anvil_setCode), so
+    /// the real Safe{Wallet} UI, Client Gateway and Transaction Service recognise the
+    /// Safe. SafeL2 singleton (the Transaction Service indexes L2 events), 1-of-1 owner
+    /// so a single browser wallet can sign and execute.
+    function setupWallet() external {
+        address[] memory owners = new address[](1);
+        owners[0] = vm.addr(OWNER1_PK);
+        _setup(SAFE_L2_141, SAFE_PROXY_FACTORY_141, MULTI_SEND_CALL_ONLY_141, owners, 1);
+    }
+
+    function _setup(address singleton, address factory, address msco, address[] memory owners, uint256 threshold)
+        internal
+    {
+        vendor = vm.addr(0xCAFE);
+
+        vm.startBroadcast(DEPLOYER_PK);
+        token = new DemoToken();
         bytes memory initializer = abi.encodeCall(
-            Safe.setup, (owners, 2, address(0), "", address(0), address(0), 0, payable(address(0)))
+            Safe.setup, (owners, threshold, address(0), "", address(0), address(0), 0, payable(address(0)))
         );
-        safe = Safe(payable(factory.createProxyWithNonce(address(singleton), initializer, 0xFE47)));
+        safe = Safe(payable(SafeProxyFactory(factory).createProxyWithNonce(singleton, initializer, 0xFE47)));
 
         // Demo-friendly timelocks: ADMIN 60 s, emergency de-guard 120 s.
-        guard = new FermionWalletGuard(
-            address(msco), 60, 120, 4, 8
-        );
+        guard = new FermionWalletGuard(msco, 60, 120, 4, 8);
 
         token.mint(address(safe), 1_000_000 ether);
         (bool funded,) = payable(address(safe)).call{value: 10 ether}("");
@@ -103,6 +126,8 @@ contract Demo is Script {
         vm.serializeAddress(o, "guard", address(guard));
         vm.serializeAddress(o, "token", address(token));
         vm.serializeAddress(o, "vendor", vendor);
+        vm.serializeAddress(o, "owner", owners[0]);
+        vm.serializeUint(o, "threshold", threshold);
         vm.serializeAddress(o, "quantumAdmin", vm.addr(LEDGER_PK));
         vm.serializeBytes32(o, "keyId", keyId);
         vm.serializeBytes32(o, "xmssRoot", xmssRoot);
@@ -236,7 +261,8 @@ contract Demo is Script {
         return keccak256(abi.encodePacked(hex"1901", domain, structHash));
     }
 
-    function _ownerSigs(bytes32 digest) internal pure returns (bytes memory) {
+    /// Threshold-many owner signatures, sorted by signer address as Safe requires.
+    function _ownerSigs(bytes32 digest) internal view returns (bytes memory sigs) {
         uint256[3] memory pks = [OWNER1_PK, OWNER2_PK, OWNER3_PK];
         address[3] memory addrs = [vm.addr(OWNER1_PK), vm.addr(OWNER2_PK), vm.addr(OWNER3_PK)];
         for (uint256 i = 0; i < 3; ++i) {
@@ -247,9 +273,13 @@ contract Demo is Script {
                 }
             }
         }
-        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(pks[0], digest);
-        (uint8 v2, bytes32 r2, bytes32 s2) = vm.sign(pks[1], digest);
-        return abi.encodePacked(r1, s1, v1, r2, s2, v2);
+        uint256 needed = safe.getThreshold();
+        for (uint256 i = 0; i < 3 && needed > 0; ++i) {
+            if (!safe.isOwner(addrs[i])) continue;
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(pks[i], digest);
+            sigs = abi.encodePacked(sigs, r, s, v);
+            --needed;
+        }
     }
 
     function _safeExec(address to, uint256 value, bytes memory data) internal {

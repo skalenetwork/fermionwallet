@@ -1,0 +1,163 @@
+# FermionWallet demo on the real Safe{Wallet}.
+#
+# The open-source Safe stack (safe-global/safe-infrastructure: Safe{Wallet} web UI,
+# Client Gateway, Config Service, Transaction Service) runs against a local anvil
+# chain that carries Safe v1.4.1 at its canonical addresses, a demo Safe protected
+# by the FermionWalletGuard, and the FermionWallet Safe App with a simulated Ledger.
+#
+#   docker compose up -d --wait   # about 30 s once the images are pulled
+#   open http://localhost:8000    # Safe{Wallet}
+#   docker compose down -v        # stop and reset everything (chain + databases)
+#
+# From a source checkout, build the two FermionWallet images instead of pulling:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
+#
+# Ports: 8000 Safe{Wallet} + services (RPC at /rpc), 8001 the FermionWallet Safe App.
+# Every container keeps its state in anonymous volumes, so `down -v` resets the
+# demo and a fresh chain never meets stale indexer data.
+name: fermionwallet-demo
+
+x-pg: &pg
+  image: postgres:14-alpine
+  environment:
+    POSTGRES_PASSWORD: postgres
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres"]
+    interval: 3s
+    timeout: 5s
+    retries: 30
+
+x-redis: &redis
+  image: redis:7-alpine
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 3s
+    timeout: 5s
+    retries: 30
+
+x-txs: &txs
+  image: ghcr.io/safe-global/safe-transaction-service:${TXS_VERSION:-v6.5.0}
+  env_file: env/txs.env
+  depends_on:
+    txs-db: { condition: service_healthy }
+    txs-redis: { condition: service_healthy }
+    txs-rabbitmq: { condition: service_healthy }
+    chain: { condition: service_healthy }
+
+services:
+  # ── FermionWallet: anvil chain + Guard + demo Safe + simulated Ledger + Safe App ──
+  chain:
+    image: ${FERMION_DEMO_IMAGE:-ghcr.io/skalenetwork/fermionwallet-demo:latest}
+    environment:
+      DEMO_MODE: wallet
+    ports:
+      - "8001:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/state"]
+      interval: 3s
+      timeout: 5s
+      retries: 100
+
+  # ── Safe{Wallet} (static export) + reverse proxy for all Safe services ──
+  nginx:
+    image: ${FERMION_WALLET_UI_IMAGE:-ghcr.io/skalenetwork/fermionwallet-demo-wallet:latest}
+    ports:
+      - "8000:8000"
+    volumes:
+      - nginx-shared-txs:/nginx-txs
+      - nginx-shared-cfg:/nginx-cfg
+    depends_on:
+      txs-web: { condition: service_started }
+      cfg-web: { condition: service_started }
+      cgw-web: { condition: service_started }
+      chain: { condition: service_healthy }
+
+  # ── Safe Transaction Service ──
+  txs-db:
+    <<: *pg
+    command: -c max_connections=250
+  txs-redis: *redis
+  txs-rabbitmq:
+    image: rabbitmq:3-alpine
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  txs-worker-indexer:
+    <<: *txs
+    environment:
+      RUN_MIGRATIONS: 1  # migrate + setup_service (finds Safe 1.4.1 on the chain)
+      WORKER_QUEUES: default,indexing,processing
+    command: docker/web/celery/worker/run.sh
+    healthcheck:
+      test: ["CMD", "celery", "-A", "config.celery_app", "inspect", "ping"]
+      interval: 10s
+      timeout: 20s
+      retries: 30
+
+  txs-worker-contracts-tokens:
+    <<: *txs
+    environment:
+      WORKER_QUEUES: contracts,tokens
+    command: docker/web/celery/worker/run.sh
+    depends_on:
+      txs-worker-indexer: { condition: service_healthy }
+
+  txs-worker-notifications-webhooks:
+    <<: *txs
+    environment:
+      WORKER_QUEUES: notifications,webhooks
+    command: docker/web/celery/worker/run.sh
+    depends_on:
+      txs-worker-indexer: { condition: service_healthy }
+
+  txs-scheduler:
+    <<: *txs
+    command: docker/web/celery/scheduler/run.sh
+    depends_on:
+      txs-worker-indexer: { condition: service_healthy }
+
+  txs-web:
+    <<: *txs
+    working_dir: /app
+    volumes:
+      - nginx-shared-txs:/nginx
+    command: docker/web/run_web.sh
+    depends_on:
+      txs-worker-indexer: { condition: service_healthy }
+
+  # ── Safe Config Service (chain 31337 + the FermionWallet Safe App, seeded) ──
+  cfg-db: *pg
+  cfg-init:
+    image: ghcr.io/safe-global/safe-config-service:${CFG_VERSION:-v2.96.1}
+    env_file: env/cfg.env
+    volumes:
+      - ./bootstrap_cfg.py:/bootstrap_cfg.py:ro
+    entrypoint: ["sh", "-c", "python src/manage.py migrate --noinput && python src/manage.py shell < /bootstrap_cfg.py"]
+    depends_on:
+      cfg-db: { condition: service_healthy }
+  cfg-web:
+    image: ghcr.io/safe-global/safe-config-service:${CFG_VERSION:-v2.96.1}
+    tty: true
+    env_file: env/cfg.env
+    volumes:
+      - nginx-shared-cfg:/nginx
+    depends_on:
+      cfg-init: { condition: service_completed_successfully }
+
+  # ── Safe Client Gateway ──
+  cgw-db: *pg
+  cgw-redis: *redis
+  cgw-web:
+    # v1.115.0 is the newest release published for linux/amd64 (later tags are arm64-only).
+    image: ghcr.io/safe-global/safe-client-gateway:${CGW_VERSION:-v1.115.0}
+    env_file: env/cgw.env
+    depends_on:
+      cgw-redis: { condition: service_healthy }
+      cgw-db: { condition: service_healthy }
+
+volumes:
+  nginx-shared-txs:
+  nginx-shared-cfg:

@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FermionWallet</title>
+<style>
+  :root {
+    --bg:#121312; --panel:#1c1c1c; --text:#f6f7f9; --muted:#a1a3a7; --border:#303033;
+    --accent:#12ff80; --accent-soft:#12ff8022; --on-accent:#121312;
+    --ok:#4ade80; --bad:#f87171; --warn:#fbbf24;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:20px 16px; background:var(--bg); color:var(--text);
+         font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:860px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 2px; display:flex; align-items:center; gap:10px; }
+  h1 img { height:30px; width:auto; border-radius:6px; }
+  .sub { color:var(--muted); margin:0 0 18px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:700px){ .grid{grid-template-columns:1fr;} }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+  .card h2 { font-size:11.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin:0 0 8px; }
+  .row { display:flex; justify-content:space-between; gap:10px; padding:3px 0; }
+  .row .k { color:var(--muted); white-space:nowrap; }
+  .row .v { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; word-break:break-all; text-align:right; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  .badge.ok { background:rgba(74,222,128,.12); color:var(--ok); }
+  .badge.bad { background:rgba(248,113,113,.12); color:var(--bad); }
+  .big { font-size:22px; font-weight:700; }
+  .leaves { display:flex; gap:4px; flex-wrap:wrap; margin-top:6px; }
+  .leaf { width:16px; height:16px; border-radius:4px; background:var(--accent-soft); }
+  .leaf.used { background:var(--accent); }
+  .step { display:flex; gap:12px; background:var(--panel); border:1px solid var(--border);
+          border-radius:10px; padding:14px 16px; margin-top:12px; }
+  .num { flex:none; width:26px; height:26px; border-radius:50%; background:var(--accent-soft);
+         color:var(--accent); font-weight:700; display:flex; align-items:center; justify-content:center; }
+  .step h3 { margin:0 0 4px; font-size:14.5px; }
+  .step p { margin:0 0 10px; color:var(--muted); font-size:13px; }
+  button { background:var(--accent); color:var(--on-accent); border:0; border-radius:8px;
+           padding:8px 14px; font-weight:600; font-size:13.5px; cursor:pointer; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--border); }
+  input { background:var(--bg); border:1px solid var(--border); color:var(--text);
+          border-radius:8px; padding:8px 10px; width:110px; font-size:14px; }
+  .out { margin-top:10px; font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap;
+         word-break:break-all; border-radius:8px; padding:10px 12px; background:var(--bg);
+         border:1px solid var(--border); display:none; }
+  .out.show { display:block; }
+  .out.good { border-color:rgba(74,222,128,.4); color:var(--ok); }
+  .out.fail { border-color:rgba(248,113,113,.4); color:var(--bad); }
+  .device-body { display:flex; gap:14px; flex-wrap:wrap; }
+  .lcd { flex:1; min-width:240px; min-height:140px; background:#05070a; border:2px solid #2b3240;
+         border-radius:14px; padding:12px 14px; font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace; }
+  .lcd .t { font-weight:700; color:var(--accent); margin-bottom:6px; }
+  .lcd .pg { float:right; color:var(--muted); font-weight:400; }
+  .lcd .l { white-space:pre; }
+  .lcd .warn { color:var(--warn); }
+  .device-ctl { display:flex; flex-direction:column; gap:8px; justify-content:center; }
+  .device-ctl .nav { display:flex; gap:8px; }
+  .note { color:var(--muted); font-size:12px; margin:8px 0 0; }
+  .banner { display:none; margin-bottom:12px; padding:10px 12px; border-radius:8px;
+            border:1px solid rgba(251,191,36,.4); color:var(--warn); font-size:13px; }
+  .banner.show { display:block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><img src="/safe-app/logo.svg" alt="">FermionWallet <span class="badge ok" id="guard-badge">…</span></h1>
+  <p class="sub">Every transfer from this Safe needs a second, post-quantum authorization: a hybrid
+  <strong>ECDSA + XMSS</strong> pre-approval from the Quantum Administrator's Ledger, enforced on-chain
+  by the FermionWalletGuard. Owner signatures alone are not enough.</p>
+
+  <div class="banner" id="banner"></div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>This Safe</h2>
+      <div class="row"><span class="k">Safe</span><span class="v" id="safe"></span></div>
+      <div class="row"><span class="k">Guard</span><span class="v" id="guard"></span></div>
+      <div class="row"><span class="k">Quantum admin (Ledger)</span><span class="v" id="qadmin"></span></div>
+      <div class="row"><span class="k">XMSS root</span><span class="v" id="root"></span></div>
+    </div>
+    <div class="card">
+      <h2>Demo USD (dUSD)</h2>
+      <div class="row"><span class="k">Safe balance</span><span class="big" id="safe-bal">—</span></div>
+      <div class="row"><span class="k">Vendor received</span><span class="big" id="vendor-bal">—</span></div>
+      <div class="row"><span class="k">XMSS one-time leaves used</span><span class="v" id="leaf-count"></span></div>
+      <div class="leaves" id="leaves"></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="num">1</div>
+    <div style="flex:1">
+      <h3>Pay the vendor with owner signatures alone</h3>
+      <p>Propose a <span id="amt-echo">100</span> dUSD payout to the vendor. Safe{Wallet} opens its normal
+      review. Sign and execute it: the owner signature is valid, and the Guard still refuses it because
+      no quantum pre-approval exists. This is what an attacker with a forged owner key would run into.</p>
+      <input id="amount" type="number" min="1" max="1000000" step="1" value="100"> dUSD
+      <button id="btn-propose-1">Propose payout in Safe{Wallet}</button>
+      <div class="out" id="out-1"></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="num">2</div>
+    <div style="flex:1">
+      <h3>Approve the payment on the Ledger</h3>
+      <p>The payment fields go to the Quantum Administrator's Ledger below. Page through every screen, then
+      Approve: the device signs the exact payment with ECDSA and with XMSS over one EIP-712 digest and
+      consumes one one-time leaf. The pre-approval is then stored in the Guard.</p>
+      <button id="btn-approve">Send to Ledger for approval</button>
+      <div class="out" id="out-2"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <h2>Quantum Administrator's Ledger · FermionWallet XMSS app <span class="badge bad">simulated</span></h2>
+    <div class="device-body">
+      <div class="lcd" id="lcd">Connecting to device…</div>
+      <div class="device-ctl">
+        <div class="nav"><button class="ghost" id="dev-prev">◀</button><button class="ghost" id="dev-next">▶</button></div>
+        <button id="dev-approve" disabled>Approve</button>
+        <button class="ghost" id="dev-reject" disabled>Reject</button>
+      </div>
+    </div>
+    <p class="note">The FermionWallet Ledger app isn't built yet, so this device is simulated. It follows the app
+    spec: the device holds the keys, picks the leaf from its own counter, shows every signed field, and signs
+    only after you page through every screen and press Approve. Rejecting uses no leaf.</p>
+  </div>
+
+  <div class="step">
+    <div class="num">3</div>
+    <div style="flex:1">
+      <h3>Pay again, now with the pre-approval</h3>
+      <p>Propose the same payout, or execute the one from step 1 if it's still queued. It's the same
+      owner-signed Safe transaction. This time the Guard finds the matching pre-approval, marks it used and
+      lets the payment through.</p>
+      <button id="btn-propose-3">Propose payout in Safe{Wallet}</button>
+      <div class="out" id="out-3"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const short = a => a ? a.slice(0, 10) + '…' + a.slice(-6) : '—';
+const esc = t => String(t).replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
+let state = null;
+
+// ── Safe Apps protocol (what @safe-global/safe-apps-sdk sends over postMessage) ──
+const SDK_VERSION = '9.1.0';
+const pending = new Map();
+window.addEventListener('message', ev => {
+  if (ev.source !== window.parent || !ev.data || !pending.has(ev.data.id)) return;
+  const {resolve, reject} = pending.get(ev.data.id);
+  pending.delete(ev.data.id);
+  ev.data.success ? resolve(ev.data.data) : reject(new Error(ev.data.error || 'request failed'));
+});
+function safeCall(method, params = undefined, timeoutMs = 0) {
+  const id = Math.random().toString(16).slice(2) + Date.now().toString(16);
+  return new Promise((resolve, reject) => {
+    pending.set(id, {resolve, reject});
+    window.parent.postMessage({id, method, params, env: {sdkVersion: SDK_VERSION}}, '*');
+    if (timeoutMs) setTimeout(() => {
+      if (pending.delete(id)) reject(new Error('timeout'));
+    }, timeoutMs);
+  });
+}
+const inSafeWallet = window.parent !== window;
+
+// ── chain state ──
+async function refresh() {
+  try {
+    const s = await (await fetch('/api/state')).json();
+    if (s.error) throw new Error(s.error);
+    state = s;
+    $('safe').textContent = s.safe;
+    $('guard').textContent = s.guard;
+    $('guard-badge').className = 'badge ' + (s.guardActive ? 'ok' : 'bad');
+    $('guard-badge').textContent = s.guardActive ? 'Guard enforcing' : 'Guard NOT set';
+    $('qadmin').textContent = short(s.quantumAdmin);
+    $('root').textContent = short(s.xmssRoot);
+    $('safe-bal').textContent = Number(s.safeBalance).toLocaleString();
+    $('vendor-bal').textContent = Number(s.vendorBalance).toLocaleString();
+    $('leaf-count').textContent = s.leavesUsed + ' / ' + s.leavesTotal;
+    $('leaves').innerHTML = s.leaves.map(u => `<div class="leaf${u ? ' used' : ''}"></div>`).join('');
+  } catch (e) {
+    $('guard-badge').className = 'badge bad';
+    $('guard-badge').textContent = 'demo server unreachable';
+  }
+}
+
+async function checkSafe() {
+  if (!inSafeWallet) {
+    showBanner('Open this app from Safe{Wallet} (Apps → FermionWallet) to propose transactions.');
+    return;
+  }
+  try {
+    const info = await safeCall('getSafeInfo', undefined, 10000);
+    await refresh();
+    if (state && info.safeAddress.toLowerCase() !== state.safe.toLowerCase()) {
+      showBanner('This Safe (' + info.safeAddress + ') is not the demo Safe. Open ' + state.safe +
+        ' in Safe{Wallet} — only the demo Safe has the FermionWallet Guard and a registered Ledger key.');
+    }
+  } catch (e) {
+    showBanner('Safe{Wallet} did not answer: ' + e.message);
+  }
+}
+function showBanner(t) { $('banner').textContent = t; $('banner').className = 'banner show'; }
+
+function amount() {
+  const n = Number($('amount').value);
+  return Number.isInteger(n) && n >= 1 && n <= 1000000 ? n : null;
+}
+const syncEcho = () => { const n = amount(); $('amt-echo').textContent = n ? n.toLocaleString() : '—'; };
+$('amount').oninput = syncEcho;
+window.addEventListener('pageshow', syncEcho);
+syncEcho();
+
+function show(out, cls, text) { out.className = 'out show ' + cls; out.textContent = text; }
+
+// ERC-20 transfer(vendor, amount * 1e18)
+function transferData(n) {
+  const word = v => v.toString(16).padStart(64, '0');
+  return '0xa9059cbb' + word(BigInt(state.vendor)) + word(BigInt(n) * 10n ** 18n);
+}
+
+async function propose(out, expectBlocked) {
+  const n = amount();
+  if (!n) return show(out, 'fail', '✘ Enter a whole number of dUSD between 1 and 1,000,000.');
+  if (!inSafeWallet) return show(out, 'fail', '✘ Open this app inside Safe{Wallet}.');
+  if (!state) await refresh();
+  show(out, '', expectBlocked
+    ? 'In Safe{Wallet}: Continue, then Execute. With no pre-approval, Safe{Wallet} warns "This transaction ' +
+      'will most likely fail" and execution fails, because the FermionWalletGuard reverts it ' +
+      '(NoMatchingPreApproval). Close the dialog to come back here.'
+    : 'In Safe{Wallet}: Continue, then Execute. With a matching pre-approval there is no failure warning, ' +
+      'and the payment goes through.');
+  const before = state && state.vendorBalance;
+  try {
+    const r = await safeCall('sendTransactions', {txs: [{to: state.token, value: '0', data: transferData(n)}]});
+    await new Promise(res => setTimeout(res, 2500));
+    await refresh();
+    const paid = state && state.vendorBalance !== before;
+    show(out, paid ? 'good' : '', (paid
+      ? '✔ Executed: the Guard found the pre-approval, used it up and let the payment through. ' +
+        'Vendor balance: ' + Number(state.vendorBalance).toLocaleString() + ' dUSD'
+      : 'Transaction created in Safe{Wallet}. Execute it under Transactions → Queue.') +
+      '\nsafeTxHash ' + r.safeTxHash);
+  } catch (e) {
+    await refresh();
+    show(out, expectBlocked ? 'good' : 'fail', expectBlocked
+      ? '✔ Safe{Wallet} closed without executing. Vendor balance is unchanged at ' +
+        Number(state.vendorBalance).toLocaleString() + ' dUSD. If you pressed Execute, the failure you saw ' +
+        'was the FermionWalletGuard reverting an owner-signed transfer that had no pre-approval.'
+      : '✘ Safe{Wallet} closed without executing (' + e.message + '). If it warned the transaction would fail, ' +
+        'the amount does not match an approved payment. Approve this exact amount in step 2.');
+  }
+}
+$('btn-propose-1').onclick = () => propose($('out-1'), true);
+$('btn-propose-3').onclick = () => propose($('out-3'), false);
+
+$('btn-approve').onclick = async () => {
+  const out = $('out-2');
+  const n = amount();
+  if (!n) return show(out, 'fail', '✘ Enter a whole number of dUSD between 1 and 1,000,000.');
+  $('btn-approve').disabled = true;
+  show(out, '', 'Waiting for the Ledger: review every screen on the device, then press Approve (or Reject)…');
+  try {
+    const r = await (await fetch('/api/approve', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({amount: n})})).json();
+    if (r.ok && r.outcome === 'approved') {
+      show(out, 'good', '✔ Approved on the Ledger and stored in the Guard\nXMSS leaf used: #' + r.leaf +
+        '\nDigest the device signed: ' + r.digest + '\nFor: ' + n.toLocaleString() + ' dUSD to the vendor. Now do step 3.');
+    } else if (r.ok && r.outcome === 'rejected') {
+      show(out, '', (r.reason === 'timeout' ? '✘ Timed out on the Ledger' : '✘ Rejected on the Ledger') +
+        '. Nothing was signed and no leaf was used.');
+    } else {
+      show(out, 'fail', '✘ ' + (r.error || 'failed') + (r.log ? '\n\n' + r.log : ''));
+    }
+  } catch (e) {
+    show(out, 'fail', '✘ ' + e.message);
+  }
+  $('btn-approve').disabled = false;
+  refresh();
+};
+
+// ── simulated Ledger ──
+async function refreshDevice() {
+  try {
+    const d = await (await fetch('/api/device/screen')).json();
+    if (d.error) throw new Error(d.error);
+    if (!d.active) {
+      $('lcd').innerHTML = '<div class="t">FermionWallet XMSS</div><div class="l">' + esc(d.key) + '</div>' +
+        '<div class="l">Next leaf #' + d.nextLeaf + ' of ' + d.totalLeaves + '</div>' +
+        '<div class="l">Idle, waiting for a signing request</div>';
+      ['dev-prev', 'dev-next', 'dev-approve', 'dev-reject'].forEach(id => { $(id).disabled = true; });
+      return;
+    }
+    const sc = d.screen;
+    $('lcd').innerHTML = '<div class="t">' + esc(sc.title) + '<span class="pg">' + (d.index + 1) + ' / ' + d.total +
+      '</span></div>' + sc.lines.map(l =>
+        '<div class="l' + (/NOT PINNED|any matching/.test(l) ? ' warn' : '') + '">' + esc(l) + '</div>').join('');
+    $('dev-prev').disabled = d.index === 0;
+    $('dev-next').disabled = d.index === d.total - 1;
+    $('dev-approve').disabled = !d.canApprove;
+    $('dev-reject').disabled = false;
+  } catch (e) {
+    $('lcd').textContent = 'Device not reachable: ' + e.message;
+  }
+}
+async function press(button) {
+  await fetch('/api/device/button', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({button})});
+  refreshDevice();
+}
+$('dev-prev').onclick = () => press('prev');
+$('dev-next').onclick = () => press('next');
+$('dev-approve').onclick = () => press('approve');
+$('dev-reject').onclick = () => press('reject');
+
+refresh();
+checkSafe();
+refreshDevice();
+setInterval(refreshDevice, 700);
+setInterval(refresh, 4000);
+</script>
+</body>
+</html>
