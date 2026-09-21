@@ -167,6 +167,12 @@ async function flow(name, btn, out) {
       out.className = 'out show good';
       out.textContent = '✔ BLOCKED by FermionWalletGuard\n' + r.reason +
         (r.revertData ? '\nrevert: ' + r.revertData : '');
+    } else if (r.ok && r.outcome === 'allowed') {
+      out.className = 'out show';
+      out.textContent = 'ℹ Not blocked — a quantum pre-approval for ' +
+        Number(r.amount).toLocaleString() + ' dUSD already exists, so the Guard would allow it.\n' +
+        'This check is a simulation only: nothing was sent. Use step 3 to execute it, ' +
+        'or pick a different amount to see the Guard block it.';
     } else if (r.ok && r.outcome === 'approved') {
       out.className = 'out show good';
       out.textContent = '✔ Pre-approval stored on-chain\nXMSS leaf consumed: #' + r.leaf +

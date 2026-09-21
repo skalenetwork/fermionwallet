@@ -121,6 +121,10 @@ def run_flow(flow, payload):
             reason = ("NoMatchingPreApproval — the Guard found no quantum pre-approval "
                       "for this transfer") if data.startswith(ERR_NO_MATCHING) else "Guard revert"
             return {"ok": True, "outcome": "blocked", "reason": reason, "revertData": data[:74]}
+        if "RESULT UNEXPECTED_EXECUTION" in out:
+            # The simulation (never broadcast) passed: a matching pre-approval already
+            # exists for this exact amount — the Guard is working, not failing.
+            return {"ok": True, "outcome": "allowed", "amount": amount}
         return {"ok": False, "error": "unexpected outcome", "log": tail(out)}
     if flow == "approve":
         code, out = forge_script("approve(uint256)", [str(amount)], broadcast=True)
