@@ -139,6 +139,7 @@
       lets the payment through.</p>
       <button id="btn-propose-3" disabled>Propose payout in Safe{Wallet}</button>
       <div class="out" id="out-3"></div>
+      <div class="banner" id="queue-note" style="margin:10px 0 0"></div>
     </div>
   </div>
 </div>
@@ -215,6 +216,7 @@ async function checkSafe() {
     }
     safeOk = true;
     syncButtons();
+    checkQueued();
   } catch (e) {
     showBanner('Safe{Wallet} did not answer (' + e.message + '). Reload the app.');
   }
@@ -268,11 +270,14 @@ async function propose(out, expectBlocked) {
     await new Promise(res => setTimeout(res, 2500));
     await refresh();
     const paid = state && state.vendorBalance !== before;
+    if (!paid) trackQueued(r.safeTxHash, n);
     show(out, paid ? 'good' : '', (paid
       ? '✔ Executed: the Guard found the pre-approval, used it up and let the payment through. ' +
         'Vendor balance: ' + Number(state.vendorBalance).toLocaleString() + ' dUSD'
-      : 'Transaction created in Safe{Wallet}. Execute it under Transactions → Queue.') +
+      : 'Signed and queued in Safe{Wallet}, not executed. Execute it under Transactions → Queue; ' +
+        'without a pre-approval for exactly ' + n.toLocaleString() + ' dUSD (step 2) the Guard blocks it.') +
       '\nsafeTxHash ' + r.safeTxHash);
+    checkQueued();
   } catch (e) {
     await refresh();
     show(out, expectBlocked ? 'good' : 'fail', expectBlocked
@@ -283,6 +288,42 @@ async function propose(out, expectBlocked) {
         'the amount does not match an approved payment. Approve this exact amount in step 2.');
   }
 }
+// Payouts this app queued without executing them (the owner chose Sign, not Execute).
+// Safe{Wallet} executes strictly in nonce order, so while one waits, every later
+// payout queues behind it and can't execute. Rejecting it doesn't help either: the
+// on-chain rejection is a Safe self-call, an admin action the Guard also blocks
+// without its own quantum approval. Say so, instead of leaving later payouts stuck.
+const QKEY = 'fw-queued';
+let queued = [];
+try { queued = JSON.parse(localStorage.getItem(QKEY) || '[]'); } catch (e) { queued = []; }
+function saveQueued() { try { localStorage.setItem(QKEY, JSON.stringify(queued)); } catch (e) { /* optional */ } }
+function trackQueued(safeTxHash, n) {
+  if (!queued.some(q => q.hash === safeTxHash)) queued.push({hash: safeTxHash, amount: n});
+  saveQueued();
+}
+async function checkQueued() {
+  if (!safeOk || !queued.length) return $('queue-note').className = 'banner';
+  const waiting = [];
+  for (const q of queued) {
+    try {
+      const tx = await safeCall('getTxBySafeTxHash', {safeTxHash: q.hash}, 10000);
+      if (/^AWAITING_/.test(tx.txStatus)) waiting.push({...q, nonce: tx.detailedExecutionInfo && tx.detailedExecutionInfo.nonce});
+    } catch (e) { /* unknown to Safe{Wallet}: from an earlier chain, or gone */ }
+  }
+  queued = waiting.map(({hash, amount}) => ({hash, amount}));
+  saveQueued();
+  if (!waiting.length) return $('queue-note').className = 'banner';
+  waiting.sort((a, b) => (a.nonce ?? 0) - (b.nonce ?? 0));
+  const q = waiting[0];
+  $('queue-note').textContent = 'Queued in Safe{Wallet}: the ' + q.amount.toLocaleString() + ' dUSD payout' +
+    (q.nonce != null ? ' (transaction #' + q.nonce + ')' : '') + ' is signed but not executed. Safe{Wallet} ' +
+    'executes in nonce order, so a new payout would wait behind it. Approve exactly ' +
+    q.amount.toLocaleString() + ' dUSD in step 2, then execute it under Transactions → Queue. Rejecting it ' +
+    'in Safe{Wallet} does not work here: the rejection is a Safe self-call, which the Guard also blocks ' +
+    'without its own quantum approval.';
+  $('queue-note').className = 'banner show';
+}
+
 $('btn-propose-1').onclick = () => propose($('out-1'), true);
 $('btn-propose-3').onclick = () => propose($('out-3'), false);
 
@@ -360,6 +401,7 @@ checkSafe();
 refreshDevice();
 setInterval(refreshDevice, 700);
 setInterval(refresh, 4000);
+setInterval(checkQueued, 8000);
 </script>
 </body>
 </html>
