@@ -314,6 +314,10 @@ abstract contract PreApprovalEngine is QuantumKeyRegistry {
             bytes32 c = _commitment(a);
             DoubleEndedQueue.Bytes32Deque storage q = _queue[c];
             _pruneDead(q);
+            // Front pruning cannot reach dead entries queued BEHIND a live one (e.g. a
+            // scheduled, not-yet-valid approval at the head while identical recurring
+            // entries are consumed over it). Only at the cap, compact the whole queue.
+            if (q.length() >= MAX_COMMITMENT_QUEUE) _compactDead(q);
             if (q.length() >= MAX_COMMITMENT_QUEUE) revert CommitmentQueueFull(c);
             q.pushBack(id);
         }
@@ -372,6 +376,16 @@ abstract contract PreApprovalEngine is QuantumKeyRegistry {
     /// Pop permanently dead entries off the front of a Tier-2 queue (bounded by its cap).
     function _pruneDead(DoubleEndedQueue.Bytes32Deque storage q) private {
         while (!q.empty() && _isDead(_approvals[q.front()])) q.popFront();
+    }
+
+    /// Drop every permanently dead entry from a Tier-2 queue, preserving FIFO order of
+    /// the survivors (one rotation through the queue; bounded by its cap).
+    function _compactDead(DoubleEndedQueue.Bytes32Deque storage q) private {
+        uint256 len = q.length();
+        for (uint256 i = 0; i < len; ++i) {
+            bytes32 id = q.popFront();
+            if (!_isDead(_approvals[id])) q.pushBack(id);
+        }
     }
 
     function _isConsumable(PreApproval storage a) private view returns (bool) {

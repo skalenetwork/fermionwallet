@@ -1194,6 +1194,32 @@ contract GuardIntegrationTest is Test {
         );
         assertFalse(safe.isModuleEnabled(evilModule));
     }
+
+    // ═══ Regression: dead Tier-2 entries behind a scheduled one jam the cap ═══
+
+    /// Spec: dead entries "never count toward the cap and cannot jam the queue". A
+    /// scheduled (future validFrom) approval at the head must not let used entries
+    /// pile up behind it until identical recurring payouts can no longer be approved.
+    function test_Tier2_DeadEntriesBehindScheduledApproval_DoNotFillQueue() public {
+        PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
+        req.validFrom = uint64(block.timestamp) + 1 days;
+        req.validTo = req.validFrom + 2 days;
+        (bytes memory ecdsaSig, bytes memory xmssSig) = _hybridSign(req, 0);
+        vm.prank(relayer);
+        bytes32 scheduled = guard.createPreApproval(req, ecdsaSig, xmssSig);
+
+        bytes memory pay = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
+        for (uint32 i = 0; i < MAX_QUEUE; ++i) {
+            _createTransfer(recipient, 1 ether, 2 + i, bytes32(0)); // reverted CommitmentQueueFull before the fix
+            _safeExec(address(token), 0, pay, Enum.Operation.Call);
+        }
+        assertEq(token.balanceOf(recipient), MAX_QUEUE * 1 ether);
+        assertFalse(guard.getPreApproval(scheduled).used);
+
+        vm.warp(block.timestamp + 1 days);
+        _safeExec(address(token), 0, pay, Enum.Operation.Call);
+        assertTrue(guard.getPreApproval(scheduled).used);
+    }
 }
 
 /// Attacker-deployed "Safe" whose signature check accepts anything — used to prove
