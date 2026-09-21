@@ -503,8 +503,8 @@ contract FermionWalletGuard is
     ///        1. delegatecall → only the pinned MultiSendCallOnly (batch path);
     ///        2. to == safe or to == guard → ADMIN;
     ///        3. bare native send → PAYLOAD;
-    ///        4. ERC-20 transfer → TRANSFER;
-    ///        5. anything else → PAYLOAD + selector permit-list (deny-list first).
+    ///        4. deny-list, then the selector permit-list (transfer included);
+    ///        5. ERC-20 transfer → TRANSFER; anything else → PAYLOAD.
     function _dispatch(
         address safe,
         address to,
@@ -549,6 +549,9 @@ contract FermionWalletGuard is
         if (data.length < 4) revert MalformedTransferCalldata();
         bytes4 selector = bytes4(data);
         if (_isDeniedSelector(selector)) revert DeniedSelector(selector);
+        // The permit-list governs `transfer` too: it is on the list at enrollment,
+        // and a Safe that removed it via setSelectorPolicy has no TRANSFER fast path.
+        if (!allowedSelectors[safe][selector]) revert SelectorNotAllowed(safe, selector);
 
         if (selector == SEL_TRANSFER) {
             // A TRANSFER approval binds token/recipient/amount only; it never
@@ -563,7 +566,6 @@ contract FermionWalletGuard is
             return _consumeMatching(safe, safeTxHash, expected);
         }
 
-        if (!allowedSelectors[safe][selector]) revert SelectorNotAllowed(safe, selector);
         expected.class_ = ApprovalClass.PAYLOAD;
         expected.target = to;
         expected.value = value;
@@ -622,9 +624,7 @@ contract FermionWalletGuard is
                     legSelector := mload(add(add(base, offset), LEG_HEADER))
                 }
                 if (_isDeniedSelector(legSelector)) revert DeniedSelector(legSelector);
-                if (legSelector != SEL_TRANSFER && !allowedSelectors[safe][legSelector]) {
-                    revert SelectorNotAllowed(safe, legSelector);
-                }
+                if (!allowedSelectors[safe][legSelector]) revert SelectorNotAllowed(safe, legSelector);
             } else if (dataLength != 0) {
                 revert MalformedBatch(); // 1–3 byte calldata is never a valid call
             }
