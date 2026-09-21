@@ -263,17 +263,20 @@ contract FermionWalletGuard is
     ///      approval stays consumed even if `success == false`. Safe calls this on the
     ///      Guard it checked with, even when that transaction just removed the Guard.
     function checkAfterExecution(bytes32, bool success) external override {
-        address safe = msg.sender;
-        DEPTH_NAMESPACE.deriveMapping(safe).asBoolean().tstore(false);
+        DEPTH_NAMESPACE.deriveMapping(msg.sender).asBoolean().tstore(false);
+        _clearEmergencyIfFlagged(msg.sender, success);
+    }
 
+    /// If this transaction executed a setGuard (flagged in the pre-check), clear the
+    /// Safe's emergency de-guard request once it succeeded: "exactly one" removal per
+    /// request, and a later re-attached Guard starts clean.
+    function _clearEmergencyIfFlagged(address safe, bool success) private {
         TransientSlot.BooleanSlot clearEmergency = CLEAR_EMERGENCY_NAMESPACE.deriveMapping(safe).asBoolean();
-        if (clearEmergency.tload()) {
-            clearEmergency.tstore(false);
-            // "Exactly one" removal per request: a later re-enabled Guard starts clean.
-            if (success && emergencyDeGuardExecutableAt[safe] != 0) {
-                emergencyDeGuardExecutableAt[safe] = 0;
-                emit EmergencyDeGuardCleared(safe);
-            }
+        if (!clearEmergency.tload()) return;
+        clearEmergency.tstore(false);
+        if (success && emergencyDeGuardExecutableAt[safe] != 0) {
+            emergencyDeGuardExecutableAt[safe] = 0;
+            emit EmergencyDeGuardCleared(safe);
         }
     }
 
@@ -293,15 +296,30 @@ contract FermionWalletGuard is
         if (safePaused[safe]) revert SafePausedError(safe);
         _requireEnrolledActive(safe);
         if (operation != Enum.Operation.Call) revert ModuleDelegateCallForbidden(module);
-        _checkFallbackPosture(safe);
+
+        // Same fallback-handler rules as checkTransaction: a guarded Safe never gets a
+        // handler (ERC-1271 bypass), even with an ADMIN approval; removing one is the
+        // only handler change allowed, and is exempt from the posture check.
+        (bool isSetFallback, address newHandler) =
+            _selfCallWithAddress(safe, to, value, data, operation, SEL_SET_FALLBACK);
+        if (isSetFallback && newHandler != address(0)) revert FallbackHandlerForbidden(safe, newHandler);
+        if (!isSetFallback) _checkFallbackPosture(safe);
 
         moduleTxHash = keccak256(abi.encode(safe, to, value, keccak256(data), module));
         bytes32 id = _dispatch(safe, to, value, data, operation, bytes32(0));
+        // A module-executed setGuard ends this Guard's tenure exactly like an owner-
+        // signed one: a pending or matured emergency request must not outlive it.
+        (bool isSetGuard,) = _selfCallWithAddress(safe, to, value, data, operation, SEL_SET_GUARD);
+        if (isSetGuard) CLEAR_EMERGENCY_NAMESPACE.deriveMapping(safe).asBoolean().tstore(true);
         emit ModuleTransactionChecked(safe, module, id);
     }
 
     /// @inheritdoc IModuleGuard
-    function checkAfterModuleExecution(bytes32, bool) external override {}
+    /// @dev Safe calls this on the module guard it checked with (cached), so it also
+    ///      runs after a module transaction that just replaced or removed the Guard.
+    function checkAfterModuleExecution(bytes32, bool success) external override {
+        _clearEmergencyIfFlagged(msg.sender, success);
+    }
 
     // ── Emergency de-guard (the no-brick invariant, path 2) ─────────────────
 
