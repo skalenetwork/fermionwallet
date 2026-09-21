@@ -25,7 +25,7 @@ Nothing is kept between runs. Any restart, including `docker compose restart`, s
 | 8000 | Safe{Wallet}, its backend services, and the chain RPC at `/rpc` |
 | 8001 | The FermionWallet Safe App and its simulated Ledger |
 
-`docker compose up -d --wait` pulls the two FermionWallet images from ghcr.io, which are published with each release. Until the first release that includes this demo, or to run your own changes, build them from a source checkout instead:
+`docker compose up -d --wait` pulls the two FermionWallet images from ghcr.io. The copy of this README in a release bundle pins them to that release. To run your own changes, or before the first release that includes this demo, build them from a source checkout of [demo/wallet](https://github.com/skalenetwork/fermionwallet/tree/main/demo/wallet) instead:
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
@@ -65,14 +65,14 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build -
 
 How the stack is put together:
 
-- **Safe contracts.** Safe v1.4.1 is installed at its canonical addresses by `install_safe_contracts.py`. It uses the exact mainnet bytecode, and every contract's hash matches safe-deployments. This lets the unmodified Safe services recognise the Safe.
+- **Safe contracts.** Safe v1.4.1 is installed at its canonical addresses by `install_safe_contracts.py` (in the source tree, run inside the chain image). It uses the exact mainnet bytecode, and every contract's hash matches safe-deployments. This lets the unmodified Safe services recognise the Safe.
 - **Safe{Wallet} build.** It is built from the official `safe-wallet-web` image. There is one source change: small balances are shown by default, because a local chain has no prices and every token would otherwise be hidden as dust.
 - **No events service.** The stack leaves out the Safe events service. The gateway's caches are simply kept to a few seconds instead.
 - **Gateway version.** The gateway is pinned to v1.115.0, the newest release published for linux/amd64. The other services are pinned to releases from the same weeks.
 
 ## End-to-end test
 
-`e2e/e2e.js` drives headless Chrome through the whole walk-through above against a running stack. It fails unless:
+`e2e/e2e.js` (in the source tree) drives headless Chrome through the whole walk-through above against a running stack. It fails unless:
 - the unapproved payout is blocked and pays nothing;
 - the approved payout executes and pays the vendor exactly the approved amount.
 

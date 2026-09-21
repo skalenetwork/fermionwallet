@@ -1,4 +1,7 @@
 [profile.default]
+# Pinned so a release tag always rebuilds byte-identical binaries (release.yml
+# ships foundry.toml for reproduction). Bump deliberately.
+solc_version = "0.8.37"
 src = "src"
 out = "out"
 libs = ["lib"]
