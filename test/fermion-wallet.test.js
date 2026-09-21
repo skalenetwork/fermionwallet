@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ERC20Token, FermionWallet } from '../src/fermion-wallet.js';
+import { ERC20Token, FermionWallet, MIN_WINDOW_MS } from '../src/index.js';
 
 test('standard ERC-20 approve flow works', () => {
   const token = new ERC20Token('Fermion', 'FERM');
@@ -25,7 +25,6 @@ test('quantum key generation and status are tracked', () => {
 test('pre-approval validates and executes a token transfer', () => {
   const token = new ERC20Token('Fermion', 'FERM');
   const wallet = new FermionWallet('0xOwner');
-  const spender = '0xVault';
 
   token.mint('0xOwner', 1000n);
   const quantumKey = wallet.generateQuantumKeyPair();
@@ -33,10 +32,10 @@ test('pre-approval validates and executes a token transfer', () => {
   const now = Date.now();
   const preApproval = wallet.createPreApproval({
     token,
-    spender,
+    recipient: '0xRecipient',
     amount: 200n,
     validFrom: now - 1000,
-    validTo: now + 30000,
+    validTo: now + MIN_WINDOW_MS,
     nonce: 'n-1',
     quantumKeyId: quantumKey.quantumKeyId,
     policyHash: 'policy-abc'
@@ -53,18 +52,18 @@ test('pre-approval validates and executes a token transfer', () => {
 
 test('revoked and expired pre-approvals are rejected', () => {
   const token = new ERC20Token('Fermion', 'FERM');
-  const wallet = new FermionWallet('0xOwner');
+  let now = Date.now();
+  const wallet = new FermionWallet('0xOwner', { now: () => now });
   token.mint('0xOwner', 1000n);
 
   const quantumKey = wallet.generateQuantumKeyPair();
-  const now = Date.now();
 
   const preApproval = wallet.createPreApproval({
     token,
-    spender: '0xVault',
+    recipient: '0xVault',
     amount: 50n,
     validFrom: now - 1000,
-    validTo: now + 5000,
+    validTo: now + MIN_WINDOW_MS,
     nonce: 'n-2',
     quantumKeyId: quantumKey.quantumKeyId,
     policyHash: 'policy-xyz'
@@ -72,18 +71,24 @@ test('revoked and expired pre-approvals are rejected', () => {
 
   wallet.revokePreApproval(preApproval.preApprovalId);
   assert.equal(wallet.validatePreApproval(preApproval.preApprovalId).valid, false);
+  assert.throws(() => wallet.revokePreApproval(preApproval.preApprovalId), /not revocable/);
+  assert.throws(() => wallet.executePreApprovedTransfer(preApproval.preApprovalId, '0xVault', 50n), /revoked/);
 
-  const expired = wallet.createPreApproval({
+  const expiring = wallet.createPreApproval({
     token,
-    spender: '0xVault',
+    recipient: '0xVault',
     amount: 10n,
-    validFrom: now - 5000,
-    validTo: now - 1000,
+    validFrom: now,
+    validTo: now + MIN_WINDOW_MS,
     nonce: 'n-3',
     quantumKeyId: quantumKey.quantumKeyId,
     policyHash: 'policy-expired'
   });
-  assert.equal(wallet.validatePreApproval(expired.preApprovalId).valid, false);
+  now += MIN_WINDOW_MS + 1;
+  const result = wallet.validatePreApproval(expiring.preApprovalId);
+  assert.equal(result.valid, false);
+  assert.equal(result.reason, 'Pre-approval expired');
+  assert.equal(token.balanceOf('0xVault'), 0n);
 });
 
 test('quantum key rotation updates status and preserves new active key', () => {

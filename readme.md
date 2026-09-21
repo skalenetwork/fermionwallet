@@ -155,8 +155,12 @@ This is early. The category is not.
 
 ## Prototype
 
+An early JavaScript model of the key, policy and pre-approval flow (`src/`). It is not the enforcement layer and it is not post-quantum: its "quantum key" signs with an **HMAC-SHA256 demo MAC** (`algorithm: 'hmac-sha256-demo'`, `postQuantum: false`), a symmetric secret where whoever can verify can also forge. The real rules are enforced on-chain by `contracts/src/PreApprovalEngine.sol` with hybrid ECDSA + XMSS signatures.
+
+It mirrors the contract's TRANSFER-class rules: the transfer must go to the signed `recipient`, for exactly the signed `amount` of the signed token, once; nonces are unique per wallet; the window must be at least 15 minutes (`MIN_WINDOW_MS`), end in the future, and is inclusive at both ends; one active key per wallet, and approvals made under a rotated key stay executable. It does not model: the Safe address and chain id, EIP-712 digests, XMSS leaf consumption, PAYLOAD/ADMIN classes, Tier-1 `safeTxHash` pins, key revocation, or the selector allowlist. Its clock is in milliseconds (`Date.now()`); the contract's is `block.timestamp` seconds.
+
 ```js
-import { ERC20Token, FermionWallet } from './src/index.js';
+import { ERC20Token, FermionWallet, MIN_WINDOW_MS } from './src/index.js';
 
 const token = new ERC20Token('Fermion', 'FERM');
 const wallet = new FermionWallet('0xOwner');
@@ -166,17 +170,17 @@ const quantumKey = wallet.generateQuantumKeyPair();
 
 const approval = wallet.createPreApproval({
   token,
-  spender: '0xVault',
+  recipient: '0xVault',
   amount: 200n,
   validFrom: Date.now() - 1000,
-  validTo: Date.now() + 60000,
+  validTo: Date.now() + MIN_WINDOW_MS,
   nonce: 'n-1',
   quantumKeyId: quantumKey.quantumKeyId,
   policyHash: 'treasury-policy-v1'
 });
 
 console.log(wallet.validatePreApproval(approval.preApprovalId));
-console.log(wallet.executePreApprovedTransfer(approval.preApprovalId, '0xRecipient', 200n));
+console.log(wallet.executePreApprovedTransfer(approval.preApprovalId, '0xVault', 200n));
 ```
 
 ```bash
