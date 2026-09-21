@@ -12,8 +12,9 @@ for the device and follows the spec's behaviour for the commands the demo uses:
   only after the user has paged through every screen and pressed Approve;
 - counter-before-signature: the counter is committed to disk *before* the two
   signatures are computed and released together over the same EIP-712 digest;
-- rejecting, or 60 s without a button press (ledger-ui.md: "60 s idle = reject"),
-  signs nothing and consumes no leaf;
+- rejecting, or 60 s idle on the decision screen (ledger-xmss-app.md: "60 s idle on
+  the decision screen" = reject), signs nothing and consumes no leaf; the field
+  screens have no idle timeout, only a 10-minute cap on the whole session;
 - malformed payload fields abort before the first screen; an empty validity window
   is refused ("Clock window invalid").
 
@@ -41,7 +42,8 @@ ADMIN_PK = os.environ.get(
 )
 HEIGHT = 4  # demo XMSS key: 16 one-time leaves
 SLOT = 1
-IDLE_TIMEOUT_S = 60  # no button press for this long = reject
+IDLE_TIMEOUT_S = 60  # this long idle on the decision screen = reject
+SESSION_CAP_S = 600  # an abandoned session on a field screen rejects after this long
 
 sys.path.insert(0, os.path.join(CONTRACTS, "py"))
 import sign_digest  # noqa: E402  (deterministic demo XMSS key, RFC 8391 reference code)
@@ -246,21 +248,28 @@ def sign_preapproval(req):
             raise ValueError("Key exhausted — rotate")
         digest = eip712_digest(p, leaf, chain_id, verifying)  # fails before any screen if malformed
         done = threading.Event()
-        session = {"screens": render(p, leaf, chain_id), "index": 0, "seen": 0,
-                   "decision": None, "done": done, "leaf": leaf, "lastPress": time.monotonic()}
+        screens = render(p, leaf, chain_id)
+        now = time.monotonic()
+        session = {"screens": screens, "index": 0, "seen": 0, "decision": None, "done": done,
+                   "leaf": leaf, "started": now,
+                   "lastPress": now if len(screens) == 1 else None}  # set while on the decision screen
 
-    # Idle timeout: every button press restarts the 60 s, so a careful reviewer paging
-    # through the fields is never cut off, while an abandoned session rejects itself.
+    # Idle timeout on the decision screen only (restarted by every press there), so a
+    # careful reviewer paging through the fields is never cut off; an abandoned session
+    # still rejects itself after SESSION_CAP_S.
     while True:
         with LOCK:
-            remaining = session["lastPress"] + IDLE_TIMEOUT_S - time.monotonic()
+            deadline = session["started"] + SESSION_CAP_S
+            if session["lastPress"] is not None:
+                deadline = min(deadline, session["lastPress"] + IDLE_TIMEOUT_S)
+            remaining = deadline - time.monotonic()
             if done.is_set() or remaining <= 0:
                 # Decided or timed out, atomically with closing the session: a press
                 # arriving after this sees no session and cannot approve.
                 decision = session["decision"] if done.is_set() else "timeout"
                 session = None
                 break
-        done.wait(remaining)
+        done.wait(min(remaining, 1.0))  # re-evaluate: a press may start/stop the idle clock
     if decision != "approve":
         return {"status": "rejected" if decision == "reject" else "timeout", "leafConsumed": False}
 
@@ -301,7 +310,6 @@ def press(button):
             raise ValueError("No signing session on the device")
         if button not in ("next", "prev", "reject", "approve"):
             raise ValueError("unknown button")
-        s["lastPress"] = time.monotonic()
         if button == "next":
             s["index"] = min(s["index"] + 1, last)
             s["seen"] = max(s["seen"], s["index"])
@@ -318,6 +326,9 @@ def press(button):
             s["done"].set()
         else:
             raise ValueError("unknown button")
+        # The 60 s idle clock runs only while the decision screen is shown; any press
+        # that lands on it (re)starts the clock, leaving it stops the clock.
+        s["lastPress"] = time.monotonic() if s["index"] == last else None
 
 
 def apdu(req):
