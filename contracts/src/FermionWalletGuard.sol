@@ -411,7 +411,12 @@ contract FermionWalletGuard is
     }
 
     /// @dev Is this a plain, zero-value Safe self-call `selector(address arg)`? Used for
-    ///      setGuard and setFallbackHandler.
+    ///      setGuard and setFallbackHandler. Matches on the selector and the first
+    ///      argument word, NOT on the exact length: Safe's ABI decoder ignores trailing
+    ///      calldata, so `setFallbackHandler(h) ‖ junk` installs `h` exactly like the
+    ///      canonical 36-byte call. An exact-length match let padded calldata slip past
+    ///      the handler ban (with an ADMIN approval of the padded bytes) and past the
+    ///      end-of-tenure clearing of a pending emergency de-guard request.
     function _selfCallWithAddress(
         address safe,
         address to,
@@ -420,9 +425,9 @@ contract FermionWalletGuard is
         Enum.Operation operation,
         bytes4 selector
     ) private pure returns (bool matches, address arg) {
-        if (to != safe || operation != Enum.Operation.Call || value != 0 || data.length != 36) return (false, address(0));
+        if (to != safe || operation != Enum.Operation.Call || value != 0 || data.length < 36) return (false, address(0));
         if (bytes4(data) != selector) return (false, address(0));
-        return (true, abi.decode(Bytes.slice(data, 4), (address))); // reverts on dirty address bits
+        return (true, abi.decode(Bytes.slice(data, 4, 36), (address))); // reverts on dirty address bits
     }
 
     // ── Per-Safe pause (fast, any owner) / unpause (slow, Safe governance) ──

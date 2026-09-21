@@ -518,7 +518,7 @@ A Safe transaction whose target is the Safe itself can call `setGuard(address(0)
 The Guard must therefore:
 
 - treat any transaction with `to == safe` (or `to ==` the Guard) as a restricted administrative action requiring a matching, timelock-elapsed `ADMIN` approval — this covers `setGuard`, `setModuleGuard`, `enableModule`, `disableModule`, owner/threshold changes, and **every other self-call** (the Guard does not enumerate self-call selectors; the exact calldata is bound by the approval),
-- additionally reject `enableModule` unless this Guard is already the module guard, and reject `setFallbackHandler` to any non-zero handler even with an approval.
+- additionally reject `enableModule` unless this Guard is already the module guard, and reject `setFallbackHandler` to any non-zero handler even with an approval. The Guard recognises the `setFallbackHandler` and `setGuard` self-calls by selector and first argument word, **not** by exact calldata length: Safe's ABI decoder ignores trailing calldata, so `setFallbackHandler(h) ‖ junk` installs `h` just like the canonical 36-byte call and must be rejected the same way (and a padded `setGuard` ends the Guard's tenure like any other).
 
 Note the operational trade-off: a buggy Guard can brick the Safe (every tx reverts, including the tx to remove the Guard). This is resolved by the **pre-approval class system** below plus the time-locked emergency de-guard path — together they guarantee the no-brick invariant.
 
