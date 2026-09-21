@@ -1,9 +1,9 @@
 {
   "name": "fermionwallet",
   "version": "1.0.0",
-  "description": "Quantum-protected ERC-20 compatible wallet prototype",
+  "description": "Early JavaScript model of FermionWallet's key, policy and pre-approval flows (HMAC demo signatures, not post-quantum; the on-chain rules live in contracts/)",
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test \"test/**/*.test.js\""
   }
 }
