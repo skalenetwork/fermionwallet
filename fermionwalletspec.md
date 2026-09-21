@@ -108,7 +108,7 @@ Build an MVP add-on that:
 5. Pre-approval engine
    - creates time-bound, nonce-protected approvals
    - rejects expired or revoked approvals
-   - enforces policyHash and quantum validation
+   - verifies both hybrid signature halves (ECDSA + XMSS) on-chain at creation; binds `policyHash` into the signed payload (policy limits themselves are enforced off-chain for now)
 
 6. On-chain enforcement layer
    - validates the second authorization before transfer execution
@@ -452,111 +452,58 @@ This is the minimal protocol for integrating FermionWallet as a Safe Guard. This
 
 > **No custom execution entrypoints.** This contract has **no function that moves tokens**. All transfers flow exclusively through `Safe.execTransaction` → Guard `checkTransaction` → target ERC-20 `transfer`. Any function that could execute, wrap, or forward a transfer outside that path would bypass both the Safe multisig and the Guard, and is forbidden (see security rule 5 and the Guard spec's "Forbidden original code").
 
-#### 1. `registerQuantumKey(address safe, address quantumAdmin, bytes32 xmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata ledgerAttestation, bytes calldata ownerSignatures)`
+All functions below live on one deployed contract, `FermionWalletGuard` (the registry and pre-approval engine are abstract bases compiled into it). The normative, complete ABI — every function, event and custom error — is in [fermionwallet-guard-module.md → FermionWallet-specific ABI](./fermionwallet-guard-module.md#fermionwallet-specific-abi); this section summarizes the main entry points.
 
-- Purpose: register the Quantum Administrator's hardware-generated XMSS root — together with the Administrator's classical Ledger address — as the Safe's quantum approval key, in one co-signed transaction.
-- Signature: `function registerQuantumKey(address safe, address quantumAdmin, bytes32 xmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata ledgerAttestation, bytes calldata ownerSignatures) external returns (bytes32 quantumKeyId);`
+#### 1. `registerQuantumKey`
+
+- Signature: `function registerQuantumKey(address safe, address quantumAdmin, bytes32 xmssRoot, bytes32 xmssSeed, uint32 treeHeight, bytes32 parameterSet, uint256 validUntil, bytes calldata ledgerAttestation, bytes calldata ownerSignatures) external returns (bytes32 quantumKeyId);`
+- Purpose: register the Administrator's hardware-generated XMSS public key (root + public SEED) and Ledger EOA as the Safe's quantum key, in one co-signed transaction.
 - Inputs:
-  - `safe`: the Safe being enrolled — the registry is a shared singleton called by the Administrator's relayer EOA, so the Safe can never be inferred from `msg.sender`; this address selects whose `checkSignatures` verifies the owner threshold and where the key binding (`safeToQuantumKey[safe]`) is stored
-  - `quantumAdmin`: the Administrator's Ledger EOA — stored on-chain as the address every hybrid pre-approval's ECDSA half is verified against; must match the signer of `ledgerAttestation`
-  - `xmssRoot`: public XMSS root exported from the Ledger-anchored key generation
-  - `treeHeight`, `parameterSet`: key parameters, fixed for the key's lifetime
-  - `ledgerAttestation`: the Administrator's EIP-712 hardware attestation over the root, signed by `quantumAdmin`
-  - `ownerSignatures`: Safe-owner-threshold EIP-712 signatures over `ApproveQuantumKey { safe, quantumAdmin, xmssRoot, treeHeight, parameterSet, registryNonce, validUntil }` — owners sign the root and the admin address themselves, never an opaque ID
-- Returns: `quantumKeyId`
-- Emits: `QuantumKeyRegistered`
-- Validation rules:
-  - owner threshold verified via the supplied Safe's own `checkSignatures` — the EIP-712 digest binds `safe` and `block.chainid`, so signatures cannot be replayed against another Safe or chain
-  - attestation must verify against the supplied `quantumAdmin` address, which is stored in the registration
-  - `registryNonce` must be current (bumped on success — stale ceremonies unusable)
-  - duplicate root registration must reject
-  - see [quantum-key-registry.md](./quantum-key-registry.md) for the full lifecycle
+  - `safe`: the Safe being enrolled. The caller is the Administrator's relayer, never the Safe, so the Safe is explicit.
+  - `quantumAdmin`: the Administrator's Ledger EOA — every hybrid pre-approval's ECDSA half is verified against it.
+  - `xmssRoot`, `xmssSeed`: the XMSS public key; `treeHeight` (1..20) and `parameterSet` are fixed for the key's lifetime.
+  - `validUntil`: ceremony deadline.
+  - `ledgerAttestation`: EIP-712 `QuantumKeyAttestation { safe, xmssRoot, xmssSeed, treeHeight, parameterSet, registryNonce }` signed by `quantumAdmin`.
+  - `ownerSignatures`: owner-threshold signatures over EIP-712 `ApproveQuantumKey { safe, quantumAdmin, xmssRoot, xmssSeed, treeHeight, parameterSet, registryNonce, validUntil }`, checked through the Safe's legacy `checkSignatures(bytes32,bytes,bytes)` (portable across Safe 1.3.0 / 1.4.1 / 1.5.0).
+- Emits: `QuantumKeyRegistered`.
+- Reverts if the Safe already has an Active key, this Safe registered the root before, a parameter is zero/out of range, `validUntil` has passed, a signature fails, or the Safe has a fallback handler or unguarded modules. Consumes the Safe's `registryNonce` (stale ceremonies die). Lifecycle: [quantum-key-registry.md](./quantum-key-registry.md).
 
-#### 2. `rotateQuantumKey(address safe, address newQuantumAdmin, bytes32 newXmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata oldKeyXmssProof, bytes calldata ledgerAttestation, bytes calldata ownerSignatures)`
+#### 2. `rotateQuantumKey`
 
-- Purpose: rotate to a new XMSS root (and optionally a new Administrator device). **Authentication is mandatory**: proof of the old key, hardware attestation of the new key, and owner-threshold co-signatures.
-- Signature: `function rotateQuantumKey(address safe, address newQuantumAdmin, bytes32 newXmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata oldKeyXmssProof, bytes calldata ledgerAttestation, bytes calldata ownerSignatures) external returns (bytes32 newQuantumKeyId);`
-- Inputs:
-  - `safe`: the enrolled Safe whose key is being rotated (explicit for the shared singleton, as in `registerQuantumKey`)
-  - `oldKeyXmssProof`: XMSS signature by the current active key over the rotation payload (consumes one leaf)
-  - remaining inputs as in `registerQuantumKey`, bound to the rotation payload
-- Returns: `newQuantumKeyId`
-- Emits: `QuantumKeyRotated`
-- Validation rules:
-  - old key must be `Active`; it transitions to `Rotated` atomically
-  - emergency rotation without the old key requires Safe governance plus the Guard's time-locked path
-  - unauthenticated rotation must be impossible: missing any of the three proofs reverts
-  - full operator procedure (routine and emergency) in [quantum-key-registry.md → Key rotation procedure](./quantum-key-registry.md#key-rotation-procedure-quantum-administrator)
+- Signature: `function rotateQuantumKey(address safe, address newQuantumAdmin, bytes32 newXmssRoot, bytes32 newXmssSeed, uint32 treeHeight, bytes32 parameterSet, uint256 validUntil, bytes calldata oldKeyXmssProof, bytes calldata ledgerAttestation, bytes calldata ownerSignatures) external returns (bytes32 newQuantumKeyId);`
+- Purpose: rotate to a new key (and optionally a new Administrator). All three proofs are mandatory: owner threshold over EIP-712 `RotateQuantumKey { safe, oldQuantumKeyId, newQuantumAdmin, newXmssRoot, newXmssSeed, treeHeight, parameterSet, registryNonce, validUntil }`, the new key's attestation, and an XMSS signature by the old key over the same digest (consumes one old-key leaf).
+- Emits: `QuantumKeyRotated`. Atomically: old → `Rotated`, new → `Active`; any pending key revocation is cancelled.
+- Emergency revocation without the old key: `requestKeyRevocation` → `EMERGENCY_ROTATION_TIMELOCK` → `executeKeyRevocation` (see [quantum-key-registry.md](./quantum-key-registry.md#key-rotation-procedure-quantum-administrator)).
 
-#### 3. `getQuantumKeyStatus(bytes32 quantumKeyId)`
+#### 3. Key queries
 
-- Purpose: query the status of a registered quantum key.
-- Signature: `function getQuantumKeyStatus(bytes32 quantumKeyId) external view returns (bool active, uint64 createdAt, uint64 rotatedAt, uint256 useCounter);`
-- Returns: key lifecycle metadata
+- `getKey(bytes32 quantumKeyId) returns (KeyRegistration)` — status, root, seed, height, parameter set, admin, timestamps, `useCounter`.
+- `safeToQuantumKey(address safe) returns (bytes32)` — the Safe's Active key (zero if none).
+- `isLeafUsed(bytes32 quantumKeyId, uint32 leafIndex) returns (bool)`; `registryNonce(address safe) returns (uint256)`.
 
-#### 4. `createPreApproval(...)`
+#### 4. `createPreApproval` (TRANSFER)
 
-- Purpose: create a time-bounded approval for a transfer.
-- Signature:
+- Signature: `function createPreApproval(PreApprovalRequest calldata req, bytes calldata ecdsaSignature, bytes calldata xmssSignature) external returns (bytes32 preApprovalId);`
+- `PreApprovalRequest { safe, token, recipient, amount, target, value, dataHash, validFrom, validTo, nonce, quantumKeyId, xmssLeafIndex, policyHash, txHash }` — one request shape for all three create functions; class-irrelevant fields must be zero.
+- `txHash`: exact `safeTxHash` pin (Tier 1); `bytes32(0)` = field-matched FIFO queue (Tier 2) per commitment `keccak256(abi.encode(safe, class, token, recipient, amount))`, capped at `MAX_COMMITMENT_QUEUE`; dead entries are pruned and never count toward the cap.
+- Both hybrid halves must verify over the same EIP-712 digest: ECDSA via `SignatureChecker` against the key's `quantumAdmin`; XMSS (`abi.encode(XMSS.Signature)`, ~2.8 KB at h=20) against the key's root and seed, consuming leaf `req.xmssLeafIndex`. Either half invalid ⇒ revert.
+- The key must be the Safe's Active key; `validTo - validFrom ≥ 15 minutes`. Emits `PreApprovalCreated`.
 
-```solidity
-function createPreApproval(
-    address safe,       // the enrolled Safe this approval is for — the creator is the
-                        // Administrator's relayer, so the Safe must be explicit; both
-                        // signed halves bind (safe, chainid, ...) against replay
-    address token,
-    address recipient,
-    uint256 amount,
-    uint64 validFrom,
-    uint64 validTo,
-    bytes32 nonce,
-    bytes32 quantumKeyId,
-    uint32 xmssLeafIndex,
-    bytes32 policyHash,
-    bytes32 txHash,     // exact safeTxHash pin (Tier 1, preferred — proposed-then-authorized flow);
-                        // bytes32(0) = field-matched FIFO queue (Tier 2); identical recurring
-                        // transfers queue instead of reverting; stale entries are skipped lazily
-    bytes calldata ecdsaSignature, // Ledger EIP-712 half (65 B) — verified against quantumAdmin
-    bytes calldata xmssSignature   // XMSS half (RFC 8391 tuple, ~2.8 KB at h=20) — verified against xmssRoot
-) external returns (bytes32 preApprovalId);
-```
+#### 4b. `createPayloadPreApproval` and `createAdminPreApproval`
 
-- Inputs:
-  - safe
-  - token
-  - recipient
-  - amount
-  - validFrom
-  - validTo
-  - nonce
-  - quantumKeyId
-  - xmssLeafIndex
-  - policyHash
-  - txHash (optional Tier-1 pin)
-  - ecdsaSignature (classical hybrid half — the Ledger human-in-the-loop anchor)
-  - xmssSignature (post-quantum hybrid half)
-- Returns: `preApprovalId`
-- Emits: `PreApprovalCreated`
-- Storage/lookup: pinned approvals live in `approvalByTxHash[safe][safeTxHash]` (collision-free — Safe nonces differentiate identical transfers); field-matched approvals (`txHash == bytes32(0)`) append to a bounded FIFO queue per commitment `keccak256(safe, class, token, recipient, amount)` (max `MAX_COMMITMENT_QUEUE = 16`), so identical recurring payouts can be queued concurrently and a stale unexecuted approval never blocks new ones — `checkTransaction` skips expired/revoked entries lazily.
-- Validation rules: **both halves must verify over the same EIP-712 digest** — ECDSA via `SignatureChecker` against the registered `quantumAdmin`, XMSS against the registered `xmssRoot` with on-chain leaf consumption. Either half missing or invalid ⇒ revert. A backend holding only the XMSS seed cannot mint approvals without the Ledger, and a stolen Ledger cannot mint them without the XMSS key.
-
-#### 4b. `createPayloadPreApproval(...)` and `createAdminPreApproval(...)`
-
-- Purpose: authorize what the `TRANSFER` struct cannot represent — **native ETH transfers**, **administrative Safe self-calls**, and **`MultiSendCallOnly` batches** (one approval, one leaf per batch; `dataHash` binds the full batch calldata) — via exact-payload binding (`target`, `value`, `dataHash = keccak256(data)`). Both take `address safe` as the first parameter and a `txHash` Tier-1 pin, like `createPreApproval`.
-- `createAdminPreApproval` covers `setGuard` (including `address(0)` — the sanctioned Guard-removal path), `setModuleGuard`, `enableModule`/`disableModule`, and owner/threshold changes. It reverts unless `validFrom ≥ block.timestamp + ADMIN_TIMELOCK` and emits a loud `AdminPreApprovalCreated` event so watchers can revoke during the delay.
-- Together with the quantum-key-independent emergency de-guard path, this guarantees the **no-brick invariant**: the Safe can always, eventually, remove the Guard. Full signatures and dispatch rules in [fermionwallet-guard-module.md → Pre-approval classes](./fermionwallet-guard-module.md#pre-approval-classes).
+- Same signature shape as `createPreApproval`. They authorize what TRANSFER cannot — native currency sends, allowlisted calls, `MultiSendCallOnly` batches (PAYLOAD), and any Safe self-call or Guard policy call (ADMIN) — by binding `target`, `value` and `dataHash = keccak256(calldata)`.
+- `createAdminPreApproval` requires `target` to be the Safe or the Guard and `validFrom ≥ block.timestamp + ADMIN_TIMELOCK`, and emits a loud `AdminPreApprovalCreated` so owners can revoke during the delay.
+- With the quantum-key-independent emergency de-guard path, this guarantees the **no-brick invariant**. Dispatch rules: [fermionwallet-guard-module.md → Pre-approval classes](./fermionwallet-guard-module.md#pre-approval-classes).
 
 #### 5. `validatePreApproval(bytes32 preApprovalId)`
 
-- Purpose: validate the pre-approval state and signature.
 - Signature: `function validatePreApproval(bytes32 preApprovalId) external view returns (bool valid, string memory reason);`
-- Returns: valid flag and reason
+- Off-chain convenience: checks the approval's state (exists, unused, unrevoked, inside its window, key not revoked). Signatures are not re-checked — they were verified once, at creation. Never the consumption mechanism.
 
 #### 6. `revokePreApproval(bytes32 preApprovalId)`
 
-- Purpose: revoke a pending pre-approval.
-- Signature: `function revokePreApproval(bytes32 preApprovalId) external returns (bool revoked);`
-- Returns: revocation status
+- Signature: `function revokePreApproval(bytes32 preApprovalId) external returns (bool);`
+- Callable by the Safe or the key's `quantumAdmin`; also by any single owner of the Safe, directly from the owner's address, **except for ADMIN approvals** — those only the Safe (owner threshold, no quantum approval needed) or the Administrator can revoke, so one owner cannot veto the threshold's governance changes (e.g. their own removal). Emits `PreApprovalRevoked`.
 
 > **Removed (security):** earlier drafts defined `executePreApprovedTransfer`, `wrapERC20`, and `unwrapERC20`. These were custom execution entrypoints that would let any holder of a valid pre-approval move tokens **without** the Safe multisig or the Guard — bypassing both authorization layers. They are deleted; pre-approvals are consumed only inside the Guard's `checkTransaction` path during `Safe.execTransaction`.
 
@@ -569,7 +516,8 @@ function createPreApproval(
 - Purpose: orchestrate Ledger-anchored XMSS key generation and return the public metadata.
 - Signature: `generateQuantumKey()`
 - Returns:
-  - `xmssRoot`, `treeHeight`, `parameterSet`
+  - `xmssRoot`, `xmssSeed`, `treeHeight`, `parameterSet`
+  - `quantumAdmin` (the Ledger's admin address)
   - `ledgerAttestation`
   - `ceremonyCode` (6 BIP-39 words derived from the root)
 
@@ -581,7 +529,7 @@ function createPreApproval(
 
 #### 3. `getQuantumKeyStatus(quantumKeyId)`
 
-- Purpose: inspect a key’s lifecycle status.
+- Purpose: inspect a key’s lifecycle status (reads the on-chain `getKey`).
 - Signature: `getQuantumKeyStatus(quantumKeyId)`
 - Returns: status and metadata
 
@@ -600,7 +548,8 @@ async function createPreApproval({
   validTo,
   nonce,
   quantumKeyId,
-  policyHash
+  policyHash,
+  txHash // optional safeTxHash pin; omit for field matching
 })
 ```
 

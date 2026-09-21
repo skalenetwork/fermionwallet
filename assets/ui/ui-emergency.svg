@@ -13,7 +13,7 @@
   <text x="52" y="164" fill="#e05555" font-size="15" font-weight="700">🔴 Emergency removal ACTIVE — initiated by alice.eth · 3-of-3 owners signed</text>
   <text x="52" y="190" fill="#e8eef7" font-size="14">Guard removal executable in <tspan font-weight="700">11 d 06 h 42 m</tspan> (14-day owners-only timelock)</text>
   <text x="52" y="214" fill="#c9a0a8" font-size="12.5">Every owner, the Administrator, and all configured alert channels were notified when this started.</text>
-  <text x="52" y="236" fill="#c9a0a8" font-size="12.5">The Administrator can cancel at any time during the countdown by signing a cancellation on the enrolled Ledger.</text>
+  <text x="52" y="236" fill="#c9a0a8" font-size="12.5">The owners can cancel at any time during the countdown with an ordinary owner-threshold Safe transaction.</text>
   <!-- timeline -->
   <rect x="30" y="268" width="800" height="74" rx="10" fill="#16263f"/>
   <text x="52" y="296" fill="#e8eef7" font-size="14" font-weight="700">Timeline</text>

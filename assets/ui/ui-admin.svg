@@ -25,7 +25,7 @@
   <rect x="592" y="322" width="216" height="32" rx="16" fill="#e05555"/>
   <text x="646" y="343" fill="#ffffff" font-size="13.5" font-weight="700">Revoke now</text>
   <rect x="592" y="360" width="216" height="28" rx="14" fill="none" stroke="#e05555" stroke-width="1.5"/>
-  <text x="640" y="379" fill="#e05555" font-size="12.5" font-weight="600">Revoke as owner</text>
-  <text x="30" y="418" fill="#5b7292" font-size="11">Administrator: "Revoke now" signs on the enrolled Ledger. Any single owner: "Revoke as owner" signs with the normal owner key — either alone cancels the action for the full delay.</text>
+  <text x="640" y="379" fill="#e05555" font-size="12.5" font-weight="600">Revoke as owners</text>
+  <text x="30" y="418" fill="#5b7292" font-size="11">Administrator: "Revoke now" signs on the enrolled Ledger. Owners: "Revoke as owners" proposes a Safe transaction (owner threshold) — either cancels the action.</text>
   <text x="30" y="440" fill="#5b7292" font-size="11.5">The timelock exists so a stolen quantum key alone cannot silently remove the Guard: owners see the AdminPreApprovalCreated event and have 48 hours to revoke.</text>
 </svg>

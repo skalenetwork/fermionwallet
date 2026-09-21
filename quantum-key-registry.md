@@ -7,7 +7,8 @@
 
 ## Open-source libraries / tooling used
 
-- OpenZeppelin upgradeable patterns if used in a contract registry
+- OpenZeppelin Contracts (non-upgradeable): `EIP712`, `Nonces`, `BitMaps`, `SignatureChecker`, `SafeCast`
+- The registry is `contracts/src/QuantumKeyRegistry.sol`, an abstract base compiled into the one deployed `FermionWalletGuard` contract (one address, one storage)
 - ethers.js or viem for contract interaction
 - Node.js crypto APIs for hashing and validation
 
@@ -23,7 +24,7 @@ The primary registered key is the **Quantum Administrator's permanent XMSS root*
 - stores key usage status
 - tracks active, rotated, and revoked keys
 - enforces the **co-signed one-shot registration** lifecycle described below: activation requires owner-threshold signatures over the root itself plus the Administrator's hardware attestation, in a single transaction
-- binds a quantum key to a Safe and supported token context
+- binds a quantum key to one Safe (the key covers all assets; there is no per-token binding)
 - supports registration and rotation
 
 ## Key activation lifecycle (co-signed one-shot registration)
@@ -32,13 +33,13 @@ A key becomes **the quantum approval key** for a Safe in a single on-chain trans
 
 1. **Generate.** The Quantum Administrator generates the XMSS key with Ledger (see the key ceremony in [fermionwallet-add-on-service.md](./fermionwallet-add-on-service.md)); only the public root leaves the hardware boundary, attested by a Ledger-signed EIP-712 `QuantumKeyAttestation`.
 2. **Owners co-sign the root itself, off-chain.** Each Safe owner clear-signs EIP-712 `ApproveQuantumKey { safe, quantumAdmin, xmssRoot, xmssSeed, treeHeight, parameterSet, registryNonce, validUntil }` on their own hardware wallet (the public `xmssSeed` is a mandatory RFC 8391 verification input and is registered alongside the root). No opaque key IDs are ever signed — a compromised frontend cannot substitute a root (or swap in an attacker's Administrator address) without invalidating every signature.
-3. **Activate.** The Administrator submits `registerQuantumKey(safe, quantumAdmin, root, xmssSeed, treeHeight, parameterSet, validUntil, ledgerAttestation, ownerSigs)` — `quantumAdmin` is the Administrator's Ledger EOA, stored as the classical verifier address for every hybrid pre-approval. The contract verifies the owner threshold via the Safe's legacy `checkSignatures(bytes32 dataHash, bytes data, bytes signatures)` entry point, verifies the attestation is signed by `quantumAdmin`, bumps `registryNonce`, and atomically sets the key **`Active`**. Any previously active key transitions to `Rotated`.
+3. **Activate.** The Administrator submits `registerQuantumKey(safe, quantumAdmin, root, xmssSeed, treeHeight, parameterSet, validUntil, ledgerAttestation, ownerSigs)` — `quantumAdmin` is the Administrator's Ledger EOA, stored as the classical verifier address for every hybrid pre-approval. The contract verifies the owner threshold via the Safe's legacy `checkSignatures(bytes32 dataHash, bytes data, bytes signatures)` entry point, verifies the attestation is signed by `quantumAdmin`, consumes the Safe's `registryNonce`, and sets the key **`Active`**. Registration is refused if the Safe already has an Active key (`SafeAlreadyEnrolled` — a replacement key goes through rotation), if this Safe registered the same root before (`RootAlreadyRegistered`), if `validUntil` has passed, or if the Safe has a fallback handler or unguarded enabled modules (the Guard's enrollment posture check).
 
 Rules:
 - exactly **one `Active` key per Safe** at any time
 - XMSS root uniqueness is scoped **per Safe**: reusing a root on another Safe is harmless and allowed, but reusing the same root for the same Safe rejects
-- owner signatures are bound to registry contract, chain, Safe, `registryNonce`, and `validUntil` — stale or aborted ceremonies are provably unusable once the nonce advances
-- the Guard rejects pre-approvals signed by keys in any status other than `Active`
+- owner signatures are bound to the Guard contract (EIP-712 verifying contract), chain, Safe, `registryNonce`, and `validUntil` — stale or aborted ceremonies are provably unusable once the nonce advances
+- new pre-approvals can only be created with the Safe's `Active` key; approvals already created under a key that was later `Rotated` stay executable, while a `Revoked` key's approvals do not
 - rotation follows the same one-shot path, additionally requiring the old-key XMSS signature proof per the Guard's `rotateQuantumKey` rules
 
 Neither side can act alone: the Administrator cannot activate a key without an owner-threshold set of signatures over the root, and the Safe owners cannot activate a root that was not generated and attested by the Administrator's hardware.
@@ -66,7 +67,7 @@ Rotation is the same one-shot co-signed path as registration, plus **proof of po
 2. **Generate the new key.** On the same Ledger — the app holds up to four keys, so `GEN_XMSS_KEY` puts the new key in a free slot and keeps the old one — or on a new Ledger for a device replacement or handover. Record the new ceremony code (6 BIP-39 words). The device holding the new key clear-signs the EIP-712 `QuantumKeyAttestation` for it (`SIGN_KEY_ATTESTATION`, `ledgerAttestation`).
 3. **Prove possession of the old key.** With the **old** key's slot — on the same device, or on the old device — run the rotation flow (`SIGN_ROTATION`): the screen shows the red **ROTATE QUANTUM KEY** header, old-root vs new-root ceremony words, and the abandoned-leaf count. Physical confirmation releases an XMSS signature by the old key over `RotateQuantumKey { safe, oldQuantumKeyId, newQuantumAdmin, newXmssRoot, newXmssSeed, treeHeight, parameterSet, registryNonce, validUntil }` — consuming one final leaf of the old key (`oldKeyXmssProof`).
 4. **Collect owner co-signatures.** Each Safe owner clear-signs the same `RotateQuantumKey` struct on their own hardware wallet, verifying the **new** root's ceremony words against the Administrator's out-of-band readout — same threshold and same anti-substitution property as registration.
-5. **Submit.** The Administrator (via the relayer) calls `rotateQuantumKey(safe, newQuantumAdmin, newXmssRoot, newXmssSeed, treeHeight, parameterSet, validUntil, oldKeyXmssProof, ledgerAttestation, ownerSignatures)`. Atomically: old key → `Rotated`, new key → `Active`, `registryNonce` bumped. Missing any of the three proofs (old-key XMSS, new-key attestation, owner threshold) reverts.
+5. **Submit.** The Administrator (via the relayer) calls `rotateQuantumKey(safe, newQuantumAdmin, newXmssRoot, newXmssSeed, treeHeight, parameterSet, validUntil, oldKeyXmssProof, ledgerAttestation, ownerSignatures)`. Atomically: old key → `Rotated`, new key → `Active`, `registryNonce` consumed, and any pending key revocation cancelled. Missing any of the three proofs (old-key XMSS, new-key attestation, owner threshold) reverts.
 6. **Verify and retire.** Create and execute one dust-value pre-approval with the new key end-to-end. Only after it executes, retire the old key: *Settings → Retire key* on its slot (same device), or wipe the old device. Its unused leaves are dead either way — the registry accepts new pre-approvals only from the `Active` key.
 
 If the Administrator's address changes (`newQuantumAdmin ≠ quantumAdmin`), owners are co-signing the handover too — the struct binds the new address, so a frontend cannot swap Administrators covertly.
@@ -75,8 +76,8 @@ If the Administrator's address changes (`newQuantumAdmin ≠ quantumAdmin`), own
 
 The old-key possession proof is impossible, so the path is Safe governance with a time lock:
 
-1. **If compromise is suspected:** an owner or the Administrator immediately calls `revokePreApproval` on anything pending and the Guard's pause path (fail-closed).
-2. Owners create an **ADMIN-class pre-approval–independent** governance action per the Guard's emergency rules (`ADMIN_TIMELOCK` applies; watchers can cancel during the delay) that requests revocation of the currently active key (`requestKeyRevocation` records the exact `keyId`).
+1. **If compromise is suspected:** any owner immediately calls `pauseSafe(safe)` (fail-closed) and `revokePreApproval` on pending transfer/payload approvals; pending ADMIN approvals are revoked by the Safe (owner threshold) or the Administrator.
+2. The owner threshold signs EIP-712 `RequestKeyRevocation { safe, quantumKeyId, registryNonce, validUntil }` — no quantum signature is needed. Anyone submits `requestKeyRevocation(safe, validUntil, ownerSignatures)`, which records the exact `keyId` and starts `EMERGENCY_ROTATION_TIMELOCK` (set to the same value as the emergency de-guard timelock, e.g. 14 days). The request consumes the registry nonce, so the signatures work exactly once and cannot be replayed to re-arm a cancelled request; this also invalidates any ceremony signatures in flight. During the delay **only the Safe itself** can cancel (`cancelKeyRevocation`, an owner-threshold Safe transaction that the Guard never blocks) — the Administrator's key alone cannot, so a stolen Ledger cannot block the owners' remedy. After the delay, anyone calls `executeKeyRevocation(safe)`.
 3. At execution, the registry revokes only that recorded key. If the Safe's active key changed in the meantime, `executeKeyRevocation` reverts with `RevocationSuperseded`; an owner-co-signed rotation cancels the pending revocation because the rotation itself resolves the compromise.
 4. Once revoked, a **fresh registration** (not rotation) runs on a new device: full ceremony, owner co-signatures, new `registerQuantumKey` — the one-Active-key rule is satisfied because the old key is `Revoked`, not `Active`.
 5. The time lock is the security boundary: a thief holding only the stolen Ledger cannot beat the owners to a quiet key swap, and owners alone cannot instantly bypass the quantum layer.
@@ -85,7 +86,7 @@ The old-key possession proof is impossible, so the path is Safe governance with 
 
 - Exactly one `Active` key per Safe before and after; the switch is atomic — there is no window with zero or two active keys.
 - Old-key pre-approvals created before rotation remain executable; the old key can create nothing new.
-- `registryNonce` bump invalidates any concurrently-running stale ceremony.
+- `registryNonce` (OpenZeppelin `Nonces`) is consumed by every registration, rotation, revocation request and revocation, so every owner-signed registry message is single-use and any concurrently-running stale ceremony dies.
 - A stale revocation request can never destroy the successor key; it is bound to the key that was active when requested.
 - Rotation never touches Safe ownership, the Guard, or funds — it is key-layer only.
 
@@ -95,7 +96,7 @@ The old-key possession proof is impossible, so the path is Safe governance with 
 |---|---|
 | `Active` | co-signed and registered; the one key the Guard verifies against |
 | `Rotated` | superseded by a newer registered key; kept for audit |
-| `Revoked` | emergency-disabled per the Guard's access-control rules |
+| `Revoked` | emergency-disabled via `requestKeyRevocation` → timelock → `executeKeyRevocation`; its approvals stop working |
 
 (No on-chain `Proposed` state: the pending phase lives entirely in the off-chain ceremony session, keeping the contract state machine minimal and spam-free.)
 
@@ -108,15 +109,18 @@ The backend may keep a **read-only cache/index** of registry state for UI and no
 
 ## Key metadata stored
 
-- quantumKeyId
-- xmssRoot (the XMSS public root)
-- xmssTreeHeight and used-leaf-index bitmap
+`KeyRegistration` (see the Guard spec's ABI):
+
+- quantumKeyId (`keccak256(abi.encodePacked(safe, xmssRoot, registryNonce))`)
+- safe
+- quantumAdmin (the Ledger EOA that the ECDSA half is verified against)
+- xmssRoot and xmssSeed (the XMSS public key)
+- treeHeight (1..20) and parameterSet
 - status
-- createdAt
-- rotatedAt
+- createdAt, rotatedAt
 - useCounter
-- associated Safe address
-- associated ERC-20 token address
+
+Alongside: the used-leaf bitmap per key (`isLeafUsed`), the Safe's Active key (`safeToQuantumKey`), the sticky `enrolledSafe` flag, `registryNonce`, per-Safe `rootRegistered`, and the pending revocation (`keyRevocationExecutableAt`, `keyRevocationKeyId`).
 
 ## Design intent
 
