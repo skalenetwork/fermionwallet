@@ -42,6 +42,38 @@ jobs:
         working-directory: contracts
         run: forge test -vv
 
+      - name: Package contract binaries
+        working-directory: contracts
+        run: |
+          DIST="fermionwallet-contracts-${TAG}"
+          mkdir -p "dist/${DIST}/abi" "dist/${DIST}/bytecode" "dist/${DIST}/artifacts"
+          for C in FermionWalletGuard PreApprovalEngine QuantumKeyRegistry; do
+            ART="out/${C}.sol/${C}.json"
+            # Full Foundry artifact (ABI + bytecode + metadata + source hashes)
+            cp "${ART}" "dist/${DIST}/artifacts/${C}.json"
+            jq '.abi' "${ART}" > "dist/${DIST}/abi/${C}.abi.json"
+            jq -r '.bytecode.object' "${ART}" > "dist/${DIST}/bytecode/${C}.bin"
+            jq -r '.deployedBytecode.object' "${ART}" > "dist/${DIST}/bytecode/${C}.deployed.bin"
+          done
+          # Compiler settings needed to reproduce byte-identical binaries
+          cp foundry.toml remappings.txt "dist/${DIST}/"
+          {
+            echo "tag: ${TAG}"
+            echo "commit: $(git rev-parse HEAD)"
+            echo "solc: $(jq -r '.metadata.compiler.version' out/FermionWalletGuard.sol/FermionWalletGuard.json)"
+            echo
+            echo "deployed codehashes (keccak256 of deployedBytecode):"
+            for C in FermionWalletGuard PreApprovalEngine QuantumKeyRegistry; do
+              HASH=$(cast keccak "$(jq -r '.deployedBytecode.object' "out/${C}.sol/${C}.json")")
+              echo "  ${C}: ${HASH}"
+            done
+          } > "dist/${DIST}/MANIFEST.txt"
+          cd dist
+          tar -czf "${DIST}.tar.gz" "${DIST}"
+          zip -qr "${DIST}.zip" "${DIST}"
+          sha256sum "${DIST}.tar.gz" "${DIST}.zip" > SHA256SUMS
+          cat "${DIST}/MANIFEST.txt" SHA256SUMS
+
       - name: Extract annotated tag message
         run: |
           git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
@@ -60,4 +92,7 @@ jobs:
             --title "FermionWallet ${TAG}" \
             --notes-file release-notes.md \
             --generate-notes \
-            --verify-tag
+            --verify-tag \
+            "contracts/dist/fermionwallet-contracts-${TAG}.tar.gz" \
+            "contracts/dist/fermionwallet-contracts-${TAG}.zip" \
+            "contracts/dist/SHA256SUMS"
