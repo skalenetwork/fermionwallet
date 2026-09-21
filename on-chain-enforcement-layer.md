@@ -8,12 +8,12 @@
 
 The enforcement layer is the Guard. It must not grow a parallel stack. See `fermionwallet-guard-module.md` for the pinned set:
 
-- `@safe-global/safe-contracts` — `BaseTransactionGuard`, `ITransactionGuard`, `IModuleGuard`, `Enum`, `ISafe.getTransactionHash`
-- OpenZeppelin Contracts — `ReentrancyGuardTransient`, `EIP712`, `SignatureChecker`, `BitMaps`, `EnumerableSet`, `IERC20`, `Address`, `SafeCast`, `Time`
-- PQ: pinned audited verifier on-chain, or `liboqs` / `@noble/post-quantum` at `createPreApproval` with on-chain `signatureHash` only
+- `@safe-global/safe-contracts` v1.5.0 — `BaseTransactionGuard`, `BaseModuleGuard`, `ITransactionGuard`, `IModuleGuard`, `Enum`, `ISafe` (`getTransactionHash`, `getModulesPaginated`, `getStorageAt`, `isOwner`), `MultiSendCallOnly`
+- OpenZeppelin Contracts v5.2.0 — `EIP712`, `SignatureChecker`, `Nonces`, `BitMaps`, `DoubleEndedQueue`, `Bytes`, `SlotDerivation`, `TransientSlot`, `SafeCast`, `IERC20`, `IERC20Permit`
+- PQ: FermionWallet's own clean-room XMSS verifier (`contracts/src/XMSS.sol`, RFC 8391), verified fully on-chain at `createPreApproval`; only `signatureHash` is stored
 - Foundry + Slither for tests and static analysis
 
-No local copies of Guard/ERC165/hasher/pause/reentrancy/signature code.
+No local copies of Guard/ERC165/hasher/signature code. The per-Safe pause and per-Safe nested-call flag are the only hand-written state guards (a global lock or pause would be a power over every Safe).
 
 ## Role in the FermionWallet MVP
 
@@ -21,10 +21,10 @@ The on-chain enforcement layer is the Safe Guard contract that validates the sec
 
 ## Responsibilities
 
-- validates the second authorization before Safe execution
-- checks that the transfer matches a valid pre-approval
-- verifies quantum signature integrity
-- enforces policy constraints
+- validates the second authorization before Safe execution (and, on Safe ≥ 1.5, before module execution)
+- checks that the transaction matches a live pre-approval
+- verifies both hybrid signature halves once, at pre-approval creation
+- enforces the Safe's selector permit-list, the fixed deny-list, and fallback-handler / module posture
 - rejects unauthorized or replayed transactions
 
 ## Implementation model
@@ -33,14 +33,12 @@ For the MVP, the enforcement layer is implemented as a Safe Guard. This is the r
 
 ## Required checks
 
-- Safe approval exists
-- transaction matches the pre-approved transfer parameters
-- quantum signature is valid
-- key is active and registered
-- nonce is valid and unused
-- expiry is valid
-- policyHash matches
-- amount and recipient are within approved bounds
+- the owner threshold already approved the transaction (the Safe checks this before calling the Guard)
+- the Safe has an Active key and is not paused
+- the transaction matches a live pre-approval exactly: by `safeTxHash` pin, or by token + recipient + **exact** amount (TRANSFER) / target + value + calldata hash (PAYLOAD, ADMIN)
+- the approval is unused, unrevoked and inside its validity window; its key is not revoked
+- the quantum signature was verified at creation (both halves, one-time XMSS leaf consumed)
+- `policyHash` is bound into the signed approval; it is not checked against an on-chain policy (amount caps and recipient allowlists are not yet enforced on-chain)
 
 ## Design intent
 

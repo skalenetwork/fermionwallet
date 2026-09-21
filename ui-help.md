@@ -49,7 +49,7 @@ A guarded Safe runs with no fallback handler. What that means day to day:
 
 Safe{Wallet} may warn that no fallback handler is set; that is expected. Support for signed messages will come from a FermionWallet handler that also requires a quantum approval for each message.
 
-**Step 1 — Open the app.** In Safe{Wallet}: *Apps → add custom Safe App → FermionWallet*. Get the app URL **only** from the FermionWallet GitHub README or the `fermionwallet.eth` ENS record — never from an email, chat message, or search result (a phishing clone at a look-alike URL is the cheapest possible attack on this step). On load, the app displays the Guard and Registry addresses it will use next to the published canonical values and refuses to continue if they differ. Connect while the Safe has **no** FermionWallet Guard yet; everything below happens through ordinary Safe transactions your owners already know how to sign.
+**Step 1 — Open the app.** In Safe{Wallet}: *Apps → add custom Safe App → FermionWallet*. Get the app URL **only** from the FermionWallet GitHub README or the `fermionwallet.eth` ENS record — never from an email, chat message, or search result (a phishing clone at a look-alike URL is the cheapest possible attack on this step). On load, the app displays the Guard address it will use next to the published canonical deployment and refuses to continue if they differ. Connect while the Safe has **no** FermionWallet Guard yet; everything below happens through ordinary Safe transactions your owners already know how to sign.
 
 **Step 2 — Run the key ceremony.** Follow [The key ceremony](#the-key-ceremony-first-time-setup-and-rotation) to generate the Administrator's XMSS key on the Ledger and register it on-chain with owner co-signatures. **This must happen first**: enabling the Guard with no Active quantum key would block every transaction on day one.
 
@@ -196,12 +196,12 @@ For when the quantum key **cannot** participate: the Ledger is lost or destroyed
 **Where to find it.** The dashboard always shows a quiet footer link: *"Quantum key lost or compromised? → Emergency options."* If the enrolled key hasn't signed anything for 30 days, the link is promoted to a visible amber card so owners discover the exit before they need it.
 
 **The flow:**
-1. Any owner opens **Emergency options → Start emergency Guard removal**. The screen states the terms up front: 14-day timelock, every party notified immediately, the Administrator can cancel from the enrolled Ledger at any point during the countdown.
+1. Any owner opens **Emergency options → Start emergency Guard removal**. The screen states the terms up front: 14-day timelock, every party notified immediately, and the owners can cancel at any point during the countdown with an ordinary owner-threshold Safe transaction. The Administrator's key alone cannot cancel it — otherwise a stolen Ledger could block every emergency exit forever.
 2. Owners sign the initiation with their normal keys (threshold required) — this is an ordinary Safe-governance action, deliberately independent of the quantum layer *and* of the FermionWallet backend.
 3. The countdown card (shown above) is pinned to every owner's dashboard for the full 14 days: initiator, signatures, execute-no-earlier-than timestamp, and a **Cancel** path.
 4. After 14 days, any owner executes the removal. The Safe is back to plain multisig — the app shows an unambiguous **UNPROTECTED** banner until a new key ceremony re-enables the Guard.
 
-**Why 14 days:** long enough for a traveling, hospitalized, or merely offline Administrator to notice and cancel a hostile attempt (a stolen owner-threshold cannot beat the clock quietly); short enough that a dead Ledger never bricks the Safe. If the Administrator is available, don't use this path — the normal quantum-approved removal is 48 hours.
+**Why 14 days:** long enough for owners and watchers to notice a hostile attempt started with forged or stolen owner signatures, and for the honest owners to cancel it (the attempt is loud and slow); short enough that a dead Ledger never bricks the Safe. If the Administrator is available, don't use this path — the normal quantum-approved removal is 48 hours.
 
 ## What you see on the Ledger
 
@@ -253,4 +253,4 @@ The **Audit log** tab (top navigation) is the append-only record of everything w
 | "Rotation overdue" interstitial | Key past 95% of its leaf budget | Run Rotate key now; signing stops entirely at 100% |
 | Row shows ⛓️ blocked by earlier nonce | A lower-nonce Safe transaction hasn't executed | Execute (or reject/replace) the earlier nonce; approvals only run in nonce order |
 | Approval expired before execution | Validity window shorter than the queue ahead of it (or network congestion) | Re-approve with the suggested window; each expiry costs one XMSS leaf, so fix the window rather than retrying blind |
-| Simulation shows `FermionApprovalMissing` in Safe{Wallet} | Executing before quantum authorization | Wait for 🟢 — this error is the system working as intended |
+| Simulation shows `NoMatchingPreApproval` in Safe{Wallet} | Executing before quantum authorization | Wait for 🟢 — this error is the system working as intended |

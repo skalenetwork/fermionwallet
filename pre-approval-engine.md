@@ -2,8 +2,8 @@
 
 ## Programming language
 
-- JavaScript
-- Solidity if the approval logic is enforced on-chain
+- Solidity: `contracts/src/PreApprovalEngine.sol`, an abstract base compiled into the deployed `FermionWalletGuard`
+- JavaScript: the add-on service that prepares requests and relays signatures
 
 ## Open-source libraries / tooling used
 
@@ -63,38 +63,49 @@ The Quantum Administrator operates using a **Ledger hardware wallet running the 
 - stores approval metadata, including amount and expiry
 - ensures approvals are nonce-protected to prevent replay attacks
 - rejects expired or revoked approvals
-- enforces policyHash validation
-- ensures the quantum signature matches the approved key
+- binds `policyHash` into the signed payload (the value is signed and stored; it is not checked against an on-chain policy — policy limits are enforced by the add-on service)
+- ensures both signature halves match the Safe's Active key
 
 ## Standard pre-approval data
 
 Every pre-approval carries an `approvalClass` — `TRANSFER`, `PAYLOAD`, or `ADMIN` (defined in [fermionwallet-guard-module.md → Pre-approval classes](./fermionwallet-guard-module.md#pre-approval-classes)) — plus:
 
 - approvalClass (TRANSFER | PAYLOAD | ADMIN)
-- token, spender or recipient, amount (TRANSFER class)
+- token, recipient, amount (TRANSFER class)
 - target, value, dataHash = keccak256(exact calldata) (PAYLOAD and ADMIN classes — this is how native ETH sends and administrative self-calls such as `setGuard(address(0))` are representable at all; without these fields the Guard could never be removed and the Safe would brick)
 - validFrom (ADMIN class: must be ≥ creation time + `ADMIN_TIMELOCK`, enforced on-chain)
 - validTo
-- nonce
-- quantumKeyId (the Quantum Administrator's registered XMSS root)
-- xmssLeafIndex (single-use, tracked on-chain)
+- nonce (the approval's ID salt: `id = keccak256(abi.encodePacked(safe, nonce))`; not the Safe nonce)
+- quantumKeyId (the Safe's Active key)
+- xmssLeafIndex (single-use, tracked on-chain; must equal the leaf inside the XMSS signature)
 - policyHash
+- txHash (optional, any class: pins the approval to one exact `safeTxHash`; zero = matched by fields)
 - ecdsaSignature (classical hybrid half, from the Ledger; verified on-chain against `quantumAdmin`)
 - xmssSignature (post-quantum half, from the Ledger secure element; verified fully on-chain at creation)
 
 ## Validation rules
 
-- the approval must still be active
-- the approval must not be expired
-- the approval must not be revoked
-- the nonce must not have been reused
-- the XMSS leaf index must not have been used before (on-chain bitmap check)
-- the XMSS signature must verify against the Administrator's registered root
-- the transfer amount must remain within the approved amount
+At creation (`createPreApproval` / `createPayloadPreApproval` / `createAdminPreApproval`):
+
+- the key must be the Safe's Active key
+- `validTo - validFrom ≥ 15 minutes` and `validTo` in the future; ADMIN: `validFrom ≥ now + ADMIN_TIMELOCK` (no maximum window is enforced on-chain)
+- the `(safe, nonce)` ID must be new
+- class-irrelevant fields must be zero
+- the ECDSA half must verify against the key's `quantumAdmin`, and the XMSS half against its root and seed
+- the XMSS leaf must be unused (on-chain bitmap) and is consumed
+
+At execution (inside the Guard's `checkTransaction` / `checkModuleTransaction`):
+
+- the approval must not be used or revoked, and `validFrom ≤ now ≤ validTo`
+- its key must be Active or Rotated (a Revoked key's approvals are dead)
+- the transaction must match exactly: for TRANSFER, the same token, recipient and **exact** amount; for PAYLOAD/ADMIN, the same target, value and calldata hash
+- the approval is marked used atomically with execution; it stays used even if the call then fails
 
 ### Tier-2 FIFO queue semantics
 
-Field-matched (`txHash == bytes32(0)`) approvals share a bounded FIFO per commitment. Lazy head advancement only skips permanently dead entries: used, revoked, expired, or tied to a dead key. A not-yet-valid approval (`validFrom` in the future) freezes head advancement so it is not silently lost; later currently-valid entries may still be consumed in place, and the scheduled approval remains usable when its window opens.
+Field-matched (`txHash == bytes32(0)`) approvals share a bounded FIFO per commitment (OpenZeppelin `DoubleEndedQueue`, cap `MAX_COMMITMENT_QUEUE`). Permanently dead entries — used, revoked, expired, or tied to a revoked key — are popped from the front on every create and every consume, so they never count toward the cap and cannot jam the queue. A not-yet-valid approval (`validFrom` in the future) is never popped: consumption takes the first currently-valid entry, and the scheduled approval remains usable when its window opens.
+
+Pinned (Tier 1) approvals live in `approvalByTxHash[safe][safeTxHash]` instead; a pin can be replaced only after its approval has expired or been revoked.
 
 ## Design intent
 

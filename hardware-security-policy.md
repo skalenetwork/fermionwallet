@@ -58,7 +58,7 @@ both confined to the SE. The physical boundary is the SE package; the MCU, USB/B
 |---|---|---|---|
 | `GEN_XMSS_KEY` | Administrator | SK_SEED, SK_PRF of one free slot (create); that slot's leaf counter (init = 0) | Generates a new XMSS key in a free slot (up to 4 keys; existing keys untouched) from SE TRNG. **Not derived from the BIP-39 seed** — deliberately unrecoverable from the 24 words (a restore would reset leaf state and enable reuse-forgery). Runs a pairwise consistency test; zeroizes on failure. |
 | `GET_XMSS_ROOT` | Any | none (public) | Returns `xmssRoot`, `treeHeight`, `parameterSet`. |
-| `ATTEST_KEY` | Administrator | attestation key (read) | Clear-signs EIP-712 `QuantumKeyAttestation{safe, quantumAdmin, xmssRoot, treeHeight, parameterSet, registryNonce}` on-device for the registration ceremony. |
+| `ATTEST_KEY` | Administrator | attestation key (read) | Clear-signs EIP-712 `QuantumKeyAttestation{safe, xmssRoot, xmssSeed, treeHeight, parameterSet, registryNonce}` (signed with the admin key, so `quantumAdmin` is bound as the signer) on-device for the registration ceremony. |
 | `SIGN_PREAPPROVAL` | Administrator | SK_SEED, SK_PRF, admin key (read); leaf counter (increment) | Renders token/recipient/amount/window/Safe nonce/leaf index on the trusted screen; one physical confirmation releases **both hybrid halves** (ECDSA EIP-712 + XMSS) over the same digest. |
 | `GET_STATUS` | Any | none (public) | App version, `xmssRoot`, current leaf index, leaves remaining ($2^h - idx$), key status. |
 | `RETIRE_KEY` | Administrator | SK_SEED, SK_PRF, counter of one slot (zeroize) | Erases one key after a double-confirmed on-device flow; other slots unaffected. Used after a rotation is confirmed on-chain. |

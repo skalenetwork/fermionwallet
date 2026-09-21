@@ -58,8 +58,8 @@ Each claim on the page and its source. Update this table when a claim is added o
 | 999,247 gas per verification at h = 20 | [contracts/README.md](../contracts/README.md#measured-gas) |
 | About 1M approvals per key (2^20 leaves) | [fermionwallet-guard-module.md](../fermionwallet-guard-module.md) |
 | Tested at h = 4, 10, 20 against an independent reference | [contracts/README.md](../contracts/README.md) |
-| 48-hour admin timelock; any single owner can revoke | [ui-help.md](../ui-help.md#administrative-approvals-and-the-timelock) |
-| 14-day owners-only emergency removal; Administrator can cancel | [ui-help.md](../ui-help.md#emergency-guard-removal-owners-only) |
+| 48-hour admin timelock; the owners (threshold) can revoke it; any single owner can revoke transfer/payload approvals | [ui-help.md](../ui-help.md#administrative-approvals-and-the-timelock) |
+| 14-day owners-only emergency removal; owners can cancel with a Safe transaction | [ui-help.md](../ui-help.md#emergency-guard-removal-owners-only) |
 | One approval per batch of up to 100 transfers | [ui-help.md](../ui-help.md#approving-a-batch-multisend) |
 | `approve`, `permit`, `transferFrom` rejected | [fermionwallet-guard-module.md](../fermionwallet-guard-module.md) |
 | Safe v1.3.0+; no modules, or module guard on 1.5+ | [ui-help.md](../ui-help.md#adding-the-guard-to-an-existing-safe) |

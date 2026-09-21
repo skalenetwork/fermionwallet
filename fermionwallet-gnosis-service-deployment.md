@@ -40,17 +40,13 @@ This document specifies the architecture, operational topology, contract deploym
 |              |                                                           |
 |              | checkTransaction() [ITransactionGuard]                    |
 |              v                                                           |
-|  +------------------------+                           +---------------+  |
-|  |  FermionWalletGuard    |-------------------------->| XMSS Library  |  |
-|  |  (Singleton Enforcer)  |      verifySignature      | (RFC 8391)    |  |
-|  +-----------+------------+                           +---------------+  |
-|              |                                                           |
-|              | reads status / verifies root                              |
-|              v                                                           |
-|  +------------------------+                                              |
-|  |  QuantumKeyRegistry    |                                              |
-|  |  (On-Chain Bitmap Root)|                                              |
-|  +------------------------+                                              |
+|  +--------------------------------------------------------------------+  |
+|  |  FermionWalletGuard — ONE deployed contract, one storage:          |  |
+|  |    transaction guard + module guard (Safe >= 1.5)                  |  |
+|  |    + QuantumKeyRegistry (keys, leaf bitmaps)       [abstract base] |  |
+|  |    + PreApprovalEngine  (pre-approvals, queues)    [abstract base] |  |
+|  |    + XMSS verifier (RFC 8391, internal library, inlined)           |  |
+|  +--------------------------------------------------------------------+  |
 +--------------------------------------------------------------------------+
 ```
 
@@ -58,61 +54,65 @@ This document specifies the architecture, operational topology, contract deploym
 
 ## 2. On-Chain Contracts Deployment Sequence
 
-FermionWallet utilizes a shared singleton architecture for its Guard and Registry.
+FermionWallet deploys **one** contract per chain: `FermionWalletGuard`. The key registry and pre-approval engine are abstract base contracts compiled into it, and the XMSS verifier is an internal library inlined into its bytecode — none of them is deployed separately. The Guard is non-upgradeable and has no admin (see the Guard spec, "No global powers").
 
 ### 2.1 Deterministic Factory Deployment (Create2)
-Contracts must be deployed across target networks (Ethereum Mainnet, Arbitrum, Optimism, Base, Polygon) using the canonical Safe Create2 CallDeployer (`0x914d7Fec6aaC8cd50fEb5d7B9130d56ee2cb2e00` or standard Singleton Factory):
 
-1. **Deploy [`XMSS.sol`](file:///d/fermionwallet/contracts/src/XMSS.sol)**:
-   * Pure bytecode library verifier.
-   * Immutable, no initializer.
-2. **Deploy `QuantumKeyRegistry.sol`**:
-   * Stores Safe-to-Key bindings, root commitments, and `BitMaps` for leaf consumption.
-   * Pinned reference to canonical Safe `MultiSendCallOnly` address.
-3. **Deploy `FermionWalletGuard.sol`**:
-   * Implements `ITransactionGuard` and `IModuleGuard`.
-   * References immutable `QuantumKeyRegistry` and `XMSS` library.
-   * Constructor arguments:
-     * `address _registry`: Deployed `QuantumKeyRegistry` address.
-     * `address _multiSendCallOnly`: Canonical Safe `MultiSendCallOnly` (e.g. v1.4.1 `0x40A2aCCbd92BCA938b02010E17A5b8929b49130D`).
+`contracts/script/Deploy.s.sol` deploys the Guard with `new FermionWalletGuard{salt: SALT}(...)`, which Forge routes through the deterministic deployment proxy, so the same constructor arguments and salt give the same address on every chain where that proxy exists. Target networks: Ethereum Mainnet, Arbitrum, Optimism, Base, Polygon.
+
+Constructor arguments (all immutable), with the script's defaults, each overridable by environment variable:
+
+| Argument | Env var | Default |
+|---|---|---|
+| `multiSendCallOnly` | `MULTISEND_CALL_ONLY` | Safe v1.4.1 `MultiSendCallOnly`, `0x9641d764fc13c8B624c04430C7356C1C7C8102e2` (the v1.3.0 deployment is `0x40A2aCCbd92BCA938b02010E17A5b8929b49130D`) |
+| `adminTimelock` | `ADMIN_TIMELOCK` | 2 days |
+| `emergencyTimelock` (also the key-revocation timelock) | `EMERGENCY_TIMELOCK` | 14 days; must exceed `adminTimelock` |
+| `maxBatchLegs` | `MAX_BATCH_LEGS` | 100 |
+| `maxCommitmentQueue` | `MAX_COMMITMENT_QUEUE` | 16 |
+| CREATE2 salt | `SALT` | `keccak256("fermionwallet.guard.v1")` |
+
+The script refuses to deploy if `MULTISEND_CALL_ONLY` has no code on the target chain.
 
 ### 2.2 Safe Integration Handshake
 To enroll a client Safe:
 1. **Key Ceremony**:
    * Quantum Administrator generates the root inside the Ledger's secure element (FermionWallet XMSS app).
    * Safe owners sign EIP-712 registration hash.
-   * Administrator calls `QuantumKeyRegistry.registerQuantumKey(...)`.
+   * Safe owners first remove the fallback handler and any unguarded modules (ordinary Safe transactions, before the Guard is attached) — registration is refused otherwise.
+   * Administrator calls `FermionWalletGuard.registerQuantumKey(...)`.
 2. **Guard Activation**:
    * Safe owners execute multisig transaction:
      ```solidity
      Safe.setGuard(address(FermionWalletGuard));
      ```
-   * *Optional but recommended*: Enable Module Guard if using automated agents:
+   * Safe ≥ 1.5 with modules: also wire the module guard (the same address), before enabling any module:
      ```solidity
      Safe.setModuleGuard(address(FermionWalletGuard));
      ```
 
 ### 2.3 Canonical Deployments & Address Verification
 
-Because all three contracts are deployed through the deterministic CREATE2 singleton factory with pinned salts and bytecode, **the canonical addresses are identical on every supported chain**. The authoritative source of truth is a signed `deployments.json` in this repository (and mirrored at `fermionwallet.eth` ENS text records):
+With identical constructor arguments and salt, the Guard's **address** is identical on every supported chain. Its on-chain **code hash** (`EXTCODEHASH`) is not: the constructor writes immutables into the runtime code, including the EIP-712 domain separator and chain ID, so every deployment's code hash differs per chain. The authoritative source of truth is a signed `deployments.json` in this repository (mirrored in `fermionwallet.eth` ENS text records):
 
 ```json
 {
   "version": "1.0.0",
-  "networks": { "1": {}, "42161": {}, "10": {}, "8453": {}, "137": {} },
   "contracts": {
-    "XMSS":               { "address": "<filled at first mainnet deployment>", "codehash": "0x…" },
-    "QuantumKeyRegistry": { "address": "<filled at first mainnet deployment>", "codehash": "0x…" },
-    "FermionWalletGuard": { "address": "<filled at first mainnet deployment>", "codehash": "0x…" }
+    "FermionWalletGuard": {
+      "address": "<filled at first mainnet deployment>",
+      "constructorArgs": { "multiSendCallOnly": "0x…", "adminTimelock": 172800, "emergencyTimelock": 1209600, "maxBatchLegs": 100, "maxCommitmentQueue": 16 },
+      "codehashByChain": { "1": "0x…", "42161": "0x…", "10": "0x…", "8453": "0x…", "137": "0x…" }
+    }
   }
 }
 ```
 
 Rules:
 
-* Addresses are filled in **once**, at the audited-release deployment, and never changed for a given version; a new version means new salts, new addresses, and a new registry entry — no in-place upgrades (contracts are non-upgradeable by design).
-* The Safe App and the backend refuse to operate against a Guard whose `EXTCODEHASH` does not match the published `codehash` — copy-paste address verification alone is not sufficient.
-* **Unsupported chains:** anyone can reproduce the canonical addresses on a new chain by running `forge script script/Deploy.s.sol --broadcast` (provided in `contracts/script/`) against the same singleton factory — CREATE2 guarantees byte-identical addresses if the factory exists on that chain. The deployment is permissionless; what makes it "canonical" is the codehash match, not the deployer identity. Chains without the singleton factory are unsupported until the factory is deployed there (standard one-time presigned transaction).
+* Addresses and per-chain code hashes are filled in **once**, at the audited-release deployment, and never changed for a given version; a new version means a new salt, a new address, and a new entry — no in-place upgrades.
+* The Safe App and the backend refuse to operate against a Guard whose `EXTCODEHASH` does not match the chain's entry in `deployments.json` — copy-paste address verification alone is not sufficient.
+* **Linking a deployment to a release:** each GitHub Release's `MANIFEST.txt` publishes the Guard's runtime code hash **with immutables zeroed**, plus `FermionWalletGuard.immutable-references.json`. To check that a deployed Guard is that release's code: fetch its runtime code, zero every byte range in the references file, hash, and compare.
+* **Unsupported chains:** anyone can reproduce the address on a new chain by running `forge script script/Deploy.s.sol --broadcast` with the same arguments and salt, provided the deterministic deployment proxy and the chosen `MultiSendCallOnly` exist there. The deployment is permissionless; what makes it genuine is the code check above, not the deployer identity.
 
 ### 2.4 Safe App Distribution & Verification
 
@@ -121,7 +121,7 @@ The FermionWallet Safe App (the front end opened inside Safe{Wallet}) is distrib
 * **Primary hosting:** `https://app.fermionwallet.io` — a static single-page bundle behind a CDN, chain-agnostic (the same URL serves all supported networks; the app reads the connected Safe's `chainId` and selects the matching `deployments.json` entry).
 * **Integrity mirror:** every release is also pinned to IPFS; the CID is published in the GitHub release notes and in the `fermionwallet.eth` ENS `contenthash`. Users who distrust DNS can load the app via any IPFS gateway or `ipfs://` directly.
 * **Manifest:** the bundle root serves the standard Safe App `manifest.json` (`name: "FermionWallet"`, `description`, `iconPath`), which is what Safe{Wallet} reads when the user selects *Apps → My custom apps → Add custom Safe App* and pastes the URL. Longer term, listing in the default Safe Apps registry (via PR to `safe-global/safe-apps-list`) removes the custom-URL step entirely; until that listing is merged, **the custom-URL flow is the only installation path and the URL must be obtained from this repository's README or the ENS record — never from a link in an email or chat message** (anti-phishing rule; see ui-help.md).
-* **Phishing check built in:** on load, the app displays the Guard/Registry addresses it is configured with and their codehashes next to the published canonical values, and refuses to propose `setGuard` if they differ. A cloned app pointing at a look-alike Guard fails this check visibly.
+* **Phishing check built in:** on load, the app displays the Guard address it is configured with and its code hash next to the published values, and refuses to propose `setGuard` if they differ. A cloned app pointing at a look-alike Guard fails this check visibly.
 
 ---
 
@@ -150,8 +150,7 @@ FALLBACK_RPC_URL=https://rpc.ankr.com/eth
 # --- Pinned Contracts ---
 SAFE_TRANSACTION_SERVICE_URL=https://safe-transaction-mainnet.safe.global/
 FERMION_GUARD_ADDRESS=0x...
-FERMION_REGISTRY_ADDRESS=0x...
-CANONICAL_MULTISEND_CALL_ONLY=0x40A2aCCbd92BCA938b02010E17A5b8929b49130D
+CANONICAL_MULTISEND_CALL_ONLY=0x9641d764fc13c8B624c04430C7356C1C7C8102e2   # must equal the Guard's MULTISEND_CALL_ONLY
 
 # --- Security & Relaying ---
 RELAYER_PRIVATE_KEY=0x...        # Hot wallet funded with ETH strictly for gas
@@ -210,7 +209,7 @@ The service ships as a single Docker image (`ghcr.io/skalenetwork/fermionwallet-
 
 ## 5. Security & Deployment Hardening Checklist
 
-- [ ] **Deterministic Verification**: Verify `FermionWalletGuard` and `QuantumKeyRegistry` source bytecode matches verified contracts via Etherscan / Sourcify.
+- [ ] **Deterministic Verification**: Verify the `FermionWalletGuard` source on Etherscan / Sourcify, and check its runtime code against the release manifest (immutables zeroed) and `deployments.json`.
 - [ ] **Relayer Isolation**: Relayer EOA holds minimal gas funds (< 2 ETH) and has zero administrative privileges in the smart contracts.
 - [ ] **Safe App Manifest**: Serve the Safe App UI over HTTPS with strict Content-Security-Policy (CSP) restricting iframe parent embedding to `https://app.safe.global`.
-- [ ] **Emergency Exit Drill**: Validate that Safe owners can initiate the time-locked de-guard emergency path (`Safe.setGuard(address(0))`) during an unannounced simulated service outage.
+- [ ] **Emergency Exit Drill**: Validate that Safe owners can run the emergency de-guard path (`requestEmergencyDeGuard`, then `Safe.setGuard(address(0))` after `EMERGENCY_TIMELOCK`) during an unannounced simulated service outage.
