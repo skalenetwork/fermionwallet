@@ -147,6 +147,7 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 
 contract FermionWalletGuard is
     BaseTransactionGuard,
+    BaseModuleGuard,   // same contract serves both hooks; wired via setModuleGuard on Safe 1.5+
     Pausable,
     ReentrancyGuardTransient,
     AccessControl,
@@ -154,6 +155,10 @@ contract FermionWalletGuard is
 {
     // FermionWallet-owned code is only: decode transfer calldata,
     // look up pre-approval, compare fields, consume bitmap nonce, revert.
+    // checkModuleTransaction routes through the same class-dispatch pipeline
+    // as checkTransaction (see "Module bypass" section for the two module-
+    // specific rules); state (pre-approvals, keys) is naturally shared —
+    // one contract, one storage.
 }
 ```
 
