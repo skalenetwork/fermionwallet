@@ -414,6 +414,18 @@ contract FermionWalletGuardTest is Test {
         }
     }
 
+    // ── TRANSFER approvals never authorise native ETH ───────────────────────
+
+    /// A transfer approval binds token/recipient/amount; Tier-2 matching ignores the
+    /// Safe tx `value`, so without an explicit check the approval would also let ETH
+    /// flow to the token contract. It must be rejected, not matched.
+    function test_transferApprovalDoesNotAuthoriseEthValue() public {
+        vm.deal(address(safe), 1 ether);
+        _approveTransfer(500, bytes32(0));
+        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.NativeValueOnTransfer.selector, 1 ether));
+        safe.exec(address(token), 1 ether, _transferData(500));
+    }
+
     // ── Queue: dead entries never count toward the cap ──────────────────────
 
     /// A commitment queue full of expired approvals must not lock that payment out
