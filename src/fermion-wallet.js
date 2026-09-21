@@ -1,19 +1,53 @@
 import crypto from 'node:crypto';
 
-function stableStringify(value) {
-  return JSON.stringify(value, Object.keys(value).sort());
+// This is an early JavaScript MODEL of the approval flow, not the enforcement layer.
+// Signatures here are HMAC-SHA256 demo MACs: symmetric (whoever can verify can forge),
+// NOT post-quantum and NOT production-grade. The real rules are enforced on-chain by
+// contracts/src/PreApprovalEngine.sol with hybrid ECDSA + XMSS signatures; this model
+// mirrors its TRANSFER-class matching rules (see readme "Prototype").
+
+export const DEMO_SIGNATURE_ALGORITHM = 'hmac-sha256-demo';
+// PreApprovalEngine.MIN_WINDOW is 15 minutes; the prototype's clock is in milliseconds.
+export const MIN_WINDOW_MS = 15 * 60 * 1000;
+
+function stableStringify(payload) {
+  // Flat payloads of primitives only: a nested object would be silently dropped by
+  // JSON.stringify's key allow-list and leave that field unsigned.
+  const out = {};
+  for (const k of Object.keys(payload).sort()) {
+    const v = payload[k];
+    if (v !== null && typeof v === 'object') {
+      throw new Error(`Cannot sign nested value for "${k}"`);
+    }
+    out[k] = typeof v === 'bigint' ? v.toString() : v;
+  }
+  return JSON.stringify(out);
+}
+
+function toUint(amount, what = 'amount') {
+  let value;
+  try {
+    value = BigInt(amount);
+  } catch {
+    throw new Error(`Invalid ${what}: must be a non-negative integer`);
+  }
+  if (value < 0n) {
+    throw new Error(`Invalid ${what}: must be a non-negative integer`);
+  }
+  return value;
 }
 
 export class ERC20Token {
-  constructor(name, symbol) {
+  constructor(name, symbol, address = `0x${crypto.randomBytes(20).toString('hex')}`) {
     this.name = name;
     this.symbol = symbol;
+    this.address = address; // identity that pre-approval signatures bind to
     this.balances = new Map();
     this.allowances = new Map();
   }
 
   mint(owner, amount) {
-    const value = BigInt(amount);
+    const value = toUint(amount);
     const next = (this.balances.get(owner) ?? 0n) + value;
     this.balances.set(owner, next);
     return next;
@@ -24,7 +58,7 @@ export class ERC20Token {
   }
 
   approve(owner, spender, amount) {
-    const value = BigInt(amount);
+    const value = toUint(amount);
     const key = `${owner}:${spender}`;
     const current = this.allowances.get(key) ?? 0n;
     this.allowances.set(key, value);
@@ -37,7 +71,7 @@ export class ERC20Token {
   }
 
   transfer(owner, to, amount) {
-    const value = BigInt(amount);
+    const value = toUint(amount);
     if (this.balanceOf(owner) < value) {
       throw new Error('Insufficient balance');
     }
@@ -47,7 +81,7 @@ export class ERC20Token {
   }
 
   transferFrom(spender, from, to, amount) {
-    const value = BigInt(amount);
+    const value = toUint(amount);
     const key = `${from}:${spender}`;
     const approved = this.allowances.get(key) ?? 0n;
 
@@ -72,6 +106,12 @@ export class QuantumKeyManager {
   }
 
   generateQuantumKeyPair() {
+    // On-chain a Safe enrolls once (SafeAlreadyEnrolled) and then rotates.
+    for (const k of this.keys.values()) {
+      if (k.status === 'active') {
+        throw new Error('An active key already exists: rotate it instead of generating another');
+      }
+    }
     const quantumKeyId = `qk-${crypto.randomUUID()}`;
     const secret = crypto.randomBytes(32).toString('hex');
     const walletPublicKey = `pub-${crypto.randomBytes(16).toString('hex')}`;
@@ -79,7 +119,7 @@ export class QuantumKeyManager {
       id: quantumKeyId,
       secret,
       publicKey: walletPublicKey,
-      algorithm: 'hybrid-pqc',
+      algorithm: DEMO_SIGNATURE_ALGORITHM,
       status: 'active',
       createdAt: Date.now(),
       rotatedAt: null,
@@ -91,6 +131,7 @@ export class QuantumKeyManager {
       quantumKeyId,
       publicKey: walletPublicKey,
       algorithm: key.algorithm,
+      postQuantum: false,
       status: key.status
     };
   }
@@ -138,6 +179,7 @@ export class QuantumKeyManager {
       quantumKeyId,
       publicKey: key.publicKey,
       algorithm: key.algorithm,
+      postQuantum: false,
       status: key.status,
       createdAt: key.createdAt,
       rotatedAt: key.rotatedAt,
@@ -184,10 +226,13 @@ export class QuantumKeyManager {
 }
 
 export class FermionWallet {
-  constructor(ownerAddress) {
+  // `now` returns milliseconds (the contract uses block.timestamp seconds).
+  constructor(ownerAddress, { now = Date.now } = {}) {
     this.ownerAddress = ownerAddress;
+    this.now = now;
     this.quantumKeys = new QuantumKeyManager();
     this.preApprovals = new Map();
+    this.usedNonces = new Set();
   }
 
   generateQuantumKeyPair() {
@@ -206,42 +251,71 @@ export class FermionWallet {
     return token.approve(this.ownerAddress, spender, amount);
   }
 
-  createPreApproval({ token, spender, amount, validFrom, validTo, nonce, quantumKeyId, policyHash }) {
+  static #signedPayload(a) {
+    return {
+      token: a.token.address,
+      recipient: a.recipient,
+      amount: a.amount,
+      validFrom: a.validFrom,
+      validTo: a.validTo,
+      nonce: a.nonce,
+      quantumKeyId: a.quantumKeyId,
+      policyHash: a.policyHash
+    };
+  }
+
+  // TRANSFER-class pre-approval: `recipient` receives exactly `amount` of `token`
+  // from this wallet, once, inside [validFrom, validTo] (ms, inclusive).
+  createPreApproval({ token, recipient, spender, amount, validFrom, validTo, nonce, quantumKeyId, policyHash }) {
+    if (recipient === undefined && spender !== undefined) {
+      throw new Error('`spender` was renamed to `recipient`: a pre-approval pays exactly this recipient');
+    }
+    if (!(token instanceof ERC20Token) || !token.address) {
+      throw new Error('Invalid token');
+    }
+    if (!recipient) {
+      throw new Error('Invalid recipient');
+    }
     const key = this.quantumKeys.keys.get(quantumKeyId);
     if (!key || key.status !== 'active') {
       throw new Error('Quantum key unavailable for pre-approval');
     }
 
-    const payload = {
+    const value = toUint(amount);
+    const from = Number(validFrom);
+    const to = Number(validTo);
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from < MIN_WINDOW_MS || to <= this.now()) {
+      throw new Error(`Invalid window: need validTo > now and validTo - validFrom >= ${MIN_WINDOW_MS} ms`);
+    }
+    const nonceKey = String(nonce);
+    if (this.usedNonces.has(nonceKey)) {
+      throw new Error(`Pre-approval with nonce "${nonceKey}" already exists`);
+    }
+
+    const approval = {
       token,
-      spender,
-      amount: String(amount),
-      validFrom: Number(validFrom),
-      validTo: Number(validTo),
-      nonce,
+      recipient,
+      amount: value.toString(),
+      validFrom: from,
+      validTo: to,
+      nonce: nonceKey,
       quantumKeyId,
       policyHash
     };
-
-    const signature = this.quantumKeys.signPayload(quantumKeyId, payload);
+    const signature = this.quantumKeys.signPayload(quantumKeyId, FermionWallet.#signedPayload(approval));
     const preApprovalId = `pa-${crypto.randomUUID()}`;
 
+    this.usedNonces.add(nonceKey);
     this.preApprovals.set(preApprovalId, {
       id: preApprovalId,
-      token,
-      spender,
-      amount: String(amount),
-      validFrom: Number(validFrom),
-      validTo: Number(validTo),
-      nonce,
-      quantumKeyId,
-      policyHash,
+      ...approval,
+      signatureAlgorithm: DEMO_SIGNATURE_ALGORITHM,
       signature,
-      createdAt: Date.now(),
+      createdAt: this.now(),
       status: 'active'
     });
 
-    return { preApprovalId, ...payload, signature };
+    return { preApprovalId, ...approval, signatureAlgorithm: DEMO_SIGNATURE_ALGORITHM, signature };
   }
 
   validatePreApproval(preApprovalId) {
@@ -251,33 +325,36 @@ export class FermionWallet {
     }
 
     if (approval.status !== 'active') {
-      return { valid: false, reason: 'Pre-approval revoked or inactive' };
+      return { valid: false, reason: `Pre-approval ${approval.status}` };
     }
 
-    const now = Date.now();
-    if (now < approval.validFrom || now > approval.validTo) {
-      return { valid: false, reason: 'Pre-approval expired or not yet valid' };
+    const now = this.now();
+    if (now < approval.validFrom) {
+      return { valid: false, reason: 'Pre-approval not yet valid' };
+    }
+    if (now > approval.validTo) {
+      return { valid: false, reason: 'Pre-approval expired' };
     }
 
-    const payload = {
-      token: approval.token,
-      spender: approval.spender,
-      amount: approval.amount,
-      validFrom: approval.validFrom,
-      validTo: approval.validTo,
-      nonce: approval.nonce,
-      quantumKeyId: approval.quantumKeyId,
-      policyHash: approval.policyHash
-    };
-
-    const valid = this.quantumKeys.verifySignature(approval.quantumKeyId, payload, approval.signature);
+    let valid = false;
+    try {
+      valid = this.quantumKeys.verifySignature(
+        approval.quantumKeyId,
+        FermionWallet.#signedPayload(approval),
+        approval.signature
+      );
+    } catch {
+      valid = false;
+    }
     if (!valid) {
-      return { valid: false, reason: 'Invalid quantum signature' };
+      return { valid: false, reason: `Invalid ${DEMO_SIGNATURE_ALGORITHM} signature` };
     }
 
     return { valid: true, preApproval: approval };
   }
 
+  // Mirrors the Guard's TRANSFER match: token, recipient and amount must all equal the
+  // signed values (no partial spends); the approval is consumed on success.
   executePreApprovedTransfer(preApprovalId, recipient, amount) {
     const result = this.validatePreApproval(preApprovalId);
     if (!result.valid) {
@@ -285,21 +362,22 @@ export class FermionWallet {
     }
 
     const approval = result.preApproval;
-    const requestedAmount = BigInt(amount);
-    const approvedAmount = BigInt(approval.amount);
+    const requestedAmount = toUint(amount);
 
-    if (requestedAmount > approvedAmount) {
-      throw new Error('Transfer exceeds pre-approved amount');
+    if (recipient !== approval.recipient) {
+      throw new Error('Transfer recipient does not match the pre-approved recipient');
+    }
+    if (requestedAmount !== BigInt(approval.amount)) {
+      throw new Error('Transfer amount does not match the pre-approved amount');
     }
 
     const token = approval.token;
-    const ownerBalance = token.balanceOf(this.ownerAddress);
-    if (ownerBalance < requestedAmount) {
+    if (token.balanceOf(this.ownerAddress) < requestedAmount) {
       throw new Error('Insufficient wallet balance');
     }
 
     token.transfer(this.ownerAddress, recipient, requestedAmount);
-    approval.status = 'consumed';
+    approval.status = 'used';
 
     return {
       preApprovalId,
@@ -313,6 +391,9 @@ export class FermionWallet {
     const approval = this.preApprovals.get(preApprovalId);
     if (!approval) {
       throw new Error('Unknown pre-approval');
+    }
+    if (approval.status !== 'active') {
+      throw new Error(`Pre-approval ${approval.status}: not revocable`);
     }
 
     approval.status = 'revoked';
