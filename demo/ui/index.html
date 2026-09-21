@@ -108,7 +108,8 @@
     </div>
     <p class="sim">The real FermionWallet Ledger app isn't built yet, so this device is simulated: it follows
     the app spec — it holds the keys, picks the leaf from its own counter, shows every signed field, and
-    signs only after you've paged through every screen and pressed Approve. Rejecting consumes no leaf.</p>
+    signs only after you've paged through every screen and pressed Approve. Rejecting — or leaving it
+    60 s without a button press — signs nothing and consumes no leaf.</p>
   </div>
 
   <div class="story">
@@ -196,7 +197,8 @@ async function flow(name, btn, out) {
   setBusy(true); // one flow at a time: each signs against the chain state the previous one leaves
   out.className = 'out show';
   out.textContent = name === 'approve'
-    ? 'Waiting for approval on the Ledger — review every screen, then press Approve (or Reject)…'
+    ? 'Waiting for approval on the Ledger — review every screen, then press Approve (or Reject). ' +
+      'The device rejects by itself after 60 s without a button press…'
     : 'Running…';
   try {
     const r = await (await fetch('/api/' + name, {

@@ -12,7 +12,10 @@ for the device and follows the spec's behaviour for the commands the demo uses:
   only after the user has paged through every screen and pressed Approve;
 - counter-before-signature: the counter is committed to disk *before* the two
   signatures are computed and released together over the same EIP-712 digest;
-- rejecting, or a 120 s timeout, signs nothing and consumes no leaf.
+- rejecting, or 60 s without a button press (ledger-ui.md: "60 s idle = reject"),
+  signs nothing and consumes no leaf;
+- malformed payload fields abort before the first screen; an empty validity window
+  is refused ("Clock window invalid").
 
 Host interface (the "transport"):  POST /apdu     {"ins": ..., ...}
 Device screen and buttons:         GET  /screen,  POST /button {"button": ...}
@@ -38,7 +41,7 @@ ADMIN_PK = os.environ.get(
 )
 HEIGHT = 4  # demo XMSS key: 16 one-time leaves
 SLOT = 1
-DECISION_TIMEOUT_S = 120
+IDLE_TIMEOUT_S = 60  # no button press for this long = reject
 
 sys.path.insert(0, os.path.join(CONTRACTS, "py"))
 import sign_digest  # noqa: E402  (deterministic demo XMSS key, RFC 8391 reference code)
@@ -119,8 +122,10 @@ def key_label():
 
 
 def fmt_amount(raw, decimals):
+    """Exact decimals-adjusted amount: never rounds, so 0.001 is not shown as 0.00."""
     whole, frac = divmod(int(raw), 10 ** decimals)
-    return f"{whole:,}.{frac * 100 // 10 ** decimals:02d}"
+    digits = f"{frac:0{decimals}d}".rstrip("0") if decimals else ""
+    return f"{whole:,}.{digits.ljust(2, '0')}"
 
 
 def render(p, leaf, chain_id):
@@ -174,17 +179,63 @@ LOCK = threading.Lock()
 session = None  # dict while a signing flow is on screen
 
 
+ADDRESS_FIELDS = ("safe", "token", "recipient", "target")
+BYTES32_FIELDS = ("dataHash", "nonce", "quantumKeyId", "policyHash", "txHash")
+UINT_FIELDS = {"approvalClass": 8, "amount": 256, "value": 256, "validFrom": 64, "validTo": 64}
+
+
+def _is_hex(v, nbytes):
+    if not isinstance(v, str) or len(v) != 2 + 2 * nbytes or not v.startswith("0x"):
+        return False
+    try:
+        int(v[2:], 16)
+        return True
+    except ValueError:
+        return False
+
+
+def _uint(v, bits):
+    # JSON numbers or decimal strings; bools, floats and negatives are out of range.
+    if isinstance(v, bool) or not isinstance(v, (int, str)):
+        raise ValueError
+    n = int(v, 10) if isinstance(v, str) else v
+    if not 0 <= n < 1 << bits:
+        raise ValueError
+    return n
+
+
+def check_payload(p, domain):
+    """Unknown, missing or malformed fields abort before screen 1 (ledger-xmss-app.md)."""
+    bad = ValueError("Payload rejected — field out of range")
+    if not isinstance(p, dict) or not isinstance(domain, dict):
+        raise bad
+    if set(p) != set(ADDRESS_FIELDS) | set(BYTES32_FIELDS) | set(UINT_FIELDS):
+        raise bad
+    try:
+        nums = {k: _uint(p[k], bits) for k, bits in UINT_FIELDS.items()}
+        chain_id = _uint(domain.get("chainId"), 256)
+    except (ValueError, TypeError):
+        raise bad from None
+    if not all(_is_hex(p[k], 20) for k in ADDRESS_FIELDS) or not all(_is_hex(p[k], 32) for k in BYTES32_FIELDS):
+        raise bad
+    if not _is_hex(domain.get("verifyingContract"), 20):
+        raise bad
+    if nums["approvalClass"] != 0:
+        raise ValueError("Payload rejected — the demo device signs transfer approvals only")
+    if nums["validTo"] <= nums["validFrom"]:
+        raise ValueError("Clock window invalid")
+    return chain_id, domain["verifyingContract"]
+
+
 def sign_preapproval(req):
     global session
     if req.get("slot") != SLOT:
         raise ValueError("Key mismatch — no such key slot")
-    if not ROOT.lower().startswith(str(req.get("rootPrefix", "")).lower()) or len(req.get("rootPrefix", "")) < 18:
+    prefix = req.get("rootPrefix")
+    if not isinstance(prefix, str) or len(prefix) < 18 or not ROOT.lower().startswith(prefix.lower()):
         raise ValueError("Key mismatch — check host")
-    p = req["payload"]
-    if int(p.get("approvalClass", -1)) != 0:
-        raise ValueError("Payload rejected — the demo device signs transfer approvals only")
-    chain_id = int(req["domain"]["chainId"])
-    verifying = req["domain"]["verifyingContract"]
+    p = req.get("payload")
+    chain_id, verifying = check_payload(p, req.get("domain"))
 
     with LOCK:
         if session is not None:
@@ -196,12 +247,20 @@ def sign_preapproval(req):
         digest = eip712_digest(p, leaf, chain_id, verifying)  # fails before any screen if malformed
         done = threading.Event()
         session = {"screens": render(p, leaf, chain_id), "index": 0, "seen": 0,
-                   "decision": None, "done": done, "leaf": leaf}
+                   "decision": None, "done": done, "leaf": leaf, "lastPress": time.monotonic()}
 
-    decided = done.wait(DECISION_TIMEOUT_S)
-    with LOCK:
-        decision = session["decision"] if decided else "timeout"
-        session = None
+    # Idle timeout: every button press restarts the 60 s, so a careful reviewer paging
+    # through the fields is never cut off, while an abandoned session rejects itself.
+    while True:
+        with LOCK:
+            remaining = session["lastPress"] + IDLE_TIMEOUT_S - time.monotonic()
+            if done.is_set() or remaining <= 0:
+                # Decided or timed out, atomically with closing the session: a press
+                # arriving after this sees no session and cannot approve.
+                decision = session["decision"] if done.is_set() else "timeout"
+                session = None
+                break
+        done.wait(remaining)
     if decision != "approve":
         return {"status": "rejected" if decision == "reject" else "timeout", "leafConsumed": False}
 
@@ -238,6 +297,11 @@ def press(button):
         if s is None:
             raise ValueError("No signing session on the device")
         last = len(s["screens"]) - 1
+        if s["done"].is_set():
+            raise ValueError("No signing session on the device")
+        if button not in ("next", "prev", "reject", "approve"):
+            raise ValueError("unknown button")
+        s["lastPress"] = time.monotonic()
         if button == "next":
             s["index"] = min(s["index"] + 1, last)
             s["seen"] = max(s["seen"], s["index"])
@@ -257,6 +321,8 @@ def press(button):
 
 
 def apdu(req):
+    if not isinstance(req, dict):
+        raise ValueError("Payload rejected — field out of range")
     ins = req.get("ins")
     if ins == "GET_ADMIN_ADDRESS":
         return {"address": ADMIN_ADDRESS}
@@ -295,7 +361,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/apdu":
                 self._json(apdu(self._body()))
             elif self.path == "/button":
-                press(self._body().get("button"))
+                body = self._body()
+                press(body.get("button") if isinstance(body, dict) else None)
                 self._json({"ok": True})
             else:
                 self.send_error(404)
