@@ -410,9 +410,9 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
     /// Verified via the legacy overload (portable across Safe 1.3.0/1.4.1/1.5.0); the
     /// relayer never counts toward the threshold (executor is this contract). `data`
     /// MUST be the digest's preimage (0x1901 ‖ domainSeparator ‖ structHash): v1.3.0/
-    /// v1.4.1 require keccak256(data) == dataHash for contract-owner (EIP-1271)
-    /// signatures (GS027) and hand `data` — not the hash — to the owner's legacy
-    /// isValidSignature(bytes,bytes). v1.5.0 ignores it.
+    /// v1.4.1 hand `data` — not the hash — to a contract owner's legacy
+    /// isValidSignature(bytes,bytes), and v1.4.1 also requires keccak256(data) ==
+    /// dataHash for such signatures (GS027). v1.5.0 ignores it.
     function _checkOwnerSignatures(address safe, bytes32 structHash, bytes calldata ownerSignatures)
         private
         view
