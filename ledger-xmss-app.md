@@ -19,18 +19,21 @@ Custom Ledger embedded app giving the Quantum Administrator a hardware-held, sta
 1. **Key generation on device.** The XMSS private seed is generated inside the secure element and never leaves it. The app exports only the public root (registered on-chain as `xmssRoot`).
 2. **Stateful signing.** Each signature consumes one leaf index. The index counter is a **monotonic counter in secure-element NVM**: incremented and committed *before* the signature is released. Rollback, restore, or host tampering cannot reuse an index.
 3. **What-you-see-is-what-you-sign.** The device screen renders the pre-approval fields — token, recipient, amount, validity window, nonce, leaf index, Safe address, chain ID, policyHash — and requires physical confirmation per signature.
-4. **Exhaustion handling.** The app warns at a configurable threshold (e.g., 90% of 2^h leaves) and refuses to sign past the final index; rotation to a new root is the only path forward.
+4. **Hybrid classical half, from the same device.** The app also holds one secp256k1 key, derived at a fixed, app-specific BIP-32 path declared in the app manifest (never host-supplied). Its Ethereum address is the Administrator's `quantumAdmin`: the contracts verify every pre-approval's ECDSA half against it (`PreApprovalEngine`, `InvalidEcdsaSignature`) and require it to sign the key-registration attestation (`QuantumKeyRegistry`, `InvalidAttestation`). Without this half nothing the app produces can be registered or used on-chain. Unlike the XMSS seed, this key is stateless, so deriving it from the recovery phrase is safe.
+5. **Exhaustion handling.** The app warns at a configurable threshold (e.g., 90% of 2^h leaves) and refuses to sign past the final index; rotation to a new root is the only path forward.
 
 ## APDU interface (draft)
 
 | INS | Command | Notes |
 |---|---|---|
-| `0x02` | `GET_XMSS_ROOT` | returns public root + tree height + parameter set |
+| `0x02` | `GET_XMSS_ROOT` | returns public root + public SEED + tree height + parameter set. The public SEED is a mandatory RFC 8391 verification input (registered on-chain as `xmssSeed`; registration rejects a zero seed); it is not secret |
 | `0x04` | `GET_LEAF_INDEX` | returns next unused index (read-only) |
-| `0x06` | `SIGN_PREAPPROVAL` | streams the EIP-712-style payload in chunks; device displays fields; on confirm, commits counter then returns XMSS signature |
+| `0x06` | `SIGN_PREAPPROVAL` | streams the EIP-712 payload in chunks; device displays fields; on confirm, commits counter then returns **both hybrid halves over the same EIP-712 digest**: the ECDSA signature by the `quantumAdmin` key and the XMSS signature. One confirmation, released together — the host never obtains one half without the other |
 | `0x08` | `GET_APP_CONFIG` | version, parameter set, remaining signatures |
 | `0x0A` | `SIGN_ROTATION` | streams the `RotateQuantumKey` payload (new root, new admin, registryNonce); device shows the ROTATE QUANTUM KEY flow (old vs new ceremony words, abandoned-leaf count); on confirm, commits counter then returns the old key's XMSS possession proof |
-| `0x0C` | `SIGN_DENIAL` | streams the denial record (payload hash + reason hash); device shows the red DENY flow; on confirm returns a plain ECDSA signature — **no counter commit, no leaf consumed** |
+| `0x0E` | `GET_ADMIN_ADDRESS` | returns the `quantumAdmin` address (the ECDSA key above); with the display flag set, shows the full address on-device for the ceremony preflight to compare |
+| `0x10` | `SIGN_KEY_ATTESTATION` | signs the EIP-712 `QuantumKeyAttestation { safe, xmssRoot, xmssSeed, treeHeight, parameterSet, registryNonce }` with the `quantumAdmin` key (the `ledgerAttestation` that `registerQuantumKey` and `rotateQuantumKey` verify). The host supplies only `safe`, the chain, and `registryNonce`; the device fills root, SEED, height, and parameter set **from its own key**, so a host cannot attest a substituted root. Device shows the Safe address (chunked), chain, ceremony words, and registryNonce. No counter commit, no leaf consumed |
+| `0x0C` | `SIGN_DENIAL` | streams the denial record (payload hash + reason hash); device shows the red DENY flow; on confirm returns a plain ECDSA signature by the `quantumAdmin` key — **no counter commit, no leaf consumed** |
 
 All commands are rejected while another signing session is in flight; no command exposes seed material.
 
@@ -70,9 +73,10 @@ On-device screens for every flow, targeting both device families via the SDK's U
 | 2 | Entropy notice | "Key is generated inside this device and cannot be exported or restored from your recovery phrase." Requires explicit acknowledgment — this is the #1 support surprise, surfaced before generation, not after |
 | 3 | Progress | Tree construction progress bar with time estimate (minutes on Nano-class MCUs); cancellable until complete |
 | 4 | Root review | Full root, chunked, multi-page; plus the derived **6-word ceremony code** rendered on-device — the words the owners will verify out-of-band come from the secure element itself, not from the host UI |
-| 5 | Confirm export | "Share public root with host?" Approve/Reject. Only the root, height, and parameter set cross the wire |
+| 5 | Confirm export | "Share public key with host?" Approve/Reject. Only the root, public SEED, height, and parameter set cross the wire |
+| 6 | Attest (`SIGN_KEY_ATTESTATION`) | "Attest this key for Safe 0x…?" — Safe address (chunked), chain, ceremony words, registryNonce. Approve produces the `ledgerAttestation` the registry requires; the key fields come from the device, not the host |
 
-Re-running `GET_XMSS_ROOT` after generation returns the existing root (screens 4–5 only); a second generation requires the explicit *Reset* flow in Settings with a typed-style double confirmation and a warning that the old key becomes unusable.
+Re-running `GET_XMSS_ROOT` after generation returns the existing public key (screens 4–5 only); attestation (screen 6) is its own command and is repeated per Safe and per `registryNonce`; a second generation requires the explicit *Reset* flow in Settings with a typed-style double confirmation and a warning that the old key becomes unusable.
 
 ### Flow 2 — Sign pre-approval (`SIGN_PREAPPROVAL`)
 
@@ -90,7 +94,7 @@ Re-running `GET_XMSS_ROOT` after generation returns the existing root (screens 4
 | 7 | Policy | `policyHash` first/last 8 hex chars (the one field verified by hash — the full policy is enforced on-chain, the hash only needs collision-level comparison) |
 | 8 | Decision | "Approve transfer?" — Approve requires the long-press (Stax) / both-buttons (Nano) idiom; Reject is a single tap |
 
-On approve: NVM counter commits, *then* the signature streams out (counter-before-signature invariant). On reject or timeout (60 s idle on the decision screen): APDU error, no state change, no leaf consumed. Unknown or malformed payload fields abort the flow before screen 1 — there is no "review anyway" path.
+On approve: NVM counter commits, *then* both hybrid halves stream out — the ECDSA signature and the XMSS signature over the same digest (counter-before-signature invariant). On reject or timeout (60 s idle on the decision screen): APDU error, no state change, no leaf consumed. Unknown or malformed payload fields abort the flow before screen 1 — there is no "review anyway" path.
 
 **Non-transfer classes (`PAYLOAD`/`ADMIN`):** the same flow with screens 2–4 replaced by target address (full, chunked), native ETH value, and the payload `dataHash` (first/last 8 hex). `ADMIN`-class payloads additionally show a warning header ("ADMIN ACTION — affects Safe governance") and, when the host supplies the decoded intent, a plain-language line such as "Removes the FermionWallet Guard". The class is part of the signed payload, so a host cannot present an admin action as a transfer.
 
@@ -133,6 +137,7 @@ Every host-side failure has a distinct, plain-language device screen: `Payload r
 - **Counter-before-signature invariant**: the NVM counter commit must be atomic and precede signature release. A power loss between commit and release loses one leaf (acceptable); the reverse order is forbidden (catastrophic).
 - NVM wear: counter updates must use the SDK's wear-leveled storage; budget ≥ 2^20 writes.
 - Signing time: target < 3 s per signature on current devices (WOTS+ chains dominate; precompute where the SDK allows).
+- **Hybrid binding**: the ECDSA and XMSS halves of a pre-approval are computed inside the device over the identical EIP-712 digest and released only together, after the counter commit. There is no command that returns an ECDSA signature over a pre-approval digest by itself.
 - Blind signing must be impossible: no raw-hash signing path; every signature goes through the field-rendering flow.
 - The parameter set (e.g., `XMSS-SHA2_20_256` or keccak variant) is fixed at build time and attested via `GET_APP_CONFIG`; the on-chain verifier and the app must be parameter-locked to each other.
 - App must pass Ledger's security review for distribution; until then, sideloaded builds are restricted to testnets.
@@ -145,7 +150,7 @@ The on-chain used-leaf bitmap in the Guard/registry stays in place even after th
 
 - [ ] Rust app implementing the APDU interface above
 - [ ] `speculos`/`ragger` CI suite: signing flow, counter monotonicity across power cycles, exhaustion refusal, chunked payload edge cases, and UI snapshot tests for every screen of every flow on both NBGL (Stax/Flex) and BAGL (Nano) targets
-- [ ] Cross-verification test: 10k device signatures verified by the Solidity XMSS verifier in Foundry
+- [ ] Cross-verification test: 10k device signatures verified by the Solidity XMSS verifier in Foundry, and device-produced hybrid pairs plus key attestations accepted end to end by `createPreApproval` and `registerQuantumKey` (a real Safe in Foundry)
 - [ ] Host SDK in the add-on service (`ledger-xmss.ts`) replacing the Phase 1 software keystore path behind the same interface
 - [ ] Ledger security review submission
 
