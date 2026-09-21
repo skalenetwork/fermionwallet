@@ -203,6 +203,10 @@ contract FermionWalletGuard is
         //    emergency escape hatch and the owner safety calls may never be blocked
         //    by any other state.
         if (_isEmergencyEscapeCall(safe, to, value, data, operation)) {
+            // Count the level (never blocks): its checkAfterExecution decrements, so a
+            // nested escape call cannot reset an enclosing transaction's depth.
+            TransientSlot.Uint256Slot escDepth = DEPTH_NAMESPACE.deriveMapping(safe).asUint256();
+            escDepth.tstore(escDepth.tload() + 1);
             if (isSetGuard) CLEAR_EMERGENCY_NAMESPACE.deriveMapping(safe).asBoolean().tstore(true);
             return;
         }
@@ -217,9 +221,10 @@ contract FermionWalletGuard is
         _requireEnrolledActive(safe);
 
         // 4. Reentrancy depth: nested Safe transactions are rejected for the MVP.
-        TransientSlot.BooleanSlot depth = DEPTH_NAMESPACE.deriveMapping(safe).asBoolean();
-        if (depth.tload()) revert NestedSafeTransaction(safe);
-        depth.tstore(true);
+        //    A counter, not a flag: escape calls (step 1) also occupy a level.
+        TransientSlot.Uint256Slot depth = DEPTH_NAMESPACE.deriveMapping(safe).asUint256();
+        if (depth.tload() != 0) revert NestedSafeTransaction(safe);
+        depth.tstore(1);
 
         // 5. Module-bypass mitigation: no enabled modules, or this contract wired
         //    as the module guard (Safe >= 1.5). Exemptions so a bad posture can
@@ -271,7 +276,9 @@ contract FermionWalletGuard is
     ///      approval stays consumed even if `success == false`. Safe calls this on the
     ///      Guard it checked with, even when that transaction just removed the Guard.
     function checkAfterExecution(bytes32, bool success) external override {
-        DEPTH_NAMESPACE.deriveMapping(msg.sender).asBoolean().tstore(false);
+        TransientSlot.Uint256Slot depth = DEPTH_NAMESPACE.deriveMapping(msg.sender).asUint256();
+        uint256 d = depth.tload();
+        if (d != 0) depth.tstore(d - 1);
         _clearEmergencyIfFlagged(msg.sender, success);
     }
 

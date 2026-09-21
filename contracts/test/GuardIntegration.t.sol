@@ -692,7 +692,8 @@ contract GuardIntegrationTest is Test {
         // Fresh registration of a new key (h = H_NEW).
         (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
         uint256 nonce = guard.registryNonce(address(safe));
-        validUntil = block.timestamp + 1 days;
+        // vm.getBlockTimestamp(): via-IR may reuse the pre-warp block.timestamp.
+        validUntil = vm.getBlockTimestamp() + 1 days;
         bytes32 regDigest = _guardDigest(
             keccak256(
                 abi.encode(APPROVE_KEY_TYPEHASH, address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, nonce, validUntil)
@@ -1219,6 +1220,75 @@ contract GuardIntegrationTest is Test {
         vm.warp(block.timestamp + 1 days);
         _safeExec(address(token), 0, pay, Enum.Operation.Call);
         assertTrue(guard.getPreApproval(scheduled).used);
+    }
+
+    // ══ Regression: a nested escape call must not reset the reentrancy depth ══
+
+    /// An escape-hatch transaction nested inside an approved one used to clear the
+    /// depth flag in its checkAfterExecution, re-opening the door for a further
+    /// nested (non-escape) Safe transaction within the same outer execution.
+    function test_Reentrancy_NestedEscapeCallDoesNotResetDepth() public {
+        EscapeThenReenterToken attacker = new EscapeThenReenterToken(safe);
+        _createTransfer2(address(attacker), recipient, 1 ether, 1, bytes32(0));
+        _createTransfer(recipient, 2 ether, 2, bytes32(0));
+
+        uint256 n = safe.nonce();
+        bytes memory escData = abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ());
+        bytes32 escHash = safe.getTransactionHash(
+            address(guard), 0, escData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), n + 1
+        );
+        bytes memory innerData = abi.encodeCall(IERC20.transfer, (recipient, 2 ether));
+        bytes32 innerHash = safe.getTransactionHash(
+            address(token), 0, innerData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), n + 2
+        );
+        attacker.arm(address(guard), escData, _ownerSigs(escHash), address(token), innerData, _ownerSigs(innerHash));
+
+        bytes memory outerData = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
+        bytes32 outerHash = safe.getTransactionHash(
+            address(attacker), 0, outerData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), n
+        );
+        bytes memory sigs = _ownerSigs(outerHash);
+        vm.expectRevert();
+        safe.execTransaction(
+            address(attacker), 0, outerData, Enum.Operation.Call, 0, 0, 0, address(0), payable(address(0)), sigs
+        );
+        assertEq(token.balanceOf(recipient), 0);
+    }
+}
+
+/// Re-enters Safe.execTransaction twice from inside an approved outer transaction:
+/// first an escape-hatch call, then a pre-approved transfer.
+contract EscapeThenReenterToken {
+    Safe internal immutable SAFE;
+    address internal escTo;
+    bytes internal escData;
+    bytes internal escSigs;
+    address internal innerTo;
+    bytes internal innerData;
+    bytes internal innerSigs;
+
+    constructor(Safe safe_) {
+        SAFE = safe_;
+    }
+
+    function arm(
+        address escTo_,
+        bytes calldata escData_,
+        bytes calldata escSigs_,
+        address innerTo_,
+        bytes calldata innerData_,
+        bytes calldata innerSigs_
+    ) external {
+        (escTo, escData, escSigs) = (escTo_, escData_, escSigs_);
+        (innerTo, innerData, innerSigs) = (innerTo_, innerData_, innerSigs_);
+    }
+
+    function transfer(address, uint256) external returns (bool) {
+        SAFE.execTransaction(escTo, 0, escData, Enum.Operation.Call, 0, 0, 0, address(0), payable(address(0)), escSigs);
+        SAFE.execTransaction(
+            innerTo, 0, innerData, Enum.Operation.Call, 0, 0, 0, address(0), payable(address(0)), innerSigs
+        );
+        return true;
     }
 }
 
