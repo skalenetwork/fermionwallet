@@ -61,12 +61,20 @@ async function openApp(page, safeParam) {
   return app;
 }
 
+// The app enables its buttons only once Safe{Wallet} confirms the demo Safe is open
+// (getSafeInfo, retried with backoff), which can take a few seconds on a busy stack.
+async function clickEnabled(app, selector, ms = 90000) {
+  const button = app.locator(`${selector}:not([disabled])`);
+  await button.waitFor({ state: 'visible', timeout: ms });
+  await button.click();
+}
+
 async function shot(page, name) {
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png` });
 }
 
 async function proposeInWallet(page, app, button) {
-  await app.locator(button).click();
+  await clickEnabled(app, button);
   // Safe{Wallet}'s own review. First use asks to trust the Safe.
   const trust = page.getByRole('button', { name: 'Trust this Safe' });
   const cont = page.locator('[data-testid="continue-sign-btn"]:not([disabled])');
@@ -124,7 +132,7 @@ async function proposeInWallet(page, app, button) {
     const app2 = await openApp(page, safeParam);
 
     step('approve the payment on the simulated Ledger (page through all 8 screens)');
-    await app2.locator('#btn-approve').click();
+    await clickEnabled(app2, '#btn-approve');
     await app2.locator('#dev-next:not([disabled])').waitFor({ timeout: 30000 });
     for (let i = 0; i < 7; i++) {
       await app2.locator('#dev-next').click();

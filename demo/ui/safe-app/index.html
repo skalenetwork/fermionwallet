@@ -198,30 +198,60 @@ async function refresh() {
 // the registered Ledger key. Any other Safe would pay the vendor with no Guard in the
 // way, and the app would then report the Guard "letting it through". So proposing and
 // approving stay disabled until Safe{Wallet} confirms it has the demo Safe open.
+// Safe{Wallet} can miss the first request (the iframe may post before the parent's
+// Safe Apps communicator listens, or the tab may be in the background), so a failed
+// check is retried with backoff, and at once when the app regains focus/visibility.
 let safeOk = false;
+let checking = false;
+let retryTimer = null;
+let retryDelay = 1000;
+const RETRY_MAX = 8000;
 async function checkSafe() {
   if (!inSafeWallet) {
     showBanner('Open this app from Safe{Wallet} (Apps → FermionWallet) to propose transactions.');
     return;
   }
+  if (safeOk || checking) return;
+  checking = true;
+  clearTimeout(retryTimer);
+  retryTimer = null;
+  let problem = null;
   try {
-    const info = await safeCall('getSafeInfo', undefined, 10000);
+    const info = await safeCall('getSafeInfo', undefined, 8000);
     if (!state) await refresh();
-    if (!state) return showBanner('The FermionWallet demo server is unreachable. Reload the app.');
-    if (info.safeAddress.toLowerCase() !== state.safe.toLowerCase()) {
+    if (!state) {
+      problem = 'The FermionWallet demo server is unreachable.';
+    } else if (info.safeAddress.toLowerCase() !== state.safe.toLowerCase()) {
       showBanner('Safe{Wallet} has ' + info.safeAddress + ' open, which is not the demo Safe. Only the demo Safe ' +
         state.safe + ' has the FermionWallet Guard and a registered Ledger key, so this app is disabled here. ' +
         'Switch to the demo Safe in Safe{Wallet} and open FermionWallet again.');
-      return;
+    } else {
+      safeOk = true;
+      retryDelay = 1000;
+      hideBanner();
+      syncButtons();
+      checkQueued();
     }
-    safeOk = true;
-    syncButtons();
-    checkQueued();
   } catch (e) {
-    showBanner('Safe{Wallet} did not answer (' + e.message + '). Reload the app.');
+    problem = 'Safe{Wallet} did not answer (' + e.message + ').';
+  } finally {
+    checking = false;
+  }
+  if (problem) {
+    showBanner(problem + ' Retrying in ' + Math.round(retryDelay / 1000) + ' s…');
+    retryTimer = setTimeout(checkSafe, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, RETRY_MAX);
   }
 }
+function recheckSafe() {
+  if (safeOk || document.visibilityState === 'hidden') return;
+  retryDelay = 1000;
+  checkSafe();
+}
+window.addEventListener('focus', recheckSafe);
+document.addEventListener('visibilitychange', recheckSafe);
 function showBanner(t) { $('banner').textContent = t; $('banner').className = 'banner show'; }
+function hideBanner() { $('banner').className = 'banner'; }
 
 const exhausted = () => !!state && state.leavesUsed >= state.leavesTotal;
 const exhaustedMsg = () => 'All ' + state.leavesTotal + ' one-time XMSS leaves of the demo key are used, so the ' +
