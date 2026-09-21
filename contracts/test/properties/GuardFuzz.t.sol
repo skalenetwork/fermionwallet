@@ -21,12 +21,14 @@ contract GuardFuzzTest is PropertyBase {
     bytes32 internal idC; // PAYLOAD MultiSendCallOnly batch, Tier-2
     bytes32 internal idD; // TRANSFER token → recipient, 3000, Tier-1 pinned (safeTxGas 0, current nonce)
     bytes32 internal idW; // TRANSFER token → recipient2, 777, window [T0 + 1 d, T0 + 2 d]
+    bytes32 internal idP; // TRANSFER token → recipient2, 888, same window, Tier-1 pinned
     bytes internal batchData;
 
     uint256 internal constant AMT_A = 1000;
     uint256 internal constant VAL_B = 5;
     uint256 internal constant AMT_D = 3000;
     uint256 internal constant AMT_W = 777;
+    uint256 internal constant AMT_P = 888;
     uint64 internal constant W_FROM = T0 + 1 days;
     uint64 internal constant W_TO = T0 + 2 days;
 
@@ -40,14 +42,17 @@ contract GuardFuzzTest is PropertyBase {
         );
         bytes32 pinD = _txHash(address(token), 0, _transferData(recipient, AMT_D), Enum.Operation.Call, 0, safe.nonce());
 
-        PreApprovalEngine.PreApprovalRequest[] memory reqs = new PreApprovalEngine.PreApprovalRequest[](5);
-        uint8[] memory classes = new uint8[](5);
+        bytes32 pinP = _txHash(address(token), 0, _transferData(recipient2, AMT_P), Enum.Operation.Call, 0, safe.nonce());
+
+        PreApprovalEngine.PreApprovalRequest[] memory reqs = new PreApprovalEngine.PreApprovalRequest[](6);
+        uint8[] memory classes = new uint8[](6);
         uint64 to_ = T0 + 2 days;
         reqs[0] = _transferReq(address(token), recipient, AMT_A, 0, T0, to_, bytes32(0));
         reqs[1] = _payloadReq(recipient, VAL_B, keccak256(""), 1, T0, to_, bytes32(0));
         reqs[2] = _payloadReq(address(msco), 0, keccak256(batchData), 2, T0, to_, bytes32(0));
         reqs[3] = _transferReq(address(token), recipient, AMT_D, 3, T0, to_, pinD);
         reqs[4] = _transferReq(address(token), recipient2, AMT_W, 4, W_FROM, W_TO, bytes32(0));
+        reqs[5] = _transferReq(address(token), recipient2, AMT_P, 5, W_FROM, W_TO, pinP);
         classes[1] = C_PAYLOAD;
         classes[2] = C_PAYLOAD;
         (bytes[] memory e, bytes[] memory x) = _signAll(reqs, classes);
@@ -57,16 +62,17 @@ contract GuardFuzzTest is PropertyBase {
         idC = _submit(reqs[2], classes[2], e[2], x[2]);
         idD = _submit(reqs[3], classes[3], e[3], x[3]);
         idW = _submit(reqs[4], classes[4], e[4], x[4]);
+        idP = _submit(reqs[5], classes[5], e[5], x[5]);
         vm.stopPrank();
     }
 
-    function _ids() internal view returns (bytes32[5] memory) {
-        return [idA, idB, idC, idD, idW];
+    function _ids() internal view returns (bytes32[6] memory) {
+        return [idA, idB, idC, idD, idW, idP];
     }
 
     function _usedCount() internal view returns (uint256 n) {
-        bytes32[5] memory ids = _ids();
-        for (uint256 i = 0; i < 5; ++i) {
+        bytes32[6] memory ids = _ids();
+        for (uint256 i = 0; i < 6; ++i) {
             if (guard.getPreApproval(ids[i]).used) ++n;
         }
     }
@@ -265,7 +271,7 @@ contract GuardFuzzTest is PropertyBase {
         else (ok,) = _tryExec(to, value, data, op, safeTxGas);
 
         assertEq(ok, expected, "execution outcome differs from exact-match expectation");
-        bytes32[5] memory ids = _ids();
+        bytes32[6] memory ids = _ids();
         for (uint256 i = 0; i < 4; ++i) {
             assertEq(guard.getPreApproval(ids[i]).used, ok && i == base, "wrong approval consumed");
         }
@@ -440,18 +446,20 @@ contract GuardFuzzTest is PropertyBase {
 
     // ═══════════════════ P4: validity windows at the boundaries ═══════════════════
 
-    /// Execution at time t succeeds iff validFrom <= t <= validTo (both inclusive).
+    /// Execution at time t succeeds iff validFrom <= t <= validTo (both inclusive) — for
+    /// a Tier-2 approval (owner and module path) and a Tier-1 pinned one.
     /// forge-config: default.fuzz.runs = 512
-    function testFuzz_ValidityWindowEnforcedAtBoundaries(uint8 pick, uint64 rnd, bool viaModule) public {
+    function testFuzz_ValidityWindowEnforcedAtBoundaries(uint8 pick, uint64 rnd, uint8 path) public {
         uint64[6] memory probes = [W_FROM - 1, W_FROM, W_TO, W_TO + 1, T0 + (rnd % 3 days), W_FROM + (rnd % 1 days)];
         uint64 t = probes[pick % 6];
         vm.warp(t);
-        bytes memory pay = _transferData(recipient2, AMT_W);
+        path = path % 3; // 0 owner Tier-2, 1 module Tier-2, 2 owner Tier-1 pin
+        bytes memory pay = _transferData(recipient2, path == 2 ? AMT_P : AMT_W);
         bool ok;
-        if (viaModule) (ok,) = _tryModuleExec(address(token), 0, pay, Enum.Operation.Call);
+        if (path == 1) (ok,) = _tryModuleExec(address(token), 0, pay, Enum.Operation.Call);
         else (ok,) = _tryExec(address(token), 0, pay, Enum.Operation.Call, 0);
         assertEq(ok, t >= W_FROM && t <= W_TO, "window boundary not enforced");
-        assertEq(guard.getPreApproval(idW).used, ok);
+        assertEq(guard.getPreApproval(path == 2 ? idP : idW).used, ok);
     }
 
     /// Creation-time window and ADMIN-timelock rules for arbitrary (validFrom, validTo,
