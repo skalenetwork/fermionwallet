@@ -23,7 +23,7 @@
     <text x="265" y="166" fill="#e8eef7" font-size="10.5">0x9aF3 07bD 4410</text>
     <text x="265" y="180" fill="#e8eef7" font-size="10.5">e2C0 88a1 … C21e</text>
     <text x="265" y="206" fill="#e8eef7" font-size="11">Ethereum · chain 1</text>
-    <text x="265" y="224" fill="#e8eef7" font-size="11">Safe nonce 42</text>
+    <text x="265" y="224" fill="#e8eef7" font-size="11">Pinned: tx 0x5e1f…88ab</text>
     <text x="265" y="262" fill="#5b7292" font-size="9.5">Screen 6 · context</text>
     <circle cx="327" cy="312" r="12" fill="#22354f"/>
   </g>

@@ -24,7 +24,7 @@ No signature exists until all eight screens are traversed and the decision scree
 ![Signing screens 5–8](./assets/ui/ledger/ledger-sign-2.svg)
 
 5. **Validity** — absolute UTC start/end, never durations.
-6. **Context** — Safe address (chunked), chain name/ID, Safe nonce.
+6. **Context** — Safe address (chunked), chain name/ID, and the binding from the signed `txHash`: "Pinned to Safe tx 0x…" or an amber "NOT PINNED — any matching transfer". No Safe nonce: it is not in the signed payload.
 7. **Policy hash** — first/last 8 hex; compare against the hash shown in the app.
 8. **Decision** — hold to approve (counter commits in SE NVRAM *before* both hybrid halves — the ECDSA signature by the `quantumAdmin` key and the XMSS signature, over the same digest — stream out), single tap to reject. 60 s idle = reject; reject/timeout consumes no leaf.
 
