@@ -677,6 +677,141 @@ contract GuardIntegrationTest is Test {
         );
     }
 
+    // ══════════════ Regressions: root squatting & ERC-1271 bypass ═══════════
+
+    /// A mempool front-runner registering the victim's root under a fake "Safe"
+    /// (self-authenticated checkSignatures) must NOT block the victim: root dedup
+    /// is scoped per Safe, so the squat is inert.
+    function test_RootSquatting_CannotBlockRotation() public {
+        (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
+
+        FakeSafe fake = new FakeSafe();
+        uint256 attackerPk = 0xBAD;
+        address attacker = vm.addr(attackerPk);
+        bytes32 attestDigest = _guardDigest(
+            keccak256(
+                abi.encode(
+                    ATTEST_KEY_TYPEHASH, address(fake), newRoot, newSeed, H_NEW, PARAM_SET, guard.registryNonce(address(fake))
+                )
+            )
+        );
+        (uint8 av, bytes32 ar, bytes32 as_) = vm.sign(attackerPk, attestDigest);
+        vm.prank(attacker);
+        guard.registerQuantumKey(
+            address(fake), attacker, newRoot, newSeed, H_NEW, PARAM_SET, block.timestamp + 1 days,
+            abi.encodePacked(ar, as_, av), ""
+        );
+
+        // Victim's rotation to the squatted root still succeeds.
+        uint256 nonce = guard.registryNonce(address(safe));
+        uint256 validUntil = block.timestamp + 1 days;
+        bytes32 digest = _guardDigest(
+            keccak256(
+                abi.encode(
+                    ROTATE_KEY_TYPEHASH, address(safe), keyId, ledger, newRoot, newSeed, H_NEW, PARAM_SET, nonce, validUntil
+                )
+            )
+        );
+        (,, bytes memory oldKeyProof) = _xmssSign(H, 6, digest);
+        vm.prank(relayer);
+        bytes32 newKeyId = guard.rotateQuantumKey(
+            address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil, oldKeyProof,
+            _ledgerAttestation(newRoot, newSeed, H_NEW, nonce), _ownerSigs(digest)
+        );
+        assertEq(guard.safeToQuantumKey(address(safe)), newKeyId);
+        assertEq(uint8(guard.getKey(newKeyId).status), uint8(QuantumKeyRegistry.KeyStatus.Active));
+    }
+
+    /// Safe FallbackManager slot: keccak256("fallback_manager.handler.address").
+    bytes32 internal constant FALLBACK_SLOT = 0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
+
+    /// A non-allowlisted fallback handler (ERC-1271 isValidSignature = Guard bypass)
+    /// freezes all checked transactions until remediated.
+    function test_FallbackHandler_BlocksCheckedTransactions() public {
+        address evil = makeAddr("evilHandler");
+        _createTransfer(recipient, 1 ether, 1, bytes32(0));
+        vm.store(address(safe), FALLBACK_SLOT, bytes32(uint256(uint160(evil))));
+        _expectExecRevertWith(
+            address(token),
+            0,
+            abi.encodeCall(MockToken.transfer, (recipient, 1 ether)),
+            abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), evil)
+        );
+    }
+
+    /// Even a matured, quantum-approved ADMIN action cannot install a handler that
+    /// is not on the governance allowlist.
+    function test_FallbackHandler_AdminInstallForbidden() public {
+        address evil = makeAddr("evilHandler");
+        bytes memory data = abi.encodeWithSignature("setFallbackHandler(address)", evil);
+        _createAdmin(address(safe), keccak256(data), 1);
+        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
+        _expectExecRevertWith(
+            address(safe),
+            0,
+            data,
+            abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), evil)
+        );
+    }
+
+    /// The remediation path must work WHILE the posture is bad: quantum-approved
+    /// setFallbackHandler(0) clears the handler, after which transfers flow again.
+    function test_FallbackHandler_RemovalWorksWhilePostureBad() public {
+        bytes memory clear = abi.encodeWithSignature("setFallbackHandler(address)", address(0));
+        _createAdmin(address(safe), keccak256(clear), 1);
+        vm.store(address(safe), FALLBACK_SLOT, bytes32(uint256(uint160(makeAddr("evilHandler")))));
+        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
+        _safeExec(address(safe), 0, clear, Enum.Operation.Call);
+
+        _createTransfer(recipient, 2 ether, 2, bytes32(0));
+        _safeExec(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 2 ether)), Enum.Operation.Call);
+        assertEq(token.balanceOf(recipient), 2 ether);
+    }
+
+    /// Module-posture deadlock prevention: an approved enableModule is rejected
+    /// unless this Guard is already wired as the Safe's module guard — the Safe can
+    /// never be steered into a state its own remediation transactions can't exit,
+    /// and on Safe <= 1.4.1 (unguardable modules) it is rejected outright.
+    function test_EnableModule_RejectedUntilModuleGuardWired() public {
+        address module = makeAddr("module");
+        bytes memory enable = abi.encodeWithSignature("enableModule(address)", module);
+        _createAdmin(address(safe), keccak256(enable), 1);
+        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
+        _expectExecRevertWith(
+            address(safe),
+            0,
+            enable,
+            abi.encodeWithSelector(FermionWalletGuard.ModuleGuardNotWired.selector, address(safe))
+        );
+
+        // Wire the module guard first (its own quantum-approved admin step)…
+        bytes memory wire = abi.encodeWithSignature("setModuleGuard(address)", address(guard));
+        _createAdmin(address(safe), keccak256(wire), 2);
+        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
+        _safeExec(address(safe), 0, wire, Enum.Operation.Call);
+
+        // …then the same enableModule approval executes, and the Safe stays usable.
+        _createAdmin(address(safe), keccak256(enable), 3);
+        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
+        _safeExec(address(safe), 0, enable, Enum.Operation.Call);
+
+        _createTransfer(recipient, 1 ether, 4, bytes32(0));
+        _safeExec(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 1 ether)), Enum.Operation.Call);
+        assertEq(token.balanceOf(recipient), 1 ether);
+    }
+
+    /// Governance-vetted handlers are accepted.
+    function test_FallbackHandler_AllowlistedAccepted() public {
+        address vetted = makeAddr("vettedHandler");
+        vm.prank(deployer);
+        guard.setFallbackHandlerAllowlist(vetted, true);
+        vm.store(address(safe), FALLBACK_SLOT, bytes32(uint256(uint160(vetted))));
+
+        _createTransfer(recipient, 3 ether, 1, bytes32(0));
+        _safeExec(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 3 ether)), Enum.Operation.Call);
+        assertEq(token.balanceOf(recipient), 3 ether);
+    }
+
     // ═════════════════════════════ Helpers ══════════════════════════════════
 
     /// FFI to the RFC 8391 reference signer. Output: root|seed|r|wots[67]|auth[h].
@@ -940,4 +1075,10 @@ contract GuardIntegrationTest is Test {
         vm.prank(relayer);
         id = guard.createAdminPreApproval(req, ecdsaSig, xmssSig);
     }
+}
+
+/// Attacker-deployed "Safe" whose signature check accepts anything — used to prove
+/// that root squatting through a fake Safe cannot block a real Safe's key lifecycle.
+contract FakeSafe {
+    function checkSignatures(bytes32, bytes calldata, bytes memory) external pure {}
 }

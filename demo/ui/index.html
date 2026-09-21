@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FermionWallet — Live Demo</title>
+<style>
+  :root {
+    --bg:#0f1115; --panel:#171a21; --text:#f6f7f9; --muted:#99a1b3; --border:#343a46;
+    --accent:#58c4dc; --accent-strong:#8ad7ea; --accent-soft:#1b3440; --on-accent:#0f1115;
+    --ok:#4ade80; --bad:#f87171; --warn:#fbbf24;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:28px 20px; background:var(--bg); color:var(--text);
+         font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:880px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:700px){ .grid{grid-template-columns:1fr;} }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px;
+          padding:16px 18px; }
+  .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.07em;
+             color:var(--muted); margin:0 0 10px; }
+  .row { display:flex; justify-content:space-between; gap:10px; padding:4px 0; font-size:14px; }
+  .row .k { color:var(--muted); white-space:nowrap; }
+  .row .v { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12.5px;
+            word-break:break-all; text-align:right; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; }
+  .badge.ok { background:rgba(74,222,128,.12); color:var(--ok); }
+  .badge.bad { background:rgba(248,113,113,.12); color:var(--bad); }
+  .big { font-size:26px; font-weight:700; }
+  .leaves { display:flex; gap:4px; flex-wrap:wrap; margin-top:6px; }
+  .leaf { width:18px; height:18px; border-radius:4px; background:var(--accent-soft); }
+  .leaf.used { background:var(--accent); }
+  .story { margin-top:18px; }
+  .step { display:flex; gap:14px; align-items:flex-start; background:var(--panel);
+          border:1px solid var(--border); border-radius:10px; padding:16px 18px; margin-bottom:12px; }
+  .num { flex:none; width:28px; height:28px; border-radius:50%; background:var(--accent-soft);
+         color:var(--accent-strong); font-weight:700; display:flex; align-items:center;
+         justify-content:center; }
+  .step h3 { margin:0 0 4px; font-size:15px; }
+  .step p { margin:0 0 10px; color:var(--muted); font-size:13.5px; }
+  button { background:var(--accent); color:var(--on-accent); border:0; border-radius:8px;
+           padding:8px 16px; font-weight:600; font-size:14px; cursor:pointer; }
+  button:hover { background:var(--accent-strong); }
+  button:disabled { opacity:.45; cursor:wait; }
+  input { background:var(--bg); border:1px solid var(--border); color:var(--text);
+          border-radius:8px; padding:8px 10px; width:110px; font-size:14px; }
+  .out { margin-top:10px; font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;
+         white-space:pre-wrap; word-break:break-all; border-radius:8px; padding:10px 12px;
+         background:var(--bg); border:1px solid var(--border); display:none; }
+  .out.show { display:block; }
+  .out.good { border-color:rgba(74,222,128,.4); color:var(--ok); }
+  .out.fail { border-color:rgba(248,113,113,.4); color:var(--bad); }
+  footer { margin-top:22px; color:var(--muted); font-size:12.5px; }
+  a { color:var(--accent); text-decoration:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>FermionWallet <span class="badge ok" id="net">testnet</span></h1>
+  <p class="sub">Quantum security add-on for Gnosis Safe — live demo. A real Safe v1.5.0
+  runs on an anvil testnet inside this container, protected by the FermionWalletGuard:
+  every transfer must carry a hybrid <strong>ECDSA + XMSS (RFC 8391)</strong> pre-approval.</p>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Demo Safe (2-of-3 owners)</h2>
+      <div class="row"><span class="k">Safe</span><span class="v" id="safe"></span></div>
+      <div class="row"><span class="k">Guard</span><span class="v" id="guard"></span></div>
+      <div class="row"><span class="k">Guard active</span><span class="v" id="guard-active"></span></div>
+      <div class="row"><span class="k">Quantum admin (Ledger)</span><span class="v" id="qadmin"></span></div>
+      <div class="row"><span class="k">XMSS root</span><span class="v" id="root"></span></div>
+    </div>
+    <div class="card">
+      <h2>Treasury — Demo USD (dUSD)</h2>
+      <div class="row"><span class="k">Safe balance</span><span class="big" id="safe-bal">—</span></div>
+      <div class="row"><span class="k">Vendor received</span><span class="big" id="vendor-bal">—</span></div>
+      <div class="row"><span class="k">XMSS leaves used (one-time signatures)</span>
+        <span class="v" id="leaf-count"></span></div>
+      <div class="leaves" id="leaves"></div>
+    </div>
+  </div>
+
+  <div class="story">
+    <div class="step">
+      <div class="num">1</div>
+      <div style="flex:1">
+        <h3>Try to pay the vendor with owner signatures alone</h3>
+        <p>Both required Safe owners sign a <span id="amt1-echo">100</span> dUSD transfer —
+        exactly what a quantum-broken attacker with forged ECDSA signatures could do.
+        The Guard rejects it: no quantum pre-approval exists.</p>
+        <input id="amount" type="number" min="1" max="1000000" value="100"> dUSD
+        <button id="btn-blocked">Attempt transfer</button>
+        <div class="out" id="out-blocked"></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">2</div>
+      <div style="flex:1">
+        <h3>Create a hybrid quantum pre-approval</h3>
+        <p>The Quantum Administrator signs the exact payment twice over one EIP-712 digest:
+        classical ECDSA (Ledger) + post-quantum XMSS, consuming one one-time leaf on-chain.</p>
+        <button id="btn-approve">Sign &amp; submit pre-approval</button>
+        <div class="out" id="out-approve"></div>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">3</div>
+      <div style="flex:1">
+        <h3>Execute the same transfer again</h3>
+        <p>Identical owner-signed transaction — but now the Guard finds the matching
+        pre-approval, marks it used, and lets the Safe pay.</p>
+        <button id="btn-execute">Execute transfer</button>
+        <div class="out" id="out-execute"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Everything runs inside this container: anvil chain <span id="chain"></span>,
+    block <span id="block"></span>. Contracts &amp; 87-test suite:
+    <a href="https://github.com/skalenetwork/fermionwallet" target="_blank" rel="noopener">skalenetwork/fermionwallet</a>.
+    Demo XMSS key h=4 (16 one-time leaves) — restart the container to reset.
+  </footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const short = a => a ? a.slice(0, 10) + '…' + a.slice(-6) : '—';
+
+async function refresh() {
+  try {
+    const s = await (await fetch('/api/state')).json();
+    if (s.error) throw new Error(s.error);
+    $('safe').textContent = s.safe;
+    $('guard').textContent = s.guard;
+    $('guard-active').innerHTML = s.guardActive
+      ? '<span class="badge ok">enforcing</span>' : '<span class="badge bad">NOT SET</span>';
+    $('qadmin').textContent = short(s.quantumAdmin);
+    $('root').textContent = short(s.xmssRoot);
+    $('safe-bal').textContent = Number(s.safeBalance).toLocaleString();
+    $('vendor-bal').textContent = Number(s.vendorBalance).toLocaleString();
+    $('leaf-count').textContent = s.leavesUsed + ' / ' + s.leavesTotal;
+    $('leaves').innerHTML = s.leaves.map(u => `<div class="leaf${u ? ' used' : ''}"></div>`).join('');
+    $('chain').textContent = s.chainId;
+    $('block').textContent = s.blockNumber;
+    $('net').textContent = 'anvil · chain ' + s.chainId;
+  } catch (e) {
+    $('net').textContent = 'connecting…';
+  }
+}
+
+async function flow(name, btn, out) {
+  const amount = Number($('amount').value);
+  btn.disabled = true;
+  out.className = 'out show';
+  out.textContent = name === 'approve'
+    ? 'Signing (ECDSA + XMSS one-time signature)…' : 'Running…';
+  try {
+    const r = await (await fetch('/api/' + name, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({amount})
+    })).json();
+    if (r.ok && r.outcome === 'blocked') {
+      out.className = 'out show good';
+      out.textContent = '✔ BLOCKED by FermionWalletGuard\n' + r.reason +
+        (r.revertData ? '\nrevert: ' + r.revertData : '');
+    } else if (r.ok && r.outcome === 'approved') {
+      out.className = 'out show good';
+      out.textContent = '✔ Pre-approval stored on-chain\nXMSS leaf consumed: #' + r.leaf +
+        '\napprovalId: ' + r.approvalId;
+    } else if (r.ok && r.outcome === 'executed') {
+      out.className = 'out show good';
+      out.textContent = '✔ Transfer executed — Guard verified & consumed the pre-approval\n' +
+        'Vendor balance: ' + Number(r.vendorBalance).toLocaleString() + ' dUSD';
+    } else {
+      out.className = 'out show fail';
+      out.textContent = '✘ ' + (r.error || 'failed') + (r.log ? '\n\n' + r.log : '');
+    }
+  } catch (e) {
+    out.className = 'out show fail';
+    out.textContent = '✘ ' + e.message;
+  }
+  btn.disabled = false;
+  refresh();
+}
+
+$('btn-blocked').onclick = () => flow('blocked', $('btn-blocked'), $('out-blocked'));
+$('btn-approve').onclick = () => flow('approve', $('btn-approve'), $('out-approve'));
+$('btn-execute').onclick = () => flow('execute', $('btn-execute'), $('out-execute'));
+$('amount').oninput = () => $('amt1-echo').textContent = $('amount').value;
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

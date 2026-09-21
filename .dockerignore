@@ -1,0 +1,10 @@
+.git
+contracts/out
+contracts/cache
+contracts/demo-state
+contracts/py/__pycache__
+_site
+site
+app
+assets
+*.md

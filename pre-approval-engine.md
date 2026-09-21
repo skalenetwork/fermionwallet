@@ -92,6 +92,10 @@ Every pre-approval carries an `approvalClass` — `TRANSFER`, `PAYLOAD`, or `ADM
 - the XMSS signature must verify against the Administrator's registered root
 - the transfer amount must remain within the approved amount
 
+### Tier-2 FIFO queue semantics
+
+Field-matched (`txHash == bytes32(0)`) approvals share a bounded FIFO per commitment. Lazy head advancement only skips permanently dead entries: used, revoked, expired, or tied to a dead key. A not-yet-valid approval (`validFrom` in the future) freezes head advancement so it is not silently lost; later currently-valid entries may still be consumed in place, and the scheduled approval remains usable when its window opens.
+
 ## Design intent
 
 The pre-approval engine is the policy gate that converts a quantum key into a usable second authorization for a specific transfer.
