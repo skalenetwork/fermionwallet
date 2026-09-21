@@ -8,8 +8,12 @@
 <meta property="og:title" content="FermionWallet — a quantum-safe second signature for Gnosis Safe">
 <meta property="og:description" content="No migration. Keep your owners and threshold. Every transfer also needs a post-quantum approval, verified on-chain.">
 <meta property="og:url" content="https://skalenetwork.github.io/fermionwallet/">
-<meta property="og:image" content="https://skalenetwork.github.io/fermionwallet/assets/ui/ui-queue.svg">
-<link rel="icon" href="assets/fermionwallet-logo.svg" type="image/svg+xml">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://skalenetwork.github.io/fermionwallet/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="assets/fermionwallet-icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -21,7 +25,7 @@
   --text: #23272f;
   --text-muted: #5e687e;
   --border: #e4e7ec;
-  --accent: #087ea4;
+  --accent: #07769b; /* ≥4.5:1 on --bg-soft and --accent-soft (WCAG AA) */
   --accent-strong: #06627f;
   --accent-soft: #e6f7ff;
   --on-accent: #ffffff;
@@ -74,7 +78,7 @@ nav {
 nav .wrap { display: flex; align-items: center; gap: 16px; height: 60px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); font-size: 17px; }
 .brand:hover { text-decoration: none; }
-.brand img { width: 34px; height: 34px; border-radius: 8px; object-fit: cover; }
+.brand img { width: 34px; height: 34px; border-radius: 8px; }
 .nav-links { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .nav-links a:not(.btn) {
   color: var(--text); font-weight: 500; font-size: 15px;
@@ -142,6 +146,7 @@ h2 { font-size: clamp(30px, 4.5vw, 46px); font-weight: 800; letter-spacing: -0.0
 
 .split { display: grid; gap: 48px; align-items: center; grid-template-columns: 1fr; margin-top: 56px; }
 @media (min-width: 960px) { .split { grid-template-columns: 1fr 1fr; } }
+.split > * { min-width: 0; }
 .split.flip > :first-child { order: 2; }
 @media (max-width: 959px) { .split.flip > :first-child { order: 0; } }
 .split h3 { font-size: 26px; font-weight: 700; letter-spacing: -0.015em; line-height: 1.2; }
@@ -160,7 +165,7 @@ h2 { font-size: clamp(30px, 4.5vw, 46px); font-weight: 800; letter-spacing: -0.0
 @media (min-width: 1020px) { .grid3 { grid-template-columns: repeat(3, 1fr); } }
 .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 26px; }
 .card .icon { width: 42px; height: 42px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; margin-bottom: 16px; }
-.card h4 { font-size: 18px; font-weight: 700; }
+.card h3 { font-size: 18px; font-weight: 700; }
 .card p { color: var(--text-muted); margin-top: 8px; font-size: 15.5px; }
 .card ul { margin-top: 12px; list-style: none; }
 .card li { font-size: 15px; color: var(--text-muted); padding: 4px 0 4px 22px; position: relative; }
@@ -186,7 +191,7 @@ h2 { font-size: clamp(30px, 4.5vw, 46px); font-weight: 800; letter-spacing: -0.0
 @media (min-width: 820px) { .twofactor { grid-template-columns: 1fr 1fr; } }
 .factor { border-radius: 16px; padding: 28px; border: 1px solid var(--border); background: var(--bg-card); }
 .factor .num { font-size: 13px; font-weight: 700; letter-spacing: .08em; color: var(--text-muted); text-transform: uppercase; }
-.factor h4 { font-size: 22px; font-weight: 700; margin-top: 6px; }
+.factor h3 { font-size: 22px; font-weight: 700; margin-top: 6px; }
 .factor p { color: var(--text-muted); margin-top: 10px; }
 .factor.q { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 
@@ -199,7 +204,7 @@ h2 { font-size: clamp(30px, 4.5vw, 46px); font-weight: 800; letter-spacing: -0.0
   width: 28px; height: 28px; border-radius: 50%;
   background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 14px; margin-bottom: 12px;
 }
-.step h5 { font-size: 16px; font-weight: 700; }
+.step h3 { font-size: 16px; font-weight: 700; }
 .step p { font-size: 14.5px; color: var(--text-muted); margin-top: 6px; }
 
 /* ---------- code ---------- */
@@ -252,14 +257,14 @@ h2 { font-size: clamp(30px, 4.5vw, 46px); font-weight: 800; letter-spacing: -0.0
 .final h2 { font-size: clamp(34px, 5.5vw, 56px); }
 .next-steps { display: grid; gap: 16px; grid-template-columns: 1fr; max-width: 900px; margin: 40px auto 0; text-align: left; }
 @media (min-width: 820px) { .next-steps { grid-template-columns: repeat(3, 1fr); } }
-.next-steps .card h4 { font-size: 16px; }
+.next-steps .card h3 { font-size: 16px; }
 .fine { font-size: 13.5px; color: var(--text-muted); margin-top: 14px; }
 
 /* ---------- footer ---------- */
 footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
 .foot { display: grid; gap: 32px; grid-template-columns: repeat(2, 1fr); }
 @media (min-width: 820px) { .foot { grid-template-columns: 2fr 1fr 1fr 1fr; } }
-.foot h6 { font-size: 14px; font-weight: 700; margin-bottom: 12px; }
+.foot h2 { font-size: 14px; font-weight: 700; letter-spacing: normal; line-height: 1.6; margin: 0 0 12px; }
 .foot a:not(.brand) { display: block; color: var(--text-muted); font-size: 14.5px; padding: 3px 0; }
 .foot a:not(.brand):hover { color: var(--text); }
 .foot .blurb { color: var(--text-muted); font-size: 14.5px; margin-top: 12px; max-width: 320px; }
@@ -271,7 +276,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
 
 <nav>
   <div class="wrap">
-    <a class="brand" href="#top"><img src="assets/fermionwallet-logo.svg" alt="">FermionWallet</a>
+    <a class="brand" href="#top"><img src="assets/fermionwallet-icon.svg" alt="">FermionWallet</a>
     <div class="nav-links">
       <a class="hide-sm" href="#how">How it works</a>
       <a class="hide-sm" href="#security">Security</a>
@@ -295,7 +300,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       </div>
       <div class="reassure">
         <span>No migration</span>
-        <span>Open source (MIT)</span>
+        <span>Open source (MIT / LGPL-3.0)</span>
         <span>NIST SP 800-208 signatures</span>
       </div>
     </div>
@@ -312,7 +317,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
     <span><b>NIST</b> SP 800-208</span>
     <span>Keys on <b>Ledger</b></span>
     <span><b>OpenZeppelin</b> primitives</span>
-    <span><b>MIT</b> licensed</span>
+    <span><b>Open source</b> · MIT / LGPL-3.0</span>
   </div>
 </div>
 
@@ -327,17 +332,17 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
     <div class="grid3">
       <div class="card">
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><path d="M19 8v6M22 11h-6"/></svg></div>
-        <h4>Multisig is governance</h4>
+        <h3>Multisig is governance</h3>
         <p>It decides <em>who</em> may sign. It can't help when the signature scheme itself falls.</p>
       </div>
       <div class="card">
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
-        <h4>Hardware keys stop theft</h4>
+        <h3>Hardware keys stop theft</h3>
         <p>They don't stop a forged signature over the same curve — the key never has to leave the device.</p>
       </div>
       <div class="card">
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h7"/></svg></div>
-        <h4>Off-chain policy is advice</h4>
+        <h3>Off-chain policy is advice</h3>
         <p>A policy engine the chain doesn't consult can be bypassed. The last word has to be on-chain.</p>
       </div>
     </div>
@@ -355,22 +360,22 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
     <div class="twofactor">
       <div class="factor">
         <div class="num">Signature 1 — unchanged</div>
-        <h4>Your Safe owners</h4>
+        <h3>Your Safe owners</h3>
         <p>Same owners, same threshold, same hardware wallets. Protects against rogue operators, lost devices and internal failures.</p>
       </div>
       <div class="factor q">
         <div class="num">Signature 2 — added</div>
-        <h4>A post-quantum approval</h4>
+        <h3>A post-quantum approval</h3>
         <p>A designated Quantum Administrator approves each transfer on a Ledger with an XMSS key. Protects against compromised signers, replayed approvals, allowance drains — and future quantum attacks.</p>
       </div>
     </div>
 
     <div class="flow">
-      <div class="step"><h5>Queue</h5><p>An operator queues a transfer in Safe{Wallet}. Owners sign as usual.</p></div>
-      <div class="step"><h5>Flag</h5><p>The FermionWallet Safe App marks it 🟡 quantum authorization required.</p></div>
-      <div class="step"><h5>Review</h5><p>The Administrator reviews the payload, decoded from two independent sources.</p></div>
-      <div class="step"><h5>Approve</h5><p>The Ledger shows every enforced field. Hold to approve.</p></div>
-      <div class="step"><h5>Execute</h5><p>The row turns 🟢. Anyone executes; the Guard checks and consumes the approval.</p></div>
+      <div class="step"><h3>Queue</h3><p>An operator queues a transfer in Safe{Wallet}. Owners sign as usual.</p></div>
+      <div class="step"><h3>Flag</h3><p>The FermionWallet Safe App marks it 🟡 quantum authorization required.</p></div>
+      <div class="step"><h3>Review</h3><p>The Administrator reviews the payload, decoded from two independent sources.</p></div>
+      <div class="step"><h3>Approve</h3><p>The Ledger shows every enforced field. Hold to approve.</p></div>
+      <div class="step"><h3>Execute</h3><p>The row turns 🟢. Anyone executes; the Guard checks and consumes the approval.</p></div>
     </div>
 
     <div class="split">
@@ -413,10 +418,10 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
   </div>
   <div class="wrap">
     <div class="setup">
-      <div class="card"><h4>Open the Safe App</h4><p>Add FermionWallet in Safe{Wallet}. It checks your Safe version and modules before anything changes.</p></div>
-      <div class="card"><h4>Run the key ceremony</h4><p>The Administrator's key is generated inside the Ledger. Owners confirm it and co-sign its registration.</p></div>
-      <div class="card"><h4>Enable the Guard</h4><p>Owners sign one <code>setGuard</code> transaction, like any other Safe transaction.</p></div>
-      <div class="card"><h4>Send a test transfer</h4><p>A dust-sized transfer runs the full flow. When it lands, your dashboard shows <strong>Protected ✓</strong>.</p></div>
+      <div class="card"><h3>Open the Safe App</h3><p>Add FermionWallet in Safe{Wallet}. It checks your Safe version and modules before anything changes.</p></div>
+      <div class="card"><h3>Run the key ceremony</h3><p>The Administrator's key is generated inside the Ledger. Owners confirm it and co-sign its registration.</p></div>
+      <div class="card"><h3>Enable the Guard</h3><p>Owners sign one <code>setGuard</code> transaction, like any other Safe transaction.</p></div>
+      <div class="card"><h3>Send a test transfer</h3><p>A dust-sized transfer runs the full flow. When it lands, your dashboard shows <strong>Protected ✓</strong>.</p></div>
     </div>
     <div class="center"><span class="time-badge">⏱ About 30 minutes with your owners reachable</span></div>
   </div>
@@ -431,17 +436,17 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
   <div class="wrap">
     <div class="grid3">
       <div class="card">
-        <h4>🏦 Custodians &amp; banks</h4>
+        <h3>🏦 Custodians &amp; banks</h3>
         <p>Add an independent, standards-based cryptographic control to client-asset custody.</p>
         <ul><li>NIST-approved signature scheme</li><li>Exportable audit log for compliance</li><li>Printable key-ceremony records</li></ul>
       </div>
       <div class="card">
-        <h4>🏢 Corporate treasuries</h4>
+        <h3>🏢 Corporate treasuries</h3>
         <p>Keep your approval workflow, and make a compromised signer insufficient to move funds.</p>
         <ul><li>Owners keep signing as today</li><li>One approval per payroll batch</li><li>Risk flags on unusual transfers</li></ul>
       </div>
       <div class="card">
-        <h4>🏛️ Foundations &amp; DAOs</h4>
+        <h3>🏛️ Foundations &amp; DAOs</h3>
         <p>Put a public, time-locked check on the moves that matter most: governance changes.</p>
         <ul><li>48-hour public timelock on admin actions</li><li>Owners can cancel it with no quantum approval</li><li>Open source, verifiable on-chain</li></ul>
       </div>
@@ -460,32 +465,32 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
     <div class="grid3">
       <div class="card">
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></div>
-        <h4>Always a way out</h4>
+        <h3>Always a way out</h3>
         <p>Lost the Ledger? Owners alone can remove the Guard after a 14-day public countdown. A dead device never locks the Safe.</p>
       </div>
       <div class="card">
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
-        <h4>Loud governance changes</h4>
+        <h3>Loud governance changes</h3>
         <p>Removing the Guard or changing owners needs an approval <em>and</em> a 48-hour public countdown every owner is notified about.</p>
       </div>
       <div class="card">
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z"/></svg></div>
-        <h4>Fail-closed</h4>
+        <h3>Fail-closed</h3>
         <p>A non-upgradeable Guard with a fast deny-all pause for incidents. No admin backdoor.</p>
       </div>
       <div class="card">
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M9 9h6v6H9z"/></svg></div>
-        <h4>No side doors</h4>
+        <h3>No side doors</h3>
         <p>Safe modules skip guards, so enrollment requires no enabled modules — or a paired module guard on Safe 1.5+.</p>
       </div>
       <div class="card">
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7 9 18l-5-5"/></svg></div>
-        <h4>No allowance drains</h4>
+        <h3>No allowance drains</h3>
         <p><code>approve</code>, <code>permit</code> and <code>transferFrom</code> are rejected outright, and batches are checked leg by leg on-chain.</p>
       </div>
       <div class="card">
         <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/></svg></div>
-        <h4>Keys that can't be swapped</h4>
+        <h3>Keys that can't be swapped</h3>
         <p>Owners co-sign the key's full public root on their own devices, so a compromised website can't substitute a different key.</p>
       </div>
     </div>
@@ -516,7 +521,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       <div class="stat"><div class="v">999,247</div><div class="l">gas per verification, measured at h = 20</div></div>
       <div class="stat"><div class="v">~1M</div><div class="l">approvals per key (2<sup>20</sup> leaves)</div></div>
       <div class="stat"><div class="v">3</div><div class="l">tree heights tested against a reference (h = 4, 10, 20)</div></div>
-      <div class="stat"><div class="v">MIT</div><div class="l">written from the RFC, no borrowed code</div></div>
+      <div class="stat"><div class="v">MIT</div><div class="l">XMSS verifier, written from the RFC, no borrowed code</div></div>
     </div>
     <div class="split">
       <div>
@@ -568,11 +573,11 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
         <span class="tag done">Designed</span>
       </div>
       <div class="status-row">
-        <div><div class="name">Guard, key registry &amp; pre-approval contracts</div><div class="desc">Built on audited Safe and OpenZeppelin libraries</div></div>
-        <span class="tag next">In development</span>
+        <div><div class="name">Guard, key registry &amp; pre-approval contracts</div><div class="desc">Built on audited Safe and OpenZeppelin libraries; Foundry suites include a real-Safe integration test</div></div>
+        <span class="tag done">Implemented</span>
       </div>
       <div class="status-row">
-        <div><div class="name">Ledger app &amp; Safe App</div><div class="desc">Device app and Safe{Wallet} integration</div></div>
+        <div><div class="name">Ledger app &amp; Safe App</div><div class="desc">Device app and Safe{Wallet} integration (a read-only readiness preview of the Safe App is live)</div></div>
         <span class="tag next">In development</span>
       </div>
       <div class="status-row">
@@ -593,15 +598,15 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
   <div class="wrap">
     <div class="grid3">
       <div class="card">
-        <h4>⚛️ Quantum physicist</h4>
+        <h3>⚛️ Quantum physicist</h3>
         <p>Ph.D., Max Planck Institute. Worked with Nobel laureate Robert B. Laughlin on quantum systems at Stanford. Director's Fellow at Los Alamos National Laboratory.</p>
       </div>
       <div class="card">
-        <h4>🔐 Crypto-module examiner</h4>
+        <h3>🔐 Crypto-module examiner</h3>
         <p>Directed a NIST-accredited cryptographic-module testing lab (CMVP), delivering FIPS 140-2 and side-channel security certifications.</p>
       </div>
       <div class="card">
-        <h4>⛓️ Blockchain at scale</h4>
+        <h3>⛓️ Blockchain at scale</h3>
         <p>Co-founder and CTO of SKALE, taking BLS threshold cryptography from paper to an Ethereum-aligned mainnet.</p>
       </div>
     </div>
@@ -642,7 +647,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       </details>
       <details>
         <summary>Can we use it in production today?</summary>
-        <p>Not yet. The post-quantum verifier is implemented and tested; the Guard and apps are in development, and an external audit is required before any mainnet deployment. Request early access to be among the first teams onboarded.</p>
+        <p>Not yet. The post-quantum verifier and the Guard contracts are implemented and tested but not audited; the Ledger app and Safe App are in development, and an external audit is required before any mainnet deployment. Request early access to be among the first teams onboarded.</p>
       </details>
     </div>
   </div>
@@ -661,9 +666,9 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
     <p class="fine">Opens a short, public GitHub form — please don't include anything confidential.</p>
 
     <div class="next-steps">
-      <div class="card"><h4>1 · Tell us about your Safe</h4><p>Chain, Safe version, number of owners, rough transfer volume.</p></div>
-      <div class="card"><h4>2 · We follow up</h4><p>We'll reach out as early-access pilots open.</p></div>
-      <div class="card"><h4>3 · Onboard together</h4><p>Run the key ceremony and enable the Guard with your owners.</p></div>
+      <div class="card"><h3>1 · Tell us about your Safe</h3><p>Chain, Safe version, number of owners, rough transfer volume.</p></div>
+      <div class="card"><h3>2 · We follow up</h3><p>We'll reach out as early-access pilots open.</p></div>
+      <div class="card"><h3>3 · Onboard together</h3><p>Run the key ceremony and enable the Guard with your owners.</p></div>
     </div>
   </div>
 </section>
@@ -672,30 +677,30 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
   <div class="wrap">
     <div class="foot">
       <div class="first">
-        <a class="brand" href="#top"><img src="assets/fermionwallet-logo.svg" alt="">FermionWallet</a>
+        <a class="brand" href="#top"><img src="assets/fermionwallet-icon.svg" alt="">FermionWallet</a>
         <p class="blurb">A quantum-safe second signature for Gnosis Safe, enforced on-chain by a Safe Guard.</p>
       </div>
       <div>
-        <h6>Learn</h6>
+        <h2>Learn</h2>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/readme.md">Overview</a>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/ui-help.md">User guide</a>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionwalletspec.md">Specification</a>
       </div>
       <div>
-        <h6>Reference</h6>
+        <h2>Reference</h2>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionwallet-guard-module.md">Guard</a>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/quantum-key-registry.md">Key registry</a>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/pre-approval-engine.md">Pre-approval engine</a>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/ledger-xmss-app.md">Ledger app</a>
       </div>
       <div>
-        <h6>Security</h6>
+        <h2>Security</h2>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/threat-model.md">Threat model</a>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/hardware-security-policy.md">Hardware policy</a>
         <a href="https://github.com/skalenetwork/fermionwallet/tree/main/contracts">Contracts</a>
       </div>
     </div>
-    <p class="legal">MIT licensed · Not yet audited — do not use with real funds.</p>
+    <p class="legal">XMSS verifier MIT; Guard, key registry and pre-approval engine LGPL-3.0 · Not yet audited — do not use with real funds.</p>
   </div>
 </footer>
 

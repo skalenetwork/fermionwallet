@@ -1,0 +1,29 @@
+<svg width="256" height="256" viewBox="140 60 240 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="FermionWallet icon">
+  <!-- Square icon (favicon, nav, Safe App icon): the logo mark without the wordmark. -->
+  <rect x="140" y="60" width="240" height="240" rx="48" fill="#0c1626"/>
+
+  <!-- single orbital ring -->
+  <ellipse cx="260" cy="168" rx="150" ry="54" transform="rotate(-18 260 168)"
+           fill="none" stroke="#2c4a6e" stroke-width="2"/>
+
+  <!-- fermion body -->
+  <circle cx="260" cy="150" r="64" fill="#1f4571"/>
+
+  <!-- face: two eyes, confident smile -->
+  <circle cx="241" cy="140" r="6" fill="#0c1626"/>
+  <circle cx="279" cy="140" r="6" fill="#0c1626"/>
+  <path d="M239 162 Q260 178 281 160" stroke="#0c1626" stroke-width="4.5" fill="none" stroke-linecap="round"/>
+
+  <!-- arms holding the quantum -->
+  <path d="M212 196 Q196 220 218 236" stroke="#1f4571" stroke-width="12" fill="none" stroke-linecap="round"/>
+  <path d="M308 196 Q324 220 302 236" stroke="#1f4571" stroke-width="12" fill="none" stroke-linecap="round"/>
+
+  <!-- the quantum -->
+  <circle cx="260" cy="242" r="32" fill="#57d6c0"/>
+  <path d="M238 242 q5.5 -14 11 0 t11 0 t11 0 t11 0"
+        stroke="#0c1626" stroke-width="3" fill="none" stroke-linecap="round"/>
+
+  <!-- hands on the orb -->
+  <circle cx="222" cy="238" r="9" fill="#1f4571"/>
+  <circle cx="298" cy="238" r="9" fill="#1f4571"/>
+</svg>
