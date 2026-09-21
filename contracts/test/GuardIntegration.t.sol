@@ -661,6 +661,61 @@ contract GuardIntegrationTest is Test {
 
     /// A cancelled revocation request cannot be re-armed by replaying its owner
     /// signatures from chain history: the request consumed the registry nonce.
+    /// After an emergency key revocation, a Safe transaction that was pinned under the
+    /// revoked key can be re-approved with the new key at once — the dead pin (its key
+    /// is revoked) must not block the slot until its possibly far-off validTo.
+    function test_EmergencyRevocation_PinnedTxCanBeReapprovedWithNewKey() public {
+        bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
+        bytes32 pin = safe.getTransactionHash(
+            address(token), 0, data, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
+        );
+
+        // Long-lived pinned approval under the current key.
+        PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, pin);
+        req.validTo = uint64(block.timestamp) + 60 days;
+        (bytes memory ecdsaSig, bytes memory xmssSig) = _hybridSign(req, 0);
+        vm.prank(relayer);
+        guard.createPreApproval(req, ecdsaSig, xmssSig);
+
+        // Emergency revocation of that key.
+        uint256 validUntil = block.timestamp + 1 days;
+        bytes32 revokeDigest = _guardDigest(
+            keccak256(
+                abi.encode(REVOKE_KEY_TYPEHASH, address(safe), keyId, guard.registryNonce(address(safe)), validUntil)
+            )
+        );
+        vm.prank(relayer);
+        guard.requestKeyRevocation(address(safe), validUntil, _ownerSigs(revokeDigest));
+        vm.warp(guard.keyRevocationExecutableAt(address(safe)) + 1);
+        guard.executeKeyRevocation(address(safe));
+
+        // Fresh registration of a new key (h = H_NEW).
+        (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
+        uint256 nonce = guard.registryNonce(address(safe));
+        validUntil = block.timestamp + 1 days;
+        bytes32 regDigest = _guardDigest(
+            keccak256(
+                abi.encode(APPROVE_KEY_TYPEHASH, address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, nonce, validUntil)
+            )
+        );
+        vm.prank(relayer);
+        keyId = guard.registerQuantumKey(
+            address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil,
+            _ledgerAttestation(newRoot, newSeed, H_NEW, nonce), _ownerSigs(regDigest)
+        );
+
+        // Re-approve the SAME pinned Safe transaction with the new key, then execute it.
+        req = _transferReq(recipient, 1 ether, 1, pin);
+        bytes32 digest = _preApprovalDigest(req, 0);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LEDGER_PK, digest);
+        (,, xmssSig) = _xmssSign(H_NEW, 1, digest);
+        vm.prank(relayer);
+        guard.createPreApproval(req, abi.encodePacked(r, s, v), xmssSig);
+
+        _safeExec(address(token), 0, data, Enum.Operation.Call);
+        assertEq(token.balanceOf(recipient), 1 ether);
+    }
+
     function test_EmergencyRevocation_CancelledRequestCannotBeReplayed() public {
         uint256 validUntil = block.timestamp + 30 days;
         bytes32 digest = _guardDigest(
