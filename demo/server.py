@@ -159,7 +159,7 @@ def approve_on_ledger(amount):
         "policyHash": DEMO_POLICY_HASH, "txHash": "0x" + "00" * 32,
     }
     try:
-        # The device times out after 60 s without a button press, but an active reviewer
+        # The device times out after 60 s idle on its decision screen, but an active reviewer
         # can keep a session open longer: never give up on the device before it decides,
         # or an approval pressed later would spend a leaf whose signatures nobody relays.
         res = ledger("/apdu", {
@@ -197,7 +197,7 @@ def approve_on_ledger(amount):
 
 def forge_script(sig, args, broadcast):
     cmd = [FORGE, "script", "script/Demo.s.sol:Demo", "-s", sig, *args,
-           "--rpc-url", RPC, "--skip-simulation" if False else "-vv"]
+           "--rpc-url", RPC, "-vv"]
     if broadcast:
         cmd.append("--broadcast")
     proc = subprocess.run(cmd, cwd=CONTRACTS, capture_output=True, text=True, timeout=300)
