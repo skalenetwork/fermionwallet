@@ -58,7 +58,9 @@ FermionWallet deploys **one** contract per chain: `FermionWalletGuard`. The key 
 
 ### 2.1 Deterministic Factory Deployment (Create2)
 
-`contracts/script/Deploy.s.sol` deploys the Guard with `new FermionWalletGuard{salt: SALT}(...)`, which Forge routes through the deterministic deployment proxy, so the same constructor arguments and salt give the same address on every chain where that proxy exists. Target networks: Ethereum Mainnet, Arbitrum, Optimism, Base, Polygon.
+`contracts/script/Deploy.s.sol` deploys the Guard with CREATE2 by calling the deterministic deployment proxy `0x4e59b44847b379578588920cA78FbF26c0B4956C` directly (calldata = salt ‖ init code), so the same compiled bytecode, constructor arguments and salt give the same address on every chain where that proxy exists. Target networks: Ethereum Mainnet, Arbitrum, Optimism, Base, Polygon.
+
+The script deliberately does not use `new FermionWalletGuard{salt: SALT}(...)`: Forge 1.8.3 routes that through the proxy on chain IDs 1, 42161 and 137, but on the OP-stack chain IDs 10 and 8453 it broadcasts a plain `CREATE` from the deployer account. The Guard then lands at an address that depends on the deployer's nonce, and not at the address the script simulated and logged. The script computes the expected address first and reverts unless the Guard is deployed there. It then reads every immutable back from the deployed contract and logs the chain ID, salt, `EXTCODEHASH` and all constructor arguments: the values `deployments.json` records. If the Guard already exists at the expected address, the script broadcasts nothing.
 
 Constructor arguments (all immutable), with the script's defaults, each overridable by environment variable:
 
@@ -71,7 +73,7 @@ Constructor arguments (all immutable), with the script's defaults, each overrida
 | `maxCommitmentQueue` | `MAX_COMMITMENT_QUEUE` | 16 |
 | CREATE2 salt | `SALT` | `keccak256("fermionwallet.guard.v1")` |
 
-The script refuses to deploy if `MULTISEND_CALL_ONLY` has no code on the target chain.
+The script refuses to deploy if `MULTISEND_CALL_ONLY` or the deterministic deployment proxy has no code on the target chain, if `emergencyTimelock` does not exceed `adminTimelock`, if either cap is zero, or if an environment value does not fit its type (it never truncates silently).
 
 ### 2.2 Safe Integration Handshake
 To enroll a client Safe:
