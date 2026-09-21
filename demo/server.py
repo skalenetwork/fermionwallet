@@ -112,7 +112,15 @@ def forge_script(sig, args, broadcast):
 
 
 def parse_amount(payload):
-    amount = int(payload.get("amount", 0))
+    raw = payload.get("amount", 0)
+    # Whole dUSD only. int() would silently truncate 1.5 to 1 (and JSON true is a
+    # Python int), so the demo would sign and move a different amount than the one
+    # the viewer typed — exactly the mismatch the product exists to prevent.
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or (
+        isinstance(raw, float) and not raw.is_integer()
+    ):
+        raise ValueError("amount must be a whole number of dUSD")
+    amount = int(raw)
     if not (0 < amount <= 1_000_000):
         raise ValueError("amount must be between 1 and 1,000,000 dUSD")
     return amount

@@ -91,7 +91,7 @@
         <p>Both required Safe owners sign a <span id="amt1-echo">100</span> dUSD transfer —
         exactly what a quantum-broken attacker with forged ECDSA signatures could do.
         The Guard rejects it: no quantum pre-approval exists.</p>
-        <input id="amount" type="number" min="1" max="1000000" value="100"> dUSD
+        <input id="amount" type="number" min="1" max="1000000" step="1" value="100"> dUSD
         <button id="btn-blocked">Attempt transfer</button>
         <div class="out" id="out-blocked"></div>
       </div>
@@ -157,6 +157,11 @@ const setBusy = busy => flowButtons.forEach(id => { $(id).disabled = busy; });
 
 async function flow(name, btn, out) {
   const amount = Number($('amount').value);
+  if (!Number.isInteger(amount) || amount < 1 || amount > 1000000) {
+    out.className = 'out show fail';
+    out.textContent = '✘ Enter a whole number of dUSD between 1 and 1,000,000.';
+    return;
+  }
   setBusy(true); // one flow at a time: each signs against the chain state the previous one leaves
   out.className = 'out show';
   out.textContent = name === 'approve'
