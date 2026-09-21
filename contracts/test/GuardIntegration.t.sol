@@ -1327,6 +1327,140 @@ contract GuardIntegrationTest is Test {
         );
         assertEq(token.balanceOf(recipient), 0);
     }
+
+    // ═══ Coverage: escape hatch, depth counter, queue compaction (second review) ═══
+    // Foundry clears transient storage between the test's top-level calls, so depth
+    // leaks are only observable when several execTransactions share ONE call: the
+    // SafeTxBatcher below runs them back to back inside a single EVM call frame.
+
+    /// Sign the next `tos.length` Safe transactions (consecutive nonces).
+    function _signedBatch(address[] memory tos, bytes[] memory datas, uint256[] memory safeTxGas)
+        internal
+        view
+        returns (SafeTxBatcher.SafeCall[] memory calls)
+    {
+        calls = new SafeTxBatcher.SafeCall[](tos.length);
+        uint256 n = safe.nonce();
+        for (uint256 i = 0; i < tos.length; ++i) {
+            bytes32 h = safe.getTransactionHash(
+                tos[i], 0, datas[i], Enum.Operation.Call, safeTxGas[i], 0, 0, address(0), address(0), n + i
+            );
+            calls[i] = SafeTxBatcher.SafeCall(tos[i], datas[i], safeTxGas[i], _ownerSigs(h));
+        }
+    }
+
+    /// Every owner safety call still goes through (gasPrice = 0) while the Safe is
+    /// paused AND its posture is bad (fallback handler set) — and each one leaves the
+    /// transient depth at zero: a quantum-approved transaction executed right after
+    /// them in the SAME call frame is not mistaken for a nested one.
+    function test_EscapeHatch_AllOwnerSafetyCallsPass_DepthReturnsToZero() public {
+        bytes32 doomed = _createTransfer(recipient, 5 ether, 1, bytes32(0));
+        bytes memory removeGuard = abi.encodeWithSignature("setGuard(address)", address(0));
+        _createAdmin(address(safe), keccak256(removeGuard), 2);
+
+        uint256 validUntil = block.timestamp + 1 days;
+        bytes32 revokeDigest = _guardDigest(
+            keccak256(
+                abi.encode(REVOKE_KEY_TYPEHASH, address(safe), keyId, guard.registryNonce(address(safe)), validUntil)
+            )
+        );
+        vm.prank(relayer);
+        guard.requestKeyRevocation(address(safe), validUntil, _ownerSigs(revokeDigest));
+
+        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe))), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestUnpauseSafe, ()), Enum.Operation.Call);
+        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1); // unpause + ADMIN approval mature
+        vm.store(address(safe), FALLBACK_SLOT, bytes32(uint256(uint160(makeAddr("evilHandler")))));
+
+        address[] memory tos = new address[](8);
+        bytes[] memory datas = new bytes[](8);
+        uint256[] memory gasArr = new uint256[](8);
+        for (uint256 i = 0; i < 7; ++i) {
+            tos[i] = address(guard);
+        }
+        datas[0] = abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ());
+        datas[1] = abi.encodeCall(FermionWalletGuard.cancelEmergencyDeGuard, (address(safe)));
+        datas[2] = abi.encodeCall(PreApprovalEngine.revokePreApproval, (doomed));
+        datas[3] = abi.encodeCall(QuantumKeyRegistry.cancelKeyRevocation, (address(safe)));
+        datas[4] = abi.encodeCall(FermionWalletGuard.unpauseSafe, ());
+        datas[5] = abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe)));
+        datas[6] = abi.encodeCall(FermionWalletGuard.requestUnpauseSafe, ());
+        // Last: the quantum-approved Guard removal — a non-escape transaction that
+        // passes the depth check (and works while paused with a bad posture).
+        tos[7] = address(safe);
+        datas[7] = removeGuard;
+
+        SafeTxBatcher batcher = new SafeTxBatcher(safe);
+        batcher.run(_signedBatch(tos, datas, gasArr));
+
+        assertTrue(guard.getPreApproval(doomed).revoked);
+        assertEq(guard.keyRevocationExecutableAt(address(safe)), 0);
+        assertEq(guard.emergencyDeGuardExecutableAt(address(safe)), 0);
+        assertTrue(guard.safePaused(address(safe)));
+        assertEq(uint256(vm.load(address(safe), GUARD_SLOT)), 0); // Guard detached
+    }
+
+    /// keccak256("guard_manager.guard.address")
+    bytes32 internal constant GUARD_SLOT = 0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8;
+
+    /// Transactions whose inner call FAILS (safeTxGas != 0, so the Safe does not
+    /// revert) still get checkAfterExecution and decrement the depth — both for an
+    /// escape call and for an approved one — so the next one in the same frame runs.
+    function test_Depth_FailedExecutionsStillUnwind() public {
+        uint256 tooMuch = token.balanceOf(address(safe)) + 1;
+        bytes32 failing = _createTransfer(recipient, tooMuch, 1, bytes32(0));
+        _createTransfer(recipient, 1 ether, 2, bytes32(0));
+
+        address[] memory tos = new address[](3);
+        bytes[] memory datas = new bytes[](3);
+        uint256[] memory gasArr = new uint256[](3);
+        tos[0] = address(guard); // escape call reverting inside the Guard (nothing to cancel)
+        datas[0] = abi.encodeCall(FermionWalletGuard.cancelEmergencyDeGuard, (address(safe)));
+        gasArr[0] = 100_000;
+        tos[1] = address(token); // approved transfer reverting inside the token
+        datas[1] = abi.encodeCall(IERC20.transfer, (recipient, tooMuch));
+        gasArr[1] = 100_000;
+        tos[2] = address(token);
+        datas[2] = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
+
+        SafeTxBatcher batcher = new SafeTxBatcher(safe);
+        bool[] memory ok = batcher.run(_signedBatch(tos, datas, gasArr));
+        assertFalse(ok[0]);
+        assertFalse(ok[1]);
+        assertTrue(ok[2]);
+        assertTrue(guard.getPreApproval(failing).used); // consumed even though execution failed
+        assertEq(token.balanceOf(recipient), 1 ether);
+    }
+
+    /// Compaction at the cap keeps the survivors in FIFO order: live approvals queued
+    /// behind a scheduled head and a run of used entries are consumed oldest-first.
+    function test_Tier2_CompactionPreservesFifo() public {
+        PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
+        req.validFrom = uint64(block.timestamp) + 1 days;
+        req.validTo = req.validFrom + 2 days;
+        (bytes memory ecdsaSig, bytes memory xmssSig) = _hybridSign(req, 0);
+        vm.prank(relayer);
+        bytes32 scheduled = guard.createPreApproval(req, ecdsaSig, xmssSig);
+
+        bytes memory pay = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
+        uint32 leaf = 2;
+        // Queue: [S, U1..U5] — five used entries stuck behind the scheduled head.
+        for (uint256 i = 0; i < 5; ++i) {
+            _createTransfer(recipient, 1 ether, leaf++, bytes32(0));
+            _safeExec(address(token), 0, pay, Enum.Operation.Call);
+        }
+        // [S, U1..U5, L1, L2] fills the cap (8); L3 triggers compaction → [S, L1, L2, L3].
+        bytes32[3] memory live;
+        for (uint256 i = 0; i < 3; ++i) {
+            live[i] = _createTransfer(recipient, 1 ether, leaf++, bytes32(0));
+        }
+        for (uint256 i = 0; i < 3; ++i) {
+            _safeExec(address(token), 0, pay, Enum.Operation.Call);
+            assertTrue(guard.getPreApproval(live[i]).used);
+            if (i < 2) assertFalse(guard.getPreApproval(live[i + 1]).used);
+        }
+        assertFalse(guard.getPreApproval(scheduled).used);
+    }
 }
 
 /// Re-enters Safe.execTransaction twice from inside an approved outer transaction:
@@ -1369,4 +1503,39 @@ contract EscapeThenReenterToken {
 /// that root squatting through a fake Safe cannot block a real Safe's key lifecycle.
 contract FakeSafe {
     function checkSignatures(bytes32, bytes calldata, bytes memory) external pure {}
+}
+
+/// Runs several fully signed Safe transactions back to back inside ONE call frame, so
+/// the Guard's per-transaction transient state is shared between them.
+contract SafeTxBatcher {
+    struct SafeCall {
+        address to;
+        bytes data;
+        uint256 safeTxGas;
+        bytes sigs;
+    }
+
+    Safe internal immutable SAFE;
+
+    constructor(Safe safe_) {
+        SAFE = safe_;
+    }
+
+    function run(SafeCall[] calldata calls) external returns (bool[] memory ok) {
+        ok = new bool[](calls.length);
+        for (uint256 i = 0; i < calls.length; ++i) {
+            ok[i] = SAFE.execTransaction(
+                calls[i].to,
+                0,
+                calls[i].data,
+                Enum.Operation.Call,
+                calls[i].safeTxGas,
+                0,
+                0,
+                address(0),
+                payable(address(0)),
+                calls[i].sigs
+            );
+        }
+    }
 }
