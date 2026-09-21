@@ -215,7 +215,7 @@ The device screen is the final authority — what you confirm there is exactly w
 3. **Amount** — decimals-adjusted, with the raw value on a details page.
 4. **Recipient** — the full address, chunked across pages, never truncated.
 5. **Validity** — absolute UTC times, not durations.
-6. **Context** — Safe address, chain, nonce.
+6. **Context** — Safe address, chain, and the binding: *Pinned to Safe tx 0x…* (this approval works only for that exact Safe transaction) or an amber *NOT PINNED — any matching transfer* (it works for any Safe transaction with the same token, recipient and amount until used or expired). Prefer pinned approvals; the device does not show a Safe nonce because the approval does not bind one.
 7. **Policy hash** — short fingerprint.
 8. **Decision** — hold to approve, tap to reject. Rejecting or walking away costs nothing; no leaf is consumed until you approve.
 

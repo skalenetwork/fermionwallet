@@ -90,7 +90,7 @@ Re-running `GET_XMSS_ROOT` after generation returns the existing public key (scr
 | 3 | Amount | Decimals-adjusted (`500,000.00 USDC`); details page shows the raw uint256 |
 | 4 | Recipient | Full address, chunked, multi-page — never truncated |
 | 5 | Validity | Window as absolute UTC times ("Valid 21 Sep 15:40 → 21:40 UTC"), not durations — durations hide clock skew games |
-| 6 | Context | Safe address (chunked) + chain name/ID + Safe nonce |
+| 6 | Context | Safe address (chunked) + chain name/ID + **binding**, read from the signed `txHash`: `Pinned to Safe tx 0x5e1f…88ab` when it is set, or an amber `NOT PINNED — any matching transfer` when it is zero (a field-matched approval executes for *any* Safe transaction with this token, recipient and amount, at any Safe nonce, until used or expired). The Safe nonce is **not** shown: it is not in the signed payload, so displaying it would promise a binding the Guard does not enforce |
 | 7 | Policy | `policyHash` first/last 8 hex chars (the one field verified by hash — the full policy is enforced on-chain, the hash only needs collision-level comparison) |
 | 8 | Decision | "Approve transfer?" — Approve requires the long-press (Stax) / both-buttons (Nano) idiom; Reject is a single tap |
 
@@ -134,6 +134,7 @@ Every host-side failure has a distinct, plain-language device screen: `Payload r
 
 ## Security requirements
 
+- **Display only signed fields**: every value on a signing screen must come from the signed EIP-712 struct (or its domain). Host-supplied context that is not signed — a Safe nonce, a label, a queue position — must never be displayed as if it constrained the approval.
 - **Counter-before-signature invariant**: the NVM counter commit must be atomic and precede signature release. A power loss between commit and release loses one leaf (acceptable); the reverse order is forbidden (catastrophic).
 - NVM wear: counter updates must use the SDK's wear-leveled storage; budget ≥ 2^20 writes.
 - Signing time: target < 3 s per signature on current devices (WOTS+ chains dominate; precompute where the SDK allows).
