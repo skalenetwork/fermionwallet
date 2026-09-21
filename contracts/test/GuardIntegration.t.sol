@@ -1166,6 +1166,34 @@ contract GuardIntegrationTest is Test {
         );
         assertEq(token.balanceOf(thief), 0);
     }
+
+    // ══════ Regression: MultiSend leg `to == address(0)` is the Safe itself ══════
+
+    /// MultiSendCallOnly rewrites a zero leg target to address(this) — the Safe, under
+    /// delegatecall. A zero-target leg is therefore a Safe self-call smuggled into a
+    /// PAYLOAD batch (no ADMIN class, no ADMIN_TIMELOCK), e.g. enableModule when the
+    /// Safe permit-lists that selector for a Zodiac-style modifier contract.
+    function test_Batch_LegZeroTarget_IsSafeSelfCall_Reverts() public {
+        bytes memory policy = abi.encodeCall(
+            FermionWalletGuard.setSelectorPolicy, (address(safe), bytes4(keccak256("enableModule(address)")), true)
+        );
+        _createAdmin(address(guard), keccak256(policy), 1);
+        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
+        _safeExec(address(guard), 0, policy, Enum.Operation.Call);
+
+        address evilModule = makeAddr("evilModule");
+        bytes memory leg = abi.encodeWithSignature("enableModule(address)", evilModule);
+        bytes memory data = abi.encodeWithSignature("multiSend(bytes)", _leg(address(0), 0, leg));
+        _createPayload(address(msco), 0, keccak256(data), 2);
+        _expectExecRevertOp(
+            address(msco),
+            0,
+            data,
+            Enum.Operation.DelegateCall,
+            abi.encodeWithSelector(FermionWalletGuard.ForbiddenBatchLegTarget.selector, address(0))
+        );
+        assertFalse(safe.isModuleEnabled(evilModule));
+    }
 }
 
 /// Attacker-deployed "Safe" whose signature check accepts anything — used to prove
