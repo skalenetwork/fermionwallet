@@ -26,7 +26,7 @@ No signature exists until all eight screens are traversed and the decision scree
 5. **Validity** — absolute UTC start/end, never durations.
 6. **Context** — Safe address (chunked), chain name/ID, Safe nonce.
 7. **Policy hash** — first/last 8 hex; compare against the hash shown in the app.
-8. **Decision** — hold to approve (counter commits in SE NVRAM *before* the signature streams out), single tap to reject. 60 s idle = reject; reject/timeout consumes no leaf.
+8. **Decision** — hold to approve (counter commits in SE NVRAM *before* both hybrid halves — the ECDSA signature by the `quantumAdmin` key and the XMSS signature, over the same digest — stream out), single tap to reject. 60 s idle = reject; reject/timeout consumes no leaf.
 
 **PAYLOAD/ADMIN classes** reuse this flow with screens 2–4 replaced by target address, native value, and payload `dataHash`; ADMIN additionally shows the `ADMIN ACTION — affects Safe governance` warning header. A **batch** shows `BATCH — n legs`, per-token totals (informational), and the binding batch `dataHash` — legs are reviewed in the app, the hash is verified on the device:
 
@@ -42,7 +42,7 @@ Denying produces a Ledger-signed refusal that is as auditable as an approval but
 
 ![Key generation](./assets/ui/ledger/ledger-keygen.svg)
 
-Five screens: intent (parameter set + lifetime), the amber **NO BACKUP** acknowledgment (the key is intentionally not derivable from the recovery phrase — restoring a seed would reset the leaf counter and enable reuse forgery), tree-construction progress (not shown; cancellable until complete), root review with the **6-word ceremony code rendered by the secure element**, and export confirmation (only root, height, parameter set leave the device). Re-running the command after generation replays screens 4–5 only.
+Five screens: intent (parameter set + lifetime), the amber **NO BACKUP** acknowledgment (the key is intentionally not derivable from the recovery phrase — restoring a seed would reset the leaf counter and enable reuse forgery), tree-construction progress (not shown; cancellable until complete), root review with the **6-word ceremony code rendered by the secure element**, export confirmation (only the root, public SEED, height and parameter set leave the device — the public SEED is required on-chain to verify signatures), and the key attestation (`SIGN_KEY_ATTESTATION`): the device signs the registry's `QuantumKeyAttestation` for the shown Safe with its `quantumAdmin` key, filling the key fields itself so the host can't substitute a root. Re-running the command after generation replays screens 4–5 only; attestation is repeated per Safe.
 
 ## Rotation (`SIGN_ROTATION`) — amber frames
 
