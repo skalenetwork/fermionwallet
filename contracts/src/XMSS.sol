@@ -8,8 +8,8 @@ pragma solidity ^0.8.24;
 ///         is taken from the auth-path length, capped at the largest standardized
 ///         single-tree height (20, XMSS-SHA2_20_256).
 /// @dev    Stateless and storage-free. Leaf-index reuse protection (mandatory for
-///         XMSS security) is enforced by XMSSStateful.sol / the FermionWallet
-///         Guard — never expose this library to callers that do not consume
+///         XMSS security) is enforced by the FermionWallet Guard's
+///         QuantumKeyRegistry — never expose this library to callers that do not consume
 ///         leaf indices, as specified in fermionwallet-guard-module.md.
 /// @author FermionWallet — MIT licensed.
 library XMSS {

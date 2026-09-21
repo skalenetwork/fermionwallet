@@ -49,7 +49,7 @@ A FermionWallet release is a set of versioned artifacts published together under
 | A8 | Documentation and product site | `*.md`, `site/` | GitHub, GitHub Pages | this repository |
 | A9 | Release notes | GitHub Release | GitHub Releases | §6.7 |
 
-`XMSSStateful.sol` is a reference and test wrapper. It is not a deployed release artifact: leaf consumption in production is enforced by the Registry/Guard bitmap.
+Leaf consumption is enforced by the registry's used-leaf bitmap inside the Guard; there is no separate stateful XMSS wrapper.
 
 ## 3. Versioning and compatibility
 
@@ -260,7 +260,7 @@ Patch releases follow the full procedure but may run gates G1, G5, and G6 as no-
 
 Deployed contracts cannot be patched or rolled back.
 
-1. **Contain:** pause affected Guards. Pausing is fast and low-privilege and fails closed; unpausing is slow and requires Safe governance plus a timelock ([Guard: Emergency pause](./fermionwallet-guard-module.md#emergency-pause-circuit-breaker)). The emergency de-guard stays available while paused.
+1. **Contain:** alert the owners of every enrolled Safe so they pause their own Safes. There is no global pause and no admin who can act for them ([Guard: No global powers](./fermionwallet-guard-module.md#no-global-powers)). Pausing is fast and low-privilege and fails closed; unpausing is slow and requires that Safe's owner threshold plus a timelock ([Guard: Emergency pause](./fermionwallet-guard-module.md#emergency-pause-circuit-breaker)). The emergency de-guard stays available while paused.
 2. **Notify:** alert every enrolled Safe through all configured channels, with instructions.
 3. **Fix:** ship a new contract version through the full procedure, including audit review of the fix.
 4. **Migrate:** Safes move to the new Guard per §8.2, or remove the Guard via the emergency path if they choose.

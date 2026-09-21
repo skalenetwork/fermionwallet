@@ -525,20 +525,21 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
         <p><a href="https://github.com/skalenetwork/fermionwallet/tree/main/contracts">Browse the contracts →</a> · <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionwallet-guard-module.md">Guard spec →</a></p>
       </div>
       <div>
-        <div class="code-title">contracts/src/XMSSStateful.sol (simplified)</div>
-<pre class="code"><span class="k">function</span> verifyAndConsume(
-    <span class="t">bytes32</span> messageDigest,
-    <span class="t">XMSS.Signature</span> <span class="k">memory</span> sig
-) <span class="k">external</span> {
-    <span class="t">uint32</span> leaf = sig.leafIdx;
-    <span class="k">if</span> (isLeafUsed(leaf)) <span class="k">revert</span> LeafAlreadyUsed(leaf);
+        <div class="code-title">contracts/src/QuantumKeyRegistry.sol (simplified)</div>
+<pre class="code"><span class="k">function</span> _verifyAndConsumeXmss(
+    <span class="t">bytes32</span> keyId,
+    <span class="t">bytes32</span> digest,
+    <span class="t">bytes</span> <span class="k">calldata</span> xmssSignature
+) <span class="k">internal</span> {
+    <span class="t">XMSS.Signature</span> <span class="k">memory</span> sig = abi.decode(xmssSignature, (<span class="t">XMSS.Signature</span>));
+    <span class="t">BitMaps.BitMap</span> <span class="k">storage</span> used = _usedLeaves[keyId];
+    <span class="k">if</span> (used.get(sig.leafIdx)) <span class="k">revert</span> LeafAlreadyUsed(keyId, sig.leafIdx);
 
-    _markUsed(leaf);                 <span class="c">// burn the one-time leaf</span>
+    <span class="k">if</span> (!XMSS.verify(digest, sig, publicKey(keyId)))
+        <span class="k">revert</span> InvalidXmssSignature();  <span class="c">// whole tx rolls back</span>
 
-    <span class="k">if</span> (!XMSS.verify(messageDigest, sig, pk))
-        <span class="k">revert</span> InvalidSignature();  <span class="c">// whole tx rolls back</span>
-
-    <span class="k">emit</span> LeafConsumed(leaf, messageDigest);
+    used.set(sig.leafIdx);                <span class="c">// burn the one-time leaf</span>
+    <span class="k">emit</span> LeafConsumed(keyId, sig.leafIdx, digest);
 }</pre>
       </div>
     </div>
@@ -633,7 +634,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       </details>
       <details>
         <summary>Which Safes are supported?</summary>
-        <p>Safe v1.3.0 and later. The Safe must have no enabled modules, because modules skip guards — or be on Safe 1.5+ with FermionWallet's module guard installed too.</p>
+        <p>Safe v1.3.0 and later. The Safe must have no enabled modules, because modules skip guards — or be on Safe 1.5+ with FermionWallet's module guard installed too. It must also have no fallback handler: ERC-20 tokens and ETH work normally, but signed-message features (Permit, CowSwap orders, sign-in) and receiving NFTs via <code>safeTransferFrom</code> aren't supported yet.</p>
       </details>
       <details>
         <summary>Why XMSS and not ML-DSA or Falcon?</summary>

@@ -4,6 +4,7 @@
 
 - [Programming language](#programming-language)
 - [Principle: library-first, almost no original code](#principle-library-first-almost-no-original-code)
+- [No global powers](#no-global-powers)
 - [Mandatory libraries (pin exact releases in `package.json` / `foundry.toml`)](#mandatory-libraries-pin-exact-releases-in-packagejson--foundrytoml)
   - [Safe — execution model (do not fork)](#safe--execution-model-do-not-fork)
   - [OpenZeppelin Contracts — all operational security](#openzeppelin-contracts--all-operational-security)
@@ -53,6 +54,16 @@ The Guard is glue. Every security primitive must come from an audited, pinned op
 
 Anything else — Guard interface, ERC165, pause, access control, reentrancy, EIP-712, hashing, signature checks, nonce bitmaps, allowlists, Safe tx hash — **must be inherited or called, never reimplemented.** Duplicating `ITransactionGuard` in this repo is a defect: a locally compiled `interfaceId` can disagree with Safe’s `GuardManager` and `setGuard` reverts `GS300`.
 
+## No global powers
+
+The Guard is one contract shared by every enrolled Safe, so any power over the Guard itself is a power over all customers. There is none:
+
+- no admin, owner, guardian, or role of any kind (no `AccessControl`, no `Ownable`);
+- no global pause, and no governance-curated list (such as a fallback-handler allowlist);
+- no upgrade path: the Guard is non-upgradeable (no proxy, no `selfdestruct`, no delegatecall to mutable code).
+
+Every control is scoped to one Safe and held by that Safe's owners: its pause, its selector policy, its key, its pre-approvals, and whether the Guard is attached at all. **Only a Safe's owners can change or remove the Guard attached to that Safe**, because `setGuard` is a Safe self-call that needs the owner threshold. A new Guard version is a new deployment, which each Safe adopts (or not) on its own. Any future change that adds a power reaching more than one Safe violates this spec.
+
 ## Mandatory libraries (pin exact releases in `package.json` / `foundry.toml`)
 
 ### Safe — execution model (do not fork)
@@ -70,9 +81,7 @@ Do **not** copy these files into the repo. Depend on the published package.
 
 | Concern | Use this, not custom code |
 |---|---|
-| Pause / fail-closed circuit breaker | `Pausable` (`_pause` / `_unpause`) |
 | Nested-tx / reentrancy depth | `ReentrancyGuardTransient` (or `ReentrancyGuard` if transient is unavailable) |
-| Who may register, rotate, pause, revoke | `AccessControl` (roles) + `Ownable2Step` only if a single admin is required |
 | Domain separation (Safe, chainId, policyHash) | `EIP712` |
 | Classical half of a hybrid signature; ERC-1271 for institutional signers | `SignatureChecker.isValidSignatureNow` (not raw `ecrecover`) |
 | Hash helpers | `MessageHashUtils` |
@@ -114,7 +123,7 @@ Surveyed (2026-09); use as reference/baseline, not drop-in:
 
 Nothing else exists: ZKNox (ETHFALCON/ETHDILITHIUM) covers only lattice schemes; no LMS or other XMSS Solidity implementations were found.
 
-**Plan of record — implemented:** FermionWallet's XMSS verifier is implemented in-house as a clean-room, **MIT-licensed** Solidity library at [`contracts/src/XMSS.sol`](./contracts/src/XMSS.sol) (no code taken from the unlicensed or AGPL repos above; written directly from RFC 8391), with leaf consumption enforced by [`contracts/src/XMSSStateful.sol`](./contracts/src/XMSSStateful.sol). It is validated against an independent Python RFC 8391 reference (`contracts/py/xmss_ref.py`) with positive vectors at h = 4, 10, and **20 (the production parameter set)** plus tamper and fuzz tests, and benchmarked in Foundry: **999,247 gas measured** per verification at h=20 — within the 0.4–1M target. Remaining before mainnet: cross-check against poqeth's published numbers and the same external audit as the Guard.
+**Plan of record — implemented:** FermionWallet's XMSS verifier is implemented in-house as a clean-room, **MIT-licensed** Solidity library at [`contracts/src/XMSS.sol`](./contracts/src/XMSS.sol) (no code taken from the unlicensed or AGPL repos above; written directly from RFC 8391), with leaf consumption enforced by the registry's used-leaf bitmap in [`contracts/src/QuantumKeyRegistry.sol`](./contracts/src/QuantumKeyRegistry.sol). It is validated against an independent Python RFC 8391 reference (`contracts/py/xmss_ref.py`) with positive vectors at h = 4, 10, and **20 (the production parameter set)** plus tamper and fuzz tests, and benchmarked in Foundry: **999,247 gas measured** per verification at h=20 — within the 0.4–1M target. Remaining before mainnet: cross-check against poqeth's published numbers and the same external audit as the Guard.
 
 Why XMSS over the alternatives:
 - **ML-DSA / Falcon**: lattice math costs tens of millions of gas on the EVM — no audited gas-viable verifier exists.
@@ -137,9 +146,7 @@ import {BaseTransactionGuard, ITransactionGuard} from "@safe-global/safe-contrac
 import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
 import {ISafe} from "@safe-global/safe-contracts/contracts/interfaces/ISafe.sol";
 
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {BitMaps} from "@openzeppelin/contracts/utils/structs/BitMaps.sol";
@@ -148,9 +155,7 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
 contract FermionWalletGuard is
     BaseTransactionGuard,
     BaseModuleGuard,   // same contract serves both hooks; wired via setModuleGuard on Safe 1.5+
-    Pausable,
     ReentrancyGuardTransient,
-    AccessControl,
     EIP712
 {
     // FermionWallet-owned code is only: decode transfer calldata,
@@ -390,8 +395,8 @@ interface IFermionWalletGuard is ITransactionGuard {
 
     // ADMIN class: req.target must be the Safe itself (setGuard incl. address(0),
     // setFallbackHandler, setModuleGuard, enable/disableModule, owner/threshold
-    // changes) or this Guard (setSelectorPolicy, setFallbackHandlerAllowlist —
-    // Guard policy mutations are ADMIN-governed too). Reverts
+    // changes) or this Guard (setSelectorPolicy — Guard policy
+    // mutations are ADMIN-governed too). Reverts
     // unless req.validFrom >= block.timestamp + ADMIN_TIMELOCK. Emits
     // AdminPreApprovalCreated so watchers can revoke during the delay. This is the
     // sanctioned unbrick path.
@@ -407,32 +412,19 @@ interface IFermionWalletGuard is ITransactionGuard {
     function validatePreApproval(bytes32 preApprovalId) external view returns (bool valid, string memory reason);
     function revokePreApproval(bytes32 preApprovalId) external returns (bool revoked);
 
-    // Emergency circuit breakers — two levels, both deny-all for their scope:
-    //   * Global pause: guardian only (on a shared singleton, any enrolled Safe must
-    //     not be able to freeze all others). Unpause: governance role + ADMIN_TIMELOCK.
-    //   * Per-Safe pause: fast and low-privilege — any single owner of the Safe, the
-    //     Safe itself, or its Quantum Administrator. Unpause: the Safe only, behind
-    //     ADMIN_TIMELOCK. Re-pausing does not cancel a pending Safe unpause, and
-    //     after unpause a per-Safe ADMIN_TIMELOCK cooldown blocks single-key actors
-    //     from pausing again; only the Safe itself may pause during the cooldown.
-    //     Escape-hatch calls keep working while paused (no-brick).
-    event GuardPaused(address indexed by);
-    event GuardUnpaused(address indexed by);
+    // Emergency circuit breaker — per Safe only (there is no global pause):
+    //   fast and low-privilege — any single owner of the Safe, the Safe itself, or
+    //   its Quantum Administrator. Unpause: the Safe only, behind ADMIN_TIMELOCK.
+    //   Re-pausing does not cancel a pending Safe unpause, and after unpause a
+    //   per-Safe ADMIN_TIMELOCK cooldown blocks single-key actors from pausing
+    //   again; only the Safe itself may pause during the cooldown. Escape-hatch
+    //   calls keep working while paused (no-brick).
     event SafePaused(address indexed safe, address indexed by);
     event SafeUnpaused(address indexed safe);
-    function pause() external;                 // guardian
-    function requestUnpause() external;        // governance, starts ADMIN_TIMELOCK
-    function unpause() external;               // governance, after the timelock
-    function paused() external view returns (bool);
     function pauseSafe(address safe) external; // any owner / the Safe / its Administrator
     function requestUnpauseSafe() external;    // the Safe, starts ADMIN_TIMELOCK
     function unpauseSafe() external;           // the Safe, after the timelock
     function safePaused(address safe) external view returns (bool);
-
-    // Governance-managed mitigation for Safe ERC-1271 fallback-handler bypasses.
-    // DEFAULT_ADMIN_ROLE may allowlist vetted handlers; zero handler is always OK.
-    function setFallbackHandlerAllowlist(address handler, bool allowed) external;
-    function fallbackHandlerAllowed(address handler) external view returns (bool);
 }
 ```
 
@@ -486,9 +478,9 @@ Note the operational trade-off: a buggy Guard can brick the Safe (every tx rever
 
 Safe's default `CompatibilityFallbackHandler` can validate owner ECDSA signatures through `isValidSignature` without creating a Safe transaction, which lets Permit/Permit2 and signature-order protocols bypass the Guard. FermionWallet therefore treats fallback-handler posture as part of enrollment and every checked transaction:
 
-- `DEFAULT_ADMIN_ROLE` manages a vetted handler allowlist via `setFallbackHandlerAllowlist`; `address(0)` is always allowed.
-- `checkTransaction`, `checkModuleTransaction`, and enrollment read the Safe fallback-handler slot and revert if it is nonzero and not allowlisted.
-- Remediation is exempt: quantum-approved `setGuard(address(0))` removal and the ADMIN self-call `setFallbackHandler(...)` are never blocked; the new handler must be `address(0)` or allowlisted.
+- A guarded Safe has **no** fallback handler. There is no allowlist: curating one would be a global power over every Safe (see "No global powers").
+- `checkTransaction`, `checkModuleTransaction`, and enrollment read the Safe fallback-handler slot and revert if it is nonzero.
+- Remediation is exempt: quantum-approved `setGuard(address(0))` removal and the ADMIN self-call `setFallbackHandler(address(0))` are never blocked; installing any other handler is rejected.
 - Operators must revoke pre-existing token and Permit2 allowances before enrollment, because allowances created before the Guard was installed cannot be retroactively controlled.
 
 ## Pre-approval classes
@@ -612,9 +604,9 @@ The target call executed by the Safe can re-enter `Safe.execTransaction`, causin
 
 ### Emergency pause (circuit breaker)
 
-- The Guard must support a deny-all `pause()` that makes every `checkTransaction` revert.
-- Pausing must be fast and low-privilege (a designated guardian or any Safe owner) because a compromised key holder can otherwise front-run revocations with an execution.
-- Unpausing must be slow and high-privilege: Safe governance plus a time lock. A re-pause must not cancel a pending owner-threshold unpause request; the timer survives and unpause executes at maturity.
+- Each Safe has its own deny-all pause (`pauseSafe`) that makes every non-escape `checkTransaction` for that Safe revert. There is no global pause (see "No global powers").
+- Pausing must be fast and low-privilege (any single owner of that Safe, the Safe itself, or its Quantum Administrator) because a compromised key holder can otherwise front-run revocations with an execution.
+- Unpausing must be slow and high-privilege: that Safe's owner threshold plus a time lock. A re-pause must not cancel a pending owner-threshold unpause request; the timer survives and unpause executes at maturity.
 - After unpause, a per-Safe cooldown of `ADMIN_TIMELOCK` blocks single-key actors (individual owners and the Quantum Administrator) from re-pausing. Only the Safe itself, via owner-threshold transaction, may pause during the cooldown.
 - Pausing fails closed — this is the correct failure direction for a security guard.
 
@@ -786,7 +778,7 @@ The major problems fixed here are:
 - Timestamp-manipulation margin enforced via minimum approval-window granularity.
 - Non-upgradeable deployment, zero-address checks, custom errors, no `tx.origin`, locked compiler, Slither + audit required.
 - Library-first: inherit Safe `BaseTransactionGuard`; do not copy Guard/ERC165 (avoids `GS300` interfaceId mismatch).
-- OpenZeppelin supplies pause, transient reentrancy, AccessControl, EIP-712, SignatureChecker (ERC-1271), BitMaps, EnumerableSet — no hand-rolled equivalents.
+- OpenZeppelin supplies EIP-712, SignatureChecker (ERC-1271), BitMaps, EnumerableSet — no hand-rolled equivalents.
 - Safe tx hash via `ISafe.getTransactionHash`, not a local hasher.
 - PQ/hybrid via pinned audited verifier or `liboqs` / `@noble/post-quantum`; HMAC is not a quantum signature.
 

@@ -10,14 +10,12 @@ import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
 ///         ERC-2470-style singleton factory, so the canonical address is
 ///         identical on every chain where the factory exists.
 ///
-/// Environment variables (all have production defaults except the roles):
+/// Environment variables (all optional; production defaults):
 ///   MULTISEND_CALL_ONLY   canonical Safe MultiSendCallOnly (default v1.4.1)
 ///   ADMIN_TIMELOCK        seconds (default 2 days)
 ///   EMERGENCY_TIMELOCK    seconds (default 7 days)
 ///   MAX_BATCH_LEGS        default 8
 ///   MAX_COMMITMENT_QUEUE  default 16
-///   GOVERNANCE_ADMIN      required — DEFAULT_ADMIN_ROLE holder
-///   GUARDIAN              required — PAUSER_ROLE holder
 ///   SALT                  CREATE2 salt (default keccak256("fermionwallet.guard.v1"))
 contract Deploy is Script {
     // Canonical Safe MultiSendCallOnly v1.4.1 (same address on all supported chains).
@@ -29,8 +27,6 @@ contract Deploy is Script {
         uint64 emergencyTimelock = uint64(vm.envOr("EMERGENCY_TIMELOCK", uint256(7 days)));
         uint32 maxBatchLegs = uint32(vm.envOr("MAX_BATCH_LEGS", uint256(8)));
         uint32 maxCommitmentQueue = uint32(vm.envOr("MAX_COMMITMENT_QUEUE", uint256(16)));
-        address governanceAdmin = vm.envAddress("GOVERNANCE_ADMIN");
-        address guardian = vm.envAddress("GUARDIAN");
         bytes32 salt = vm.envOr("SALT", keccak256("fermionwallet.guard.v1"));
 
         require(multiSend.code.length > 0, "MultiSendCallOnly not deployed on this chain");
@@ -44,9 +40,7 @@ contract Deploy is Script {
             adminTimelock,
             emergencyTimelock,
             maxBatchLegs,
-            maxCommitmentQueue,
-            governanceAdmin,
-            guardian
+            maxCommitmentQueue
         );
         vm.stopBroadcast();
 
@@ -56,7 +50,5 @@ contract Deploy is Script {
         console2.log("  multiSendCallOnly:", multiSend);
         console2.log("  adminTimelock:", adminTimelock);
         console2.log("  emergencyTimelock:", emergencyTimelock);
-        console2.log("  governanceAdmin:", governanceAdmin);
-        console2.log("  guardian:", guardian);
     }
 }

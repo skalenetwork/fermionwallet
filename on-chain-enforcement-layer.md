@@ -9,7 +9,7 @@
 The enforcement layer is the Guard. It must not grow a parallel stack. See `fermionwallet-guard-module.md` for the pinned set:
 
 - `@safe-global/safe-contracts` — `BaseTransactionGuard`, `ITransactionGuard`, `IModuleGuard`, `Enum`, `ISafe.getTransactionHash`
-- OpenZeppelin Contracts — `Pausable`, `ReentrancyGuardTransient`, `AccessControl`, `EIP712`, `SignatureChecker`, `BitMaps`, `EnumerableSet`, `IERC20`, `Address`, `SafeCast`, `Time`
+- OpenZeppelin Contracts — `ReentrancyGuardTransient`, `EIP712`, `SignatureChecker`, `BitMaps`, `EnumerableSet`, `IERC20`, `Address`, `SafeCast`, `Time`
 - PQ: pinned audited verifier on-chain, or `liboqs` / `@noble/post-quantum` at `createPreApproval` with on-chain `signatureHash` only
 - Foundry + Slither for tests and static analysis
 
