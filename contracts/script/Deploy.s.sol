@@ -13,8 +13,8 @@ import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
 /// Environment variables (all optional; production defaults):
 ///   MULTISEND_CALL_ONLY   canonical Safe MultiSendCallOnly (default v1.4.1)
 ///   ADMIN_TIMELOCK        seconds (default 2 days)
-///   EMERGENCY_TIMELOCK    seconds (default 7 days)
-///   MAX_BATCH_LEGS        default 8
+///   EMERGENCY_TIMELOCK    seconds (default 14 days — the published owners-only exit delay)
+///   MAX_BATCH_LEGS        default 100 (spec default; user guide advertises 100-leg batches)
 ///   MAX_COMMITMENT_QUEUE  default 16
 ///   SALT                  CREATE2 salt (default keccak256("fermionwallet.guard.v1"))
 contract Deploy is Script {
@@ -24,8 +24,8 @@ contract Deploy is Script {
     function run() external returns (FermionWalletGuard guard) {
         address multiSend = vm.envOr("MULTISEND_CALL_ONLY", DEFAULT_MULTISEND);
         uint64 adminTimelock = uint64(vm.envOr("ADMIN_TIMELOCK", uint256(2 days)));
-        uint64 emergencyTimelock = uint64(vm.envOr("EMERGENCY_TIMELOCK", uint256(7 days)));
-        uint32 maxBatchLegs = uint32(vm.envOr("MAX_BATCH_LEGS", uint256(8)));
+        uint64 emergencyTimelock = uint64(vm.envOr("EMERGENCY_TIMELOCK", uint256(14 days)));
+        uint32 maxBatchLegs = uint32(vm.envOr("MAX_BATCH_LEGS", uint256(100)));
         uint32 maxCommitmentQueue = uint32(vm.envOr("MAX_COMMITMENT_QUEUE", uint256(16)));
         bytes32 salt = vm.envOr("SALT", keccak256("fermionwallet.guard.v1"));
 
