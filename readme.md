@@ -6,6 +6,8 @@
 
 **The quantum-ready second authorization layer for institutional digital-asset custody.**
 
+<p align="center"><a href="https://skalenetwork.github.io/fermionwallet/"><b>🌐 skalenetwork.github.io/fermionwallet</b></a> — product site</p>
+
 Banks, qualified custodians, and enterprise treasuries already run the gold-standard stack: Gnosis Safe, policy engines, hardware keys, and regulated operations. FermionWallet does not replace that stack. It **hardens it** — adding a cryptographically independent second gate that sits in the execution path of every high-value transfer.
 
 If a signer is compromised, a policy is misconfigured, or classical signatures eventually fall to quantum computers, the transfer still does not move. Not until a separate, domain-bound, post-quantum authorization says yes.
