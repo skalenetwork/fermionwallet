@@ -557,7 +557,7 @@ A single transfer-shaped `PreApproval` struct cannot represent admin operations 
 1. `ADMIN` pre-approval for `setGuard(address(0))` + owner-signed Safe transaction, after `ADMIN_TIMELOCK` (works while the Safe is paused);
 2. the emergency de-guard path (Safe-governance-initiated, longer timelock, **no quantum key required**) — for the case where the XMSS key is lost or the verifier itself is buggy;
 3. for a Safe that has **never enrolled** (no key ever registered): `setGuard(address(0))` is always allowed. The Guard protects nothing for such a Safe, and without this a Safe that attached the Guard before enrolling — while it still had a fallback handler or module, so enrollment itself is refused — would be frozen forever.
-Neither path may depend on any component that the Guard can render unusable (in particular, path 2 must not require a quantum signature, and both paths must work while the Guard is paused).
+None of these paths may depend on any component that the Guard can render unusable (in particular, path 2 must not require a quantum signature, and paths 1 and 2 must work while the Safe is paused; a never-enrolled Safe cannot be paused).
 
 ### Emergency de-guard path — mechanism
 
@@ -579,8 +579,10 @@ The fallback (path 2) is implemented **in the Guard itself**, so it requires no 
        // 1. Then — before pause, before enrollment, before everything else:
        //    the emergency escape hatch may never be blocked by any other state.
        if (_isEmergencyEscapeCall(to, value, data, operation)) return;
-       //    (matches requestEmergencyDeGuard / cancelEmergencyDeGuard self-calls,
-       //     and setGuard(address(0)) once the emergency timelock has expired)
+       //    (matches the owner safety calls to the Guard — requestEmergencyDeGuard,
+       //     cancelEmergencyDeGuard, pauseSafe, requestUnpauseSafe, unpauseSafe,
+       //     revokePreApproval, cancelKeyRevocation — and setGuard(address(0)) once the
+       //     emergency timelock has expired; an escape call still increments the depth counter)
 
        // 2. Only THEN the Safe's own deny-all pause (never blocks the quantum-approved
        //    setGuard(address(0)) removal):
@@ -681,7 +683,7 @@ The Guard must maintain an explicit selector allowlist and deny everything else.
 - `transferFrom(address,address,uint256)` pulling from third parties,
 - any unknown or non-standard selector.
 
-Allowed selectors at enrollment: `transfer(address,uint256)` only, matched against a pre-approval. Each Safe may add selectors to its own permit-list through the ADMIN path — or remove them, `transfer` included, which then blocks `transfer` calls outright; every additional selector is attack surface.
+Allowed selectors at the Safe's first enrollment: `transfer(address,uint256)` only, matched against a pre-approval. Each Safe may add selectors to its own permit-list through the ADMIN path — or remove them, `transfer` included, which then blocks `transfer` calls outright; every additional selector is attack surface.
 
 **Allowlist storage and governance (resolved):** the deny-list above is **hardcoded** (immutable constants checked first — `approve`, `increaseAllowance`, `permit`, `transferFrom` can never be re-enabled by any governance action, only by a new Guard deployment). The permit-list is per-Safe policy state: `mapping(address safe => mapping(bytes4 selector => bool)) allowedSelectors`, initialized at the Safe's first enrollment to `{transfer}` only (registering a new key after an emergency key revocation does not reset it). Adding or removing a selector is a **policy change**, executed exactly like other policy mutations: an `ADMIN`-class pre-approval (hybrid dual signature + owner threshold + the mandatory `ADMIN_TIMELOCK`) targeting the Guard's `setSelectorPolicy(safe, selector, allowed)`. No EOA or Guard deployer can modify any Safe's allowlist. The permit-list is keyed by selector only (not target + selector); the PAYLOAD approval binds the exact target.
 
@@ -727,7 +729,7 @@ The following checks are the minimum correctness review for the FermionWallet gu
 11. If a module is enabled on the Safe, the tx guard is bypassed via `execTransactionFromModule`; the guard must detect enabled modules or a module guard must be installed. `enableModule` must be rejected unless this Guard is already wired as module guard, and remediation calls must remain possible.
 12. If a random address calls `checkTransaction` directly, it must revert (caller is not an enrolled Safe) so approvals cannot be burned by attackers.
 13. If the Safe tx targets the Safe itself (`setGuard`, `enableModule`, owner changes, any other self-call) or the Guard, it must be rejected unless explicitly quantum-authorized as an admin action.
-14. If `gasPrice != 0`, the guard must revert (refund drain protection; the MVP allows no refunds).
+14. If `gasPrice != 0`, the guard must revert (refund drain protection; the MVP allows no refunds) — escape-hatch calls included: this check comes before the escape hatch, or an owners-only escape call could pay the Safe's balance out as its refund.
 15. When recomputing the safeTxHash inside `checkTransaction`, the guard must use `nonce - 1`, because the Safe increments its nonce before invoking the guard.
 16. If the target call re-enters `Safe.execTransaction` (nested Safe tx), the guard's depth tracking must detect it and revert.
 17. If the Safe is paused, every `checkTransaction` for it must revert (deny-all, fail-closed) — except the escape-hatch calls and the quantum-approved `setGuard(address(0))` removal (no-brick).

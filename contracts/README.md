@@ -20,10 +20,19 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
   revocation and consumption. Abstract, like the registry.
 - `src/FermionWalletGuard.sol` — the Safe transaction guard and module guard;
   the only deployable contract (it contains the registry and the engine).
-- `script/Deploy.s.sol` — CREATE2 deployment of the Guard (env vars
+- `script/Deploy.s.sol` — CREATE2 deployment of the Guard through an
+  explicit call to the deterministic deployment proxy (env vars
   `MULTISEND_CALL_ONLY`, `ADMIN_TIMELOCK`, `EMERGENCY_TIMELOCK`,
   `MAX_BATCH_LEGS`, `MAX_COMMITMENT_QUEUE`, `SALT`; defaults 2 days,
-  14 days, 100, 16). `script/Demo.s.sol` drives the demo container.
+  14 days, 100, 16). It refuses out-of-range env values, zero caps and an
+  emergency timelock not above the admin timelock, is a no-op if the Guard
+  already exists, and reads every immutable back after deploying.
+  `script/Demo.s.sol` drives the demo container: `deploy()` (Safe v1.5.0,
+  2-of-3) for the standalone demo, `deployWallet()` (canonical Safe v1.4.1,
+  1-of-1) for the Safe{Wallet} stack, then `blocked`, `submitApproval` and
+  `execute` per payout.
+- `foundry.toml` pins solc 0.8.37, so a release tag rebuilds byte-identical
+  binaries.
 - `py/xmss_ref.py` — independent Python reference implementation
   (RFC 8391 keygen/sign/verify) used to generate the test vectors in
   `test/vectors/` (h = 4, 10). `py/gen_h20.py` generates the h = 20
@@ -36,6 +45,9 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
   zero-key rejection (through the registry), plus the Guard and engine suites.
 - `test/LegacySafeSignatures.t.sol` — contract owners co-signing on Safe
   v1.3.0, v1.4.1 and v1.5.0 (bytecode in `test/vectors/safe-v*`).
+- `test/Deploy.t.sol` — `Deploy.s.sol` end to end: the same CREATE2 address
+  on every target chain id (OP-stack ones included), idempotent re-runs,
+  immutables read back, and rejection of bad parameters.
 - `test/properties/` — fuzz properties of the Guard, a stateful invariant
   test against a reference model, and XMSS mutation properties.
 - `py/sign_digest.py`, `test/ffi/sign_batch.py` — test-only helpers that the

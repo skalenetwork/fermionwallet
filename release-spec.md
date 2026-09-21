@@ -49,9 +49,11 @@ A FermionWallet release is a set of versioned artifacts published together under
 | A8 | Documentation and product site | `*.md`, `site/` | GitHub, GitHub Pages | this repository |
 | A9 | Release notes | GitHub Release | GitHub Releases | §6.7 |
 | A10 | Demo container: local anvil chain, real Safe v1.5.0 (2-of-3), this release's Guard, simulated Ledger, web UI | `demo/Dockerfile` | `ghcr.io/skalenetwork/fermionwallet-demo:<tag>` (and `:latest` for non-prerelease tags), smoke-tested before push; digest in the release notes | `.github/workflows/release.yml` |
-| A11 | Safe{Wallet} demo: Compose stack running the open-source Safe{Wallet} UI, Client Gateway, Config Service and Transaction Service against A10 (`DEMO_MODE=wallet`: canonical Safe v1.4.1, 1-of-1), with FermionWallet as a listed Safe App | `demo/wallet/` | UI image `ghcr.io/skalenetwork/fermionwallet-demo-wallet:<tag>` (and `:latest`); release asset `fermionwallet-demo-wallet-<tag>.tar.gz` (Compose bundle whose `.env` pins both FermionWallet images by digest) plus its SHA-256; tested in headless Chrome before push (`demo/wallet/e2e`) | [demo/wallet/README](./demo/wallet/README.md) |
+| A11 | Safe{Wallet} demo: Compose stack running the open-source Safe{Wallet} UI, Client Gateway, Config Service and Transaction Service against A10 (`DEMO_MODE=wallet`: canonical Safe v1.4.1, 1-of-1), with FermionWallet as a listed Safe App | `demo/wallet/` | UI image `ghcr.io/skalenetwork/fermionwallet-demo-wallet:<tag>` (and `:latest` for non-prerelease tags); release asset `fermionwallet-demo-wallet-<tag>.tar.gz` (Compose bundle whose `.env` pins both FermionWallet images by digest) plus its SHA-256; tested in headless Chrome before push (`demo/wallet/e2e`) | [demo/wallet/README](./demo/wallet/README.md) |
 
 Leaf consumption is enforced by the registry's used-leaf bitmap inside the Guard; there is no separate stateful XMSS wrapper.
+
+`.github/workflows/release.yml` builds A3's release assets (the `fermionwallet-contracts-<tag>` `.tar.gz` and `.zip` with ABI, bytecode, immutable references, the full Foundry artifact, `MANIFEST.txt`, `foundry.toml` and `remappings.txt`, plus `SHA256SUMS`), A10 and A11, and publishes them on every `v*` tag or manual dispatch for an existing tag. A tag containing `-` (for example `v1.0.0-rc.1`) is published as a GitHub prerelease, and neither demo image gets `:latest` for it. For a tag that already has a release (a manual re-run), the workflow replaces the contract assets instead of creating a release, and the demo jobs add their release-note sections only if they are missing.
 
 ## 3. Versioning and compatibility
 
@@ -116,7 +118,7 @@ A release may not advance to the next stage until every gate for that stage pass
 - [ ] Gas: `test_gas_verify_h20` passes (verification ≤ 1.1M gas; last measured 736,700).
 - [ ] Integration test against a real Safe (v1.3.0 and v1.4.1): a pre-approval pinned to the `safeTxHash` of nonce N executes at nonce N, and the Guard's `getTransactionHash(..., nonce() - 1)` recomputation matches ([Guard: Production constraints](./fermionwallet-guard-module.md#production-constraints)).
 - [ ] Malformed MultiSend fuzzing (truncated header, overrunning `dataLength`, trailing bytes, more than `MAX_BATCH_LEGS`) reverts cheaply.
-- [ ] A test proves `requestEmergencyDeGuard` succeeds while the Guard is paused (emergency allow runs before the pause check).
+- [ ] A test proves `requestEmergencyDeGuard` succeeds while the Safe is paused (emergency allow runs before the pause check).
 - [ ] Module guard coverage tested on Safe 1.5+: `execTransactionFromModule` cannot bypass policy.
 - [ ] Every item in the Guard's "Virtual brain test against Safe semantics" has a named test.
 - [ ] Slither and `solhint` clean, or every finding triaged in the release notes.
@@ -145,7 +147,7 @@ A release may not advance to the next stage until every gate for that stage pass
 
 - [ ] Quantum-approved Guard removal succeeds after `ADMIN_TIMELOCK`, and the Safe (owner threshold) can revoke it during the delay without a quantum approval.
 - [ ] Owners-only emergency de-guard succeeds after `EMERGENCY_TIMELOCK` with the add-on service **offline** and **no** Ledger present ([Service deployment §5](./fermionwallet-gnosis-service-deployment.md#5-security--deployment-hardening-checklist)).
-- [ ] Emergency de-guard succeeds while the Guard is paused.
+- [ ] Emergency de-guard succeeds while the Safe is paused.
 
 ### G6 — External review (mainnet pilot and later)
 
@@ -169,7 +171,7 @@ A release may not advance to the next stage until every gate for that stage pass
 
 ### 6.2 Build
 
-1. Build every artifact from a clean checkout of the release commit, with pinned toolchains (Solidity compiler version, Foundry, Rust toolchain, Node.js, lockfiles).
+1. Build every artifact from a clean checkout of the release commit, with pinned toolchains (Solidity compiler version, Foundry, Rust toolchain, Node.js, lockfiles). For the contracts these pins are in the repository: solc 0.8.37 in `contracts/foundry.toml`, and Foundry v1.8.3 in both `release.yml` and `demo/Dockerfile` (bump them together).
 2. Contracts must build reproducibly: two independent builds produce identical bytecode. Record the bytecode hash in the tracking issue.
 
 ### 6.3 Test and review
@@ -298,7 +300,7 @@ State of the repository at the time of writing, against the artifacts in §2:
 | Artifact | State |
 |---|---|
 | A1 `XMSS` verifier | Implemented with tests and gas benchmarks; not audited |
-| A2 Registry and pre-approval engine | Implemented and tested (unit tests with a mock Safe, integration tests with a real Safe v1.5.0); not audited |
+| A2 Registry and pre-approval engine | Implemented and tested (unit tests with a mock Safe, integration tests with a real Safe v1.5.0, and owner co-signing by contract owners on Safe v1.3.0, v1.4.1 and v1.5.0); not audited |
 | A3 `FermionWalletGuard` | Implemented and tested, including a bytecode test that it has no upgrade path; not audited; not deployed on any public network |
 | A4 `deployments.json` | Format specified; file not yet created |
 | CREATE2 deployment script | `contracts/script/Deploy.s.sol` |

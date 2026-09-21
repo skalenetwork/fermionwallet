@@ -61,7 +61,7 @@ Each claim on the page and its source. Update this table when a claim is added o
 | 48-hour admin timelock; the owners (threshold) can revoke it; any single owner can revoke transfer/payload approvals | [ui-help.md](../ui-help.md#administrative-approvals-and-the-timelock) |
 | 14-day owners-only emergency removal; owners can cancel with a Safe transaction | [ui-help.md](../ui-help.md#emergency-guard-removal-owners-only) |
 | One approval per batch of up to 100 transfers | [ui-help.md](../ui-help.md#approving-a-batch-multisend) |
-| `approve`, `permit`, `transferFrom` rejected | [fermionwallet-guard-module.md](../fermionwallet-guard-module.md) |
+| `approve`, `permit`, `transferFrom` rejected | [fermionwallet-guard-module.md](../fermionwallet-guard-module.md#erc-20-selector-policy-allowance-exfiltration) |
 | Safe v1.3.0+; no modules, or module guard on 1.5+ | [ui-help.md](../ui-help.md#adding-the-guard-to-an-existing-safe) |
 | Lattice schemes cost tens of millions of gas on-chain | [fermionwallet-guard-module.md](../fermionwallet-guard-module.md) |
 | Exportable audit log; printable ceremony record | [ui-help.md](../ui-help.md#audit-log-and-export) |
@@ -95,7 +95,7 @@ Sections appear in this order. Each has one job.
 
 - Audience tag, headline, one-sentence subheading, two buttons, three reassurance points, one product screenshot.
 - The headline names the outcome ("quantum-safe second signature") and the product it attaches to (Safe).
-- The reassurance points must remain true: no migration, open source (MIT), NIST SP 800-208 signatures.
+- The reassurance points must remain true: no migration, open source (MIT / LGPL-3.0), NIST SP 800-208 signatures.
 
 ### 5.2 FAQ requirements
 
@@ -144,8 +144,8 @@ The FAQ must answer at least: whether assets move; what happens if the Ledger is
 
 ## 8. Build and deployment
 
-- Source: `site/index.html` plus `assets/fermionwallet-logo.svg` and `assets/ui/`.
-- Workflow: [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) assembles `_site/` (page, logo, UI mockups, the custom Safe App from `app/` served at `/app/`, `.nojekyll`) and deploys with `actions/upload-pages-artifact` and `actions/deploy-pages`.
+- Source: `site/index.html` plus `assets/fermionwallet-logo.svg`, `assets/fermionwallet-icon.svg` (favicon, and the Safe App's `logo.svg`), `assets/og-image.png` and `assets/ui/`.
+- Workflow: [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) assembles `_site/` (page, logo, icon, social preview image, UI mockups, the custom Safe App from `app/` served at `/app/`, `.nojekyll`) and deploys with `actions/upload-pages-artifact` and `actions/deploy-pages`.
 - Triggers: manual (`workflow_dispatch`) and any push to `main` that changes `site/**`, `app/**`, `assets/**` or the workflow itself.
 - Repository setting: **Settings → Pages → Source: GitHub Actions**.
 - A deployment is complete when the live URL serves the new version (for example, grep the new headline).
@@ -169,7 +169,7 @@ Every change to the site must pass these before merge:
 | S1 | Early-access channel | Public, pre-filled GitHub issue. A private email or form would suit institutional visitors better |
 | S2 | Analytics | None. Needed to measure conversion; a privacy-friendly tool (for example Plausible) is the least invasive option |
 | S3 | Custom domain | Served from `skalenetwork.github.io`. The deployment spec names `app.fermionwallet.io` for the Safe App; a matching product domain is undecided |
-| S4 | Social preview image | Open Graph image is an SVG, which many platforms don't render. A 1200×630 PNG is needed |
+| S4 | Social preview image | Resolved: `assets/og-image.png`, 1200×630 PNG |
 | S5 | Theme toggle | Theme follows the operating system only; no visible switch |
 
 ## 11. Success measures
