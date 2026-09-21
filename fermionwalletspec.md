@@ -18,8 +18,8 @@
 +---------------------+       +---------------------------+
 | Treasury / Ops      |       | FermionWallet Add-on     |
 | UI / Backend        | ----> | Service                   |
-+---------------------+       | - key generation         |
-                                | - pre-approval creation  |
++---------------------+       | - key ceremony (Ledger)  |
+                                | - pre-approval relaying  |
                                 | - policy validation      |
                                 +------------+------------+
                                              |
@@ -34,8 +34,8 @@
                               +---------------------------+
                               | Safe Guard                |
                               | - validates tx metadata   |
-                              | - checks quantum sig      |
-                              | - checks policyHash       |
+                              | - consumes a matching     |
+                              |   pre-approval            |
                               | - reverts if invalid      |
                               +------------+------------+
                                            |
@@ -71,7 +71,7 @@ Important implementation note: a smart contract does not act as a normal EOA sig
 
 Enterprise wallets and treasury teams need stronger defense against future cryptographic risk while preserving their existing Safe workflows. Standard Gnosis Safe protection is excellent for multisig governance, but it does not provide a future-proof quantum-security layer.
 
-FermionWallet adds a second approval path that is tied to a quantum-safe signing key generated in JavaScript and validated against a registry and policy engine.
+FermionWallet adds a second approval path that is tied to a quantum-safe XMSS signing key generated on the Quantum Administrator's Ledger and verified on-chain against the key registered for the Safe.
 
 ## 3. MVP goal
 
@@ -134,36 +134,38 @@ The MVP supports:
 - nonce replay protection
 - policyHash-based verification
 
+Only time-bound approvals, replay protection and the ERC-20 selector deny-list / permit-list are enforced on-chain today. Token and recipient allowlists and amount caps are enforced off-chain by the add-on service; the Guard stores `policyHash` as part of the signed approval but does not check it against an on-chain policy.
+
 ## 6. User flows
 
 ### 6.1 Create quantum key
 
-A user generates a quantum-safe key in JavaScript, then registers it with the FermionWallet registry using the public key hash and a valid quantum signature.
+The Quantum Administrator generates an XMSS key on the Ledger. The Safe owners co-sign its public key (root and SEED), the Ledger attests it, and the Administrator registers it on-chain with `registerQuantumKey` (see [quantum-key-registry.md](./quantum-key-registry.md)).
 
 ### 6.2 Create transfer pre-approval
 
 Before a transfer, the client creates a pre-approval containing:
 - token address
-- spender or recipient
+- recipient
 - amount
 - validFrom
 - validTo
 - nonce
 - quantumKeyId
+- xmssLeafIndex
 - policyHash
+- txHash (optional: pins the approval to one Safe transaction)
 
-The pre-approval is signed by the JS-generated quantum key.
+The Ledger signs it with both hybrid halves (ECDSA and XMSS) over one EIP-712 digest, and the relayer submits it to `createPreApproval`, which verifies both halves on-chain.
 
 ### 6.3 Transfer execution
 
 The user submits the Safe transfer as usual. Before final execution, FermionWallet checks:
-- Safe approval is present
-- pre-approval is valid
-- quantum signature is valid
-- nonce is unused
-- amount is within policy bounds
-- recipient is allowed
-- approval has not expired or been revoked
+- Safe approval is present (the Safe checks owner signatures before calling the Guard)
+- a live pre-approval matches the transfer: token, recipient and exact amount, or the pinned Safe transaction hash
+- the pre-approval is unused, not revoked, inside its validity window, and its key is not revoked
+
+The quantum signature was already verified when the pre-approval was created. Amount caps and recipient allowlists are not checked on-chain yet.
 
 Only then does the transfer proceed.
 
@@ -176,13 +178,12 @@ The validation sequence is:
 2. The Safe verifies the owners’ signatures as part of the normal Safe execution flow.
 3. If a guard is set, the Safe calls the configured Guard through `checkTransaction` before executing the target call.
 4. The Guard reads the transaction metadata: `to`, `value`, `data`, `operation`, `safeTxGas`, `baseGas`, `gasPrice`, `gasToken`, `refundReceiver`, `signatures`, and `msgSender`.
-5. The Guard classifies the target call and dispatches by pre-approval class: ERC-20 `transfer` → `TRANSFER`; native ETH or allowlisted call → `PAYLOAD` (exact-payload binding); Safe self-call (`setGuard`, modules, owners) → `ADMIN` (exact payload + mandatory timelock). Delegatecall always reverts. See the Guard spec's "Pre-approval classes".
-6. The Guard resolves the relevant FermionWallet pre-approval and verifies the matching policyHash, nonce, amount, token, and recipient.
-7. The Guard verifies that the stored quantum signature matches the registered public key and the exact Safe transaction payload.
-8. The Guard checks that the approval is active, not expired, not revoked, and not replayed.
-9. The Guard confirms the transaction amount and recipient are within the authorized policy bounds.
-10. If all checks pass, the Guard returns and the Safe continues execution.
-11. If any check fails, the Guard reverts and execution stops before the target call executes.
+5. The Guard classifies the target call and dispatches by pre-approval class: ERC-20 `transfer` → `TRANSFER`; native ETH or permit-listed call → `PAYLOAD` (exact-payload binding); Safe self-call (`setGuard`, modules, owners) or Guard policy call → `ADMIN` (exact payload + mandatory timelock). Delegatecall reverts unless the target is the pinned `MultiSendCallOnly` (a batch, matched as `PAYLOAD`). See the Guard spec's "Pre-approval classes".
+6. The Guard looks up a matching pre-approval: first by the pinned `safeTxHash`, then by the class's fields (token, recipient and exact amount for `TRANSFER`; target, value and calldata hash otherwise).
+7. The Guard checks that the approval is unused, not revoked, inside its validity window, and that its key is not revoked. Signatures are not re-verified: both halves were verified when the approval was created.
+8. The Guard marks the approval used, atomically with execution.
+9. If all checks pass, the Guard returns and the Safe continues execution.
+10. If any check fails, the Guard reverts and execution stops before the target call executes.
 
 This ensures that Gnosis validates FermionWallet authorization through the Safe Guard contract, not by treating the smart contract as a normal EOA signer.
 
@@ -199,12 +200,12 @@ The actual Safe Guard model is defined by the Gnosis Safe GuardManager. The impo
 7. If the guard reverts, the Safe transaction fails before execution reaches the destination contract.
 
 For FermionWallet, the Guard logic is:
-- decode the target transaction and confirm it is an allowable ERC-20 `transfer` call,
+- decode the target transaction and classify it (ERC-20 `transfer`, native send, permit-listed call, batch, or administrative self-call),
 - extract the target token, destination, amount, and calldata selector,
 - match the transaction against the stored FermionWallet pre-approval,
-- require the quantum signature to validate against the public key stored in the FermionWallet registry,
+- rely on the quantum signature check done at creation, against the public key stored in the FermionWallet registry,
 - ensure the approval is within `validFrom` / `validTo`, not consumed or revoked, and not replayed,
-- require the call to comply with Safe policy (allowlist, max amount, token whitelist, chain binding, policyHash consistency),
+- enforce the selector deny-list and the Safe's permit-list (amount caps, token and recipient allowlists are not enforced on-chain yet),
 - return success only when all checks pass.
 
 This works because the Guard sits in the Safe execution path, so it can veto execution even after the Safe has validated owner signatures. The Guard does not add a new EOA signer; it adds a second policy gate enforced by contract logic.
@@ -221,6 +222,8 @@ For this design, the Guard is the preferred integration point because it matches
 ## Critical security hardening requirements
 
 The initial draft of the MVP had several major security gaps. The following requirements are mandatory before production use.
+
+Current status against the code: the on-chain policy limits in items 9, 16 and 20 (amount caps, token and recipient allowlists, per-token budgets) are not implemented yet and are enforced only off-chain; the Safe nonce in item 4 is bound only when an approval is pinned to a `safeTxHash`; and item 21's "`transfer` only" is the default permit-list, which each Safe can extend through a timelocked `ADMIN` approval.
 
 1. No claim of real post-quantum security without a real PQ signature scheme
    - The MVP must not describe JavaScript HMAC-based signing as a quantum-safe mechanism.
@@ -553,7 +556,7 @@ async function createPreApproval({
 })
 ```
 
-- Returns: pre-approval object with both hybrid signature halves (`ecdsaSignature` from the Ledger, `xmssSignature` from the XMSS signer) and status; the relayer submits both to the on-chain `createPreApproval`
+- Returns: pre-approval object with both hybrid signature halves (`ecdsaSignature` and `xmssSignature`, both from the Ledger in one confirmation) and status; the relayer submits both to the on-chain `createPreApproval`
 
 #### 5. `validatePreApproval(preApprovalId)`
 

@@ -10,8 +10,8 @@
 - Node.js runtime
 - ethers.js or viem
 - `@ledgerhq/hw-app-eth` + `@ledgerhq/hw-transport-node-hid` (backend) / `@ledgerhq/hw-transport-webhid` (Safe App key ceremony) for Ledger EIP-712 signing
-- `@safe-global/safe-apps-sdk` for the Safe App UI, including submitting the `registerQuantumKey` Safe transaction
-- crypto module for key generation and HMAC signing
+- `@safe-global/safe-apps-sdk` for the Safe App UI (`registerQuantumKey` itself is an ordinary transaction sent by the Administrator's relayer account, not a Safe transaction)
+- crypto module for hashing and ceremony-code derivation (no key generation or signing: keys live only on the Ledger)
 - express or similar HTTP server framework
 - zod or Joi for validation if used in a backend implementation
 
@@ -21,8 +21,8 @@ The FermionWallet add-on service is the policy and validation layer that sits be
 
 ## Responsibilities
 
-- generates quantum keys in JavaScript
-- creates pre-approvals for transfers
+- drives quantum key generation on the Administrator's Ledger
+- relays pre-approvals for transfers to the chain
 - validates quantum signatures and policy metadata
 - checks whether a proposed transfer meets policy constraints
 - confirms whether a transfer is eligible for second authorization
@@ -30,12 +30,11 @@ The FermionWallet add-on service is the policy and validation layer that sits be
 
 ## Core responsibilities in practice
 
-- create a quantum key pair in JavaScript
-- register the public key hash and token binding
+- run the key ceremony that registers the Ledger's XMSS public key (root, SEED, tree height, parameter set) in the on-chain registry
 - create a time-bound, nonce-protected pre-approval
 - validate expiry, nonce, and policyHash
-- return authorization status to the Safe Guard
-- orchestrate the Quantum Administrator's Ledger flow: compose the EIP-712 pre-approval payload, obtain on-device confirmation, and release the XMSS signature only against a matching, fresh Ledger signature (see `pre-approval-engine.md`)
+- show authorization status in the Safe App and dashboard (the Guard never calls the service: it reads only on-chain state)
+- orchestrate the Quantum Administrator's Ledger flow: compose the EIP-712 pre-approval payload, obtain on-device confirmation, and relay both hybrid halves (ECDSA and XMSS), which the device releases together (see `pre-approval-engine.md`)
 
 ## User experience / UI integration
 
@@ -46,7 +45,7 @@ The Safe{Wallet} UI does not natively understand Guard requirements, so quantum-
 A Safe App — an iframe dApp running inside the Safe{Wallet} interface, built with `@safe-global/safe-apps-sdk` — reads the transaction queue via the Safe Transaction Service API and overlays quantum status on every pending transaction:
 
 - 🟡 **Quantum authorization required** — Safe owners have signed, but no matching pre-approval exists yet. The row shows an **"Authorize with quantum key"** action that opens the add-on flow and creates the signed, time-bound pre-approval.
-- 🟢 **Ready to execute** — a valid, unexpired, unused pre-approval matches the exact transaction payload (token, recipient, amount, nonce, policyHash, chain).
+- 🟢 **Ready to execute** — a valid, unexpired, unused pre-approval matches the transaction the way the Guard matches it: the exact Safe transaction hash for a pinned approval, otherwise the token, recipient and amount (for `PAYLOAD`/`ADMIN` classes: target, value and calldata hash) on this Safe and chain.
 - ⛓️ **Blocked by earlier nonce** — quantum-approved, but a lower-nonce Safe transaction is still pending; the Safe executes strictly in nonce order, so this row cannot execute yet no matter how green it is.
 - 🔴 **Blocked** — pre-approval expired, revoked, consumed, or policy-mismatched, with the specific reason displayed.
 
@@ -105,7 +104,7 @@ When the threshold is reached, the app **simulates first** (`eth_call`), showing
 The contract verifies the owner threshold via the Safe's own `checkSignatures`, verifies the attestation, consumes `registryNonce`, and sets the key **`Active`**. (A first registration requires that the Safe has no Active key; replacing a key is `rotateQuantumKey`, which moves the prior key to `Rotated`.) Neither side can act alone: no owner quorum → no activation; no hardware-attested root → owner signatures verify nothing.
 
 **Stage E — Proof of life.**
-Before declaring success, the app performs an end-to-end check: (1) reads the root back from the chain and compares it to the locally held value — detecting any RPC/frontend tampering after the fact; (2) signs a **test pre-approval with leaf index 0** for a zero-value marker payload and verifies it via `eth_call` against the on-chain XMSS verifier. One leaf out of ~1M is spent proving the whole chain — Ledger → signature → verifier → registry — actually works, before real funds depend on it. The success screen shows: active ceremony code, activation tx hash, leaves remaining, and a printable **ceremony record** (root, code, participants, timestamps) for the compliance file.
+Before declaring success, the app performs an end-to-end check: (1) reads the root back from the chain and compares it to the locally held value — detecting any RPC/frontend tampering after the fact; (2) signs a **test pre-approval with leaf index 0** for a zero-value marker payload and verifies it with an `eth_call` simulation of `createPreApproval`, which runs the on-chain ECDSA and XMSS checks. One leaf out of ~1M is spent proving the whole chain — Ledger → signature → verifier → registry — actually works, before real funds depend on it. The success screen shows: active ceremony code, activation tx hash, leaves remaining, and a printable **ceremony record** (root, code, participants, timestamps) for the compliance file.
 
 **Ongoing health panel.** Active root fingerprint, leaf usage bar from the on-chain bitmap with warnings at 80/90/95% exhaustion, registration date, and a "Rotate key" action that re-runs Stages A–E with the additional old-key XMSS signature proof required by `rotateQuantumKey`.
 
@@ -129,7 +128,7 @@ The "Approvals" tab lists every Safe transaction in 🟡 state across the enroll
 
 - 🆕 first-time recipient (never before received from this Safe)
 - 📈 amount above the Safe's rolling 30-day median by >N×
-- ⛔ selector the Guard will deny anyway (`approve`, `transferFrom`, delegatecall `MultiSend`) — shown as unapprovable, with the reason, so the Administrator never wastes a leaf on a doomed transaction
+- ⛔ call the Guard will deny anyway (`approve`, `transferFrom`, `increaseAllowance`, `permit`, a selector not on the Safe's permit-list, or a delegatecall to anything other than `MultiSendCallOnly`) — shown as unapprovable, with the reason, so the Administrator never wastes a leaf on a doomed transaction
 - ⏱️ Safe owner signatures incomplete (approving now is premature; the payload could still be replaced in the queue)
 
 **Stage B — Independent payload verification.**
@@ -138,12 +137,12 @@ Opening a row shows the transaction reconstructed from **two independent sources
 **Stage C — Hardware review and sign.**
 The device's leaf counter is the reservation: the secure element reserves the leaf index and commits the increment to NVRAM **before** releasing the signature (a crash between commit and release wastes one leaf; the reverse order would risk reuse — see [Ledger XMSS app](./ledger-xmss-app.md)). The add-on service mirrors the index only as an advisory cache.
 
-`SIGN_PREAPPROVAL` — the Ledger screen renders token, recipient, amount, window, Safe nonce, and leaf index; physical confirmation releases **both** hybrid halves from the device: the EIP-712 ECDSA signature and the XMSS signature, computed inside the secure element.
+`SIGN_PREAPPROVAL` — the Ledger screen renders token, amount, recipient, validity window, Safe address and chain, the binding (pinned `txHash` or "not pinned"), `policyHash`, and leaf index — no Safe nonce, because the signed payload does not contain one; physical confirmation releases **both** hybrid halves from the device: the EIP-712 ECDSA signature and the XMSS signature, computed inside the secure element.
 
 The device screen is the second verification surface: what the Administrator confirms on hardware is exactly what the Guard will enforce. There is no raw-hash path.
 
 **Stage D — Submit, simulate, confirm.**
-The app simulates `createPreApproval` via `eth_call` (surfacing decoded custom errors — e.g. `LeafAlreadyUsed`, `InvalidWindow`, `AdminTimelockNotRespected`, `WrongQuantumKey`, `TxHashAlreadyPinned`, `CommitmentQueueFull` — before gas is spent), submits, and waits for confirmation. On inclusion the queue row flips 🟡→🟢, Safe{Wallet} simulation starts passing, and operators are notified: *"Tx #42 quantum-authorized — executable until 18:40 UTC."* If the Safe transaction is edited or replaced after approval, its hash changes, the pre-approval no longer matches, and the row drops back to 🟡 with an explanation — approvals bind to exact payloads, never to intents.
+The app simulates `createPreApproval` via `eth_call` (surfacing decoded custom errors — e.g. `LeafAlreadyUsed`, `InvalidWindow`, `AdminTimelockNotRespected`, `WrongQuantumKey`, `TxHashAlreadyPinned`, `CommitmentQueueFull` — before gas is spent), submits, and waits for confirmation. On inclusion the queue row flips 🟡→🟢, Safe{Wallet} simulation starts passing, and operators are notified: *"Tx #42 quantum-authorized — executable until 18:40 UTC."* If the Safe transaction is edited or replaced after approval, a pinned pre-approval no longer matches (the Safe transaction hash changed) and the row drops back to 🟡 with an explanation. An unpinned (field-matched) pre-approval still matches any Safe transaction with the same token, recipient and amount, so the UI flags that case too — approvals bind to exact fields, never to intents.
 
 **Stage E — Deny, with the same weight as approve.**
 A **"Deny"** action records a Ledger-signed denial (off-chain, no leaf spent), notifies the operators with the Administrator's stated reason, and pins the row 🔴 in every dashboard. Denials enter the same audit log as approvals — a second-authorization system where refusals are invisible trains operators to route around the Administrator.

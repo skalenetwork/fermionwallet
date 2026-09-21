@@ -38,11 +38,11 @@ No signature exists until all eight screens are traversed and the decision scree
 
 Denying produces a Ledger-signed refusal that is as auditable as an approval but touches no XMSS state: the signature is plain ECDSA over the denial record (payload hash + reason hash), the leaf counter never moves, and the final screen states the unchanged counter explicitly. The reason is entered in the app (required, free text + quick-picks) before the device flow starts; the device displays it so you sign what the audit log will say.
 
-## Key generation (`GET_XMSS_ROOT`) — ceremony Stage B
+## Key generation (`GEN_XMSS_KEY`) — ceremony Stage B
 
 ![Key generation](./assets/ui/ledger/ledger-keygen.svg)
 
-Five screens: intent (parameter set + lifetime), the amber **NO BACKUP** acknowledgment (the key is intentionally not derivable from the recovery phrase — restoring a seed would reset the leaf counter and enable reuse forgery), tree-construction progress (not shown; cancellable until complete), root review with the **6-word ceremony code rendered by the secure element**, export confirmation (only the root, public SEED, height and parameter set leave the device — the public SEED is required on-chain to verify signatures), and the key attestation (`SIGN_KEY_ATTESTATION`): the device signs the registry's `QuantumKeyAttestation` for the shown Safe with its `quantumAdmin` key, filling the key fields itself so the host can't substitute a root. The app holds up to four keys: generation always fills a free slot and never touches an existing key, and every screen header names the key (`Key 2 · orbit velvet`). Reading a key back replays screens 4–5 only; attestation is repeated per Safe.
+Six screens: intent (parameter set + lifetime), the amber **NO BACKUP** acknowledgment (the key is intentionally not derivable from the recovery phrase — restoring a seed would reset the leaf counter and enable reuse forgery), tree-construction progress (not shown; cancellable until complete), root review with the **6-word ceremony code rendered by the secure element**, export confirmation (only the root, public SEED, height and parameter set leave the device — the public SEED is required on-chain to verify signatures), and the key attestation (`SIGN_KEY_ATTESTATION`): the device signs the registry's `QuantumKeyAttestation` for the shown Safe with its `quantumAdmin` key, filling the key fields itself so the host can't substitute a root. The app holds up to four keys: generation always fills a free slot and never touches an existing key, and every screen header names the key (`Key 2 · orbit velvet`). Reading a key back (`GET_XMSS_ROOT`) replays screens 4–5 only; attestation is repeated per Safe.
 
 ## Rotation (`SIGN_ROTATION`) — amber frames
 

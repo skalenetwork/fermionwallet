@@ -139,7 +139,7 @@ Full design: [`fermionwalletspec.md`](./fermionwalletspec.md)
 - Transaction-guard *and* module-guard coverage so `execTransactionFromModule` cannot walk around the gate
 - Fail-closed pause, time-locked unpause, time-locked emergency de-guard (so a bug cannot brick client funds)
 - Non-upgradeable Guard; new code ships as a new Guard set by Safe governance
-- Selector allowlist: `transfer` and documented wrap/unwrap only
+- Selector allowlist: `transfer` only by default; each Safe can add other selectors only through a timelocked admin approval, and `approve`, `increaseAllowance`, `permit` and `transferFrom` can never be allowed
 
 Details live in [`fermionwallet-guard-module.md`](./fermionwallet-guard-module.md).
 
@@ -147,7 +147,7 @@ Details live in [`fermionwallet-guard-module.md`](./fermionwallet-guard-module.m
 
 ## Status
 
-MVP specification and a JavaScript prototype of key, policy, and pre-approval flows. The Guard contract is specified against the official Safe `ITransactionGuard` interface.
+The Solidity contracts are implemented and tested: the `FermionWalletGuard` (transaction guard and module guard, built on the official Safe `ITransactionGuard` / `IModuleGuard` interfaces) with its Quantum Key Registry, Pre-approval Engine and XMSS verifier. They are not audited and not deployed on any public network. The Ledger app is specified but not built yet (the demos use a simulated Ledger). The repository also keeps an early JavaScript prototype of the key, policy, and pre-approval flows (below).
 
 This is early. The category is not.
 

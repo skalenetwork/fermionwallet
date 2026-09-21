@@ -55,7 +55,7 @@ Each claim on the page and its source. Update this table when a claim is added o
 | Installs as a Safe Guard; owners, threshold and history unchanged | [ui-help.md](../ui-help.md#adding-the-guard-to-an-existing-safe) |
 | Four setup steps, about 30 minutes | [ui-help.md](../ui-help.md#adding-the-guard-to-an-existing-safe) |
 | XMSS, RFC 8391, NIST SP 800-208 | [fermionwallet-guard-module.md](../fermionwallet-guard-module.md) |
-| 999,247 gas per verification at h = 20 | [contracts/README.md](../contracts/README.md#measured-gas) |
+| 736,700 gas per verification at h = 20 | [contracts/README.md](../contracts/README.md#measured-gas) |
 | About 1M approvals per key (2^20 leaves) | [fermionwallet-guard-module.md](../fermionwallet-guard-module.md) |
 | Tested at h = 4, 10, 20 against an independent reference | [contracts/README.md](../contracts/README.md) |
 | 48-hour admin timelock; the owners (threshold) can revoke it; any single owner can revoke transfer/payload approvals | [ui-help.md](../ui-help.md#administrative-approvals-and-the-timelock) |
@@ -145,8 +145,8 @@ The FAQ must answer at least: whether assets move; what happens if the Ledger is
 ## 8. Build and deployment
 
 - Source: `site/index.html` plus `assets/fermionwallet-logo.svg` and `assets/ui/`.
-- Workflow: [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) assembles `_site/` (page, logo, UI mockups, `.nojekyll`) and deploys with `actions/upload-pages-artifact` and `actions/deploy-pages`.
-- Triggers: manual (`workflow_dispatch`) and any push to `main` that changes `site/**`, `assets/**` or the workflow itself.
+- Workflow: [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) assembles `_site/` (page, logo, UI mockups, the custom Safe App from `app/` served at `/app/`, `.nojekyll`) and deploys with `actions/upload-pages-artifact` and `actions/deploy-pages`.
+- Triggers: manual (`workflow_dispatch`) and any push to `main` that changes `site/**`, `app/**`, `assets/**` or the workflow itself.
 - Repository setting: **Settings → Pages → Source: GitHub Actions**.
 - A deployment is complete when the live URL serves the new version (for example, grep the new headline).
 

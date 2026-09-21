@@ -34,7 +34,7 @@ Three counters exist (the Ledger secure-element counter — authoritative for th
 3. **Resync before every signature.** The service reads the highest used index and bitmap state from chain before releasing a signature, and refuses to sign at an index ≤ the highest on-chain used index.
 4. **Monotonicity is local per counter.** The Ledger secure-element counter never decrements, even if the chain shows gaps; the service's advisory mirror never resets from a backup — a restored-from-backup service must resync from chain and skip forward past its own recorded maximum plus a safety margin.
 5. **Desync alarms.** If the service observes an on-chain used index it did not release, that is a key-compromise indicator: page the Administrator, pause the engine (fail-closed), and initiate rotation.
-- When the index space nears exhaustion, the Administrator rotates to a new XMSS root with old-key + new-key signature proofs.
+- When the index space nears exhaustion, the Administrator rotates to a new XMSS root with `rotateQuantumKey`: owner co-signatures, the Ledger's attestation of the new key, and an XMSS possession proof signed by the old key (one final old-key leaf).
 
 ## Quantum Administrator hardware: Ledger (the only hardware module)
 
@@ -103,9 +103,9 @@ At execution (inside the Guard's `checkTransaction` / `checkModuleTransaction`):
 
 ### Tier-2 FIFO queue semantics
 
-Field-matched (`txHash == bytes32(0)`) approvals share a bounded FIFO per commitment (OpenZeppelin `DoubleEndedQueue`, cap `MAX_COMMITMENT_QUEUE`). Permanently dead entries — used, revoked, expired, or tied to a revoked key — are popped from the front on every create and every consume, so they never count toward the cap and cannot jam the queue. A not-yet-valid approval (`validFrom` in the future) is never popped: consumption takes the first currently-valid entry, and the scheduled approval remains usable when its window opens.
+Field-matched (`txHash == bytes32(0)`) approvals share a bounded FIFO per commitment (OpenZeppelin `DoubleEndedQueue`, cap `MAX_COMMITMENT_QUEUE`). Permanently dead entries — used, revoked, expired, or tied to a revoked key — are popped from the front on every create and every consume; when a create finds the queue at the cap, it also removes dead entries from the rest of the queue (for example behind a scheduled approval at the head), keeping the order of the live ones. So dead entries never count toward the cap and cannot jam the queue. A not-yet-valid approval (`validFrom` in the future) is never popped: consumption takes the first currently-valid entry, and the scheduled approval remains usable when its window opens.
 
-Pinned (Tier 1) approvals live in `approvalByTxHash[safe][safeTxHash]` instead; a pin can be replaced only after its approval has expired or been revoked.
+Pinned (Tier 1) approvals live in `approvalByTxHash[safe][safeTxHash]` instead; a pin can be replaced only after its approval can never execute — expired, revoked, or created under a since-revoked key. A used pin (that Safe transaction already executed) is never replaced; otherwise creation reverts with `TxHashAlreadyPinned`.
 
 ## Design intent
 
