@@ -25,10 +25,10 @@ if [ "$DEMO_MODE" = "wallet" ]; then
   echo "[demo] installing Safe v1.4.1 at canonical addresses ..."
   python3 /app/demo/wallet/install_safe_contracts.py
   echo "[demo] deploying the demo Safe (SafeL2 1.4.1) + FermionWalletGuard + registering XMSS key ..."
-  SETUP="setupWallet()"
+  SETUP="deployWallet()"
 else
   echo "[demo] deploying Safe v1.5.0 + FermionWalletGuard + registering XMSS key ..."
-  SETUP="setup()"
+  SETUP="deploy()"
 fi
 forge script script/Demo.s.sol:Demo -s "$SETUP" \
   --rpc-url http://127.0.0.1:8545 --broadcast -vv | grep -E "DEMO_READY|Error" || true

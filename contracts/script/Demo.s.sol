@@ -23,8 +23,8 @@ contract DemoToken is ERC20("Demo USD", "dUSD") {
 
 /// Self-contained demo driver, executed by the container against a local anvil.
 /// Entry points (forge script -s):
-///   setup()            deploy Safe v1.5.0 (2-of-3) + Guard, register the XMSS key, set the Guard
-///   setupWallet()      same on the canonical Safe v1.4.1 (L2, 1-of-1) for the Safe{Wallet} stack
+///   deploy()           deploy Safe v1.5.0 (2-of-3) + Guard, register the XMSS key, set the Guard
+///   deployWallet()     same on the canonical Safe v1.4.1 (L2, 1-of-1) for the Safe{Wallet} stack
 ///   blocked(uint256)   SIMULATION: owner-signed transfer with NO quantum approval → guard revert
 ///   submitApproval(...) relay a pre-approval the (simulated) Ledger signed: ECDSA + XMSS halves
 ///   execute(uint256)   owner-signed execTransaction for that payout → allowed by the Guard
@@ -67,9 +67,9 @@ contract Demo is Script {
     bytes32 internal xmssRoot;
     bytes32 internal xmssSeed;
 
-    // ═════════════════════════════ setup ════════════════════════════════════
+    // ═════════════════════════════ deploy ═══════════════════════════════════
 
-    function setup() external {
+    function deploy() external {
         vm.startBroadcast(DEPLOYER_PK);
         Safe singleton = new Safe();
         SafeProxyFactory factory = new SafeProxyFactory();
@@ -88,7 +88,7 @@ contract Demo is Script {
     /// the real Safe{Wallet} UI, Client Gateway and Transaction Service recognise the
     /// Safe. SafeL2 singleton (the Transaction Service indexes L2 events), 1-of-1 owner
     /// so a single browser wallet can sign and execute.
-    function setupWallet() external {
+    function deployWallet() external {
         address[] memory owners = new address[](1);
         owners[0] = vm.addr(OWNER1_PK);
         _setup(SAFE_L2_141, SAFE_PROXY_FACTORY_141, MULTI_SEND_CALL_ONLY_141, owners, 1);
