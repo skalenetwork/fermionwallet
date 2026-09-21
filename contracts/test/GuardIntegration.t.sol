@@ -1461,6 +1461,36 @@ contract GuardIntegrationTest is Test {
         }
         assertFalse(guard.getPreApproval(scheduled).used);
     }
+
+    // ═══ Regression: two bad-posture remediations must not block each other ═══
+
+    /// A Safe can reach "fallback handler AND unguarded module" legitimately: enroll
+    /// with a clean posture, install a handler and a module while still unguarded,
+    /// then attach the Guard. Each remediation used to be exempt only from its own
+    /// posture check, so disableModule died on the handler and setFallbackHandler(0)
+    /// on the module — nothing but a full Guard removal could fix the posture.
+    function test_PostureRemediations_DoNotDeadlockEachOther() public {
+        address module = makeAddr("module");
+        // Safe storage: slot 1 = modules linked list (SENTINEL → module → SENTINEL).
+        vm.store(address(safe), keccak256(abi.encode(address(1), uint256(1))), bytes32(uint256(uint160(module))));
+        vm.store(address(safe), keccak256(abi.encode(module, uint256(1))), bytes32(uint256(1)));
+        vm.store(address(safe), FALLBACK_SLOT, bytes32(uint256(uint160(makeAddr("handler")))));
+        assertTrue(safe.isModuleEnabled(module));
+
+        bytes memory disable = abi.encodeWithSignature("disableModule(address,address)", address(1), module);
+        bytes memory clear = abi.encodeWithSignature("setFallbackHandler(address)", address(0));
+        _createAdmin(address(safe), keccak256(disable), 1);
+        _createAdmin(address(safe), keccak256(clear), 2);
+        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
+
+        _safeExec(address(safe), 0, disable, Enum.Operation.Call);
+        _safeExec(address(safe), 0, clear, Enum.Operation.Call);
+        assertFalse(safe.isModuleEnabled(module));
+
+        _createTransfer(recipient, 1 ether, 3, bytes32(0));
+        _safeExec(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)), Enum.Operation.Call);
+        assertEq(token.balanceOf(recipient), 1 ether);
+    }
 }
 
 /// Re-enters Safe.execTransaction twice from inside an approved outer transaction:
