@@ -377,6 +377,14 @@ contract FermionWalletGuard is
 
         (bool isSetGuard, address newGuard) = _selfCallWithAddress(safe, to, value, data, operation, SEL_SET_GUARD);
         if (isSetGuard && newGuard == address(0)) {
+            // A never-enrolled Safe: the Guard holds no key for it and protects
+            // nothing, so detaching it is always allowed. Without this, a Safe that
+            // set the Guard BEFORE enrolling, while carrying a fallback handler or an
+            // enabled module, is frozen forever: every checked tx reverts
+            // NotEnrolledSafe, enrollment reverts on the posture check, and
+            // requestEmergencyDeGuard requires enrollment. `enrolledSafe` is sticky,
+            // so no Safe that ever had a key can use this path.
+            if (!enrolledSafe[safe]) return true;
             uint64 executableAt = emergencyDeGuardExecutableAt[safe];
             return executableAt != 0 && block.timestamp >= executableAt; // nothing else is unlocked
         }
