@@ -2,7 +2,7 @@
 
 This document defines who FermionWallet defends against, what each adversary can and cannot achieve, and which spec mechanism stops them. Every security claim elsewhere in the suite should trace back to a row here.
 
-**System recap (one paragraph).** A Gnosis Safe holds the funds. The FermionWalletGuard (non-upgradeable singleton) sits on `checkTransaction` and refuses any execution that lacks a live on-chain pre-approval. Pre-approvals are created by `createPreApproval`, which verifies **two signatures over the same EIP-712 digest**: an ECDSA half against the registered `quantumAdmin` (the Administrator's Ledger EOA) and an XMSS half (RFC 8391, SHA-256) against the registered `xmssRoot`, with single-use leaf enforcement in an on-chain bitmap. Both halves come from the same physical Ledger (FermionWallet XMSS app); the backend holds no keys. Escape hatches: ADMIN-class pre-approvals under `ADMIN_TIMELOCK`, and a quantum-key-independent emergency de-guard (48 h public / 14 d owners-only).
+**System recap (one paragraph).** A Gnosis Safe holds the funds. The FermionWalletGuard (non-upgradeable singleton) sits on `checkTransaction` and refuses any execution that lacks a live on-chain pre-approval. Pre-approvals are created by `createPreApproval`, which verifies **two signatures over the same EIP-712 digest**: an ECDSA half against the registered `quantumAdmin` (the Administrator's Ledger EOA) and an XMSS half (RFC 8391, SHA-256) against the registered `xmssRoot`, with single-use leaf enforcement in an on-chain bitmap. Both halves come from the same physical Ledger (FermionWallet XMSS app); the backend holds no keys. Escape hatches: ADMIN-class pre-approvals under `ADMIN_TIMELOCK` (48 h default; they need the XMSS key), and a quantum-key-independent, owners-only emergency de-guard under `EMERGENCY_TIMELOCK` (14 d default). The owners' emergency key revocation (`requestKeyRevocation`, also 14 d) is the second quantum-key-independent path.
 
 ---
 
@@ -35,7 +35,11 @@ Each adversary: capabilities → attack → what stops them → residual risk.
 
 **Attack, escalated:** forge owner signatures to call `setGuard(0)` and remove the Guard. Blocked: admin self-calls need an ADMIN-class pre-approval (XMSS-signed) plus `ADMIN_TIMELOCK`. The owners-only emergency de-guard path is also signature-gated but additionally time-locked 14 days and loudly evented. Within the window the honest owners cancel it with their own owner-threshold Safe transaction (`cancelEmergencyDeGuard`); the Administrator cannot cancel it alone, and neither pausing nor key rotation stops the de-guard clock (assumption A5).
 
-**Residual risk:** a quantum attacker who **also** controls or destroys all watchers can ride the 14-day owners-only de-guard to completion. Mitigation: watcher redundancy (§5) so the honest owners learn of it in time to cancel.
+**Attack, escalated (second path):** forge owner signatures over `RequestKeyRevocation`, wait `EMERGENCY_ROTATION_TIMELOCK` (the same 14 days), execute the revocation, then register the attacker's own key: `registerQuantumKey` needs only owner signatures and an attestation by whichever `quantumAdmin` the owners signed, and the attacker can forge both, since both are ECDSA. The honest owners cancel it the same way (`cancelKeyRevocation`, an owner-threshold Safe transaction the Guard never blocks). The request consumes the registry nonce, so repeated requests also kill in-flight ceremonies (liveness only).
+
+**Residual risk:** a quantum attacker who **also** controls or destroys all watchers can ride either 14-day path to completion. Mitigation: watcher redundancy (§5) so the honest owners learn of it in time to cancel.
+
+**Residual risk (legitimate revocations):** when the honest owners revoke a lost or stolen key themselves, the key they register next is protected only by classical signatures until it is active. A quantum attacker can race it: execute the matured revocation and register its own key in the same block. The honest registration then reverts `SafeAlreadyEnrolled`, and the attacker holds an Active key. Nothing on-chain prevents this (`test_TM_ResidualRisk_PostRevocationRegistrationIsClassicalOnly`). The revocation's 14-day public countdown is the only warning. Against a quantum-capable adversary, prefer routine rotation (it needs an old-key XMSS proof) and use revocation only when the old key is really gone.
 
 ### 2.2 Compromised backend / add-on service
 
@@ -64,7 +68,7 @@ Each adversary: capabilities → attack → what stops them → residual risk.
 
 **Capabilities:** physical device. Without the PIN: 3 attempts, then the device wipes (zeroization). With the PIN (coerced/observed): a full signing oracle for both hybrid halves.
 
-**What stops them (PIN known):** the thief can create pre-approvals, but every creation is a public on-chain event with the target fields visible; owners still control execution (threshold signatures) and any owner can revoke transfer/payload approvals and pause the Safe, and the owner threshold can revoke ADMIN approvals; the Administrator's organization triggers the emergency revocation path (`Active` → `Revoked` under governance timelock, then fresh registration — quantum-key-registry.md). ADMIN-class actions are additionally time-locked.
+**What stops them (PIN known):** the thief can create pre-approvals, but every creation is a public on-chain event with the target fields visible; owners still control execution (threshold signatures) and any owner can revoke transfer/payload approvals and pause the Safe (except during the `ADMIN_TIMELOCK` cooldown after an unpause, when only the owner threshold can pause), and the owner threshold can revoke ADMIN approvals; the owner threshold triggers the emergency revocation path (`Active` → `Revoked` after `EMERGENCY_ROTATION_TIMELOCK`, then fresh registration — quantum-key-registry.md). Rotation is not available: it needs an XMSS proof by the old key, which is on the stolen device. ADMIN-class actions are additionally time-locked.
 
 **Residual risk:** window between theft and revocation for TRANSFER-class approvals *that owners then also sign*. A stolen Ledger alone moves nothing — it removes only the quantum layer, leaving classical multisig intact. Detection: any pre-approval the service didn't orchestrate is a desync alarm.
 
@@ -72,7 +76,7 @@ Each adversary: capabilities → attack → what stops them → residual risk.
 
 **Capabilities:** legitimate device, legitimate key, insider knowledge.
 
-**Attacks:** approve transfers to self — but the Administrator cannot execute: owner threshold still required. Sabotage: refuse to sign (liveness), or burn leaves. Attempt self-serving ADMIN approvals (e.g., de-guard) — publicly evented + `ADMIN_TIMELOCK`; owners cancel.
+**Attacks:** approve transfers to self — but the Administrator cannot execute: owner threshold still required. Sabotage: refuse to sign (liveness), burn leaves, revoke pending approvals (including ADMIN ones), or pause the Safe. Pausing is bounded: unpausing takes the owners `ADMIN_TIMELOCK`, after which the Administrator cannot pause again for another `ADMIN_TIMELOCK`, so it can keep the Safe paused at most about half the time. Escape calls, including the emergency de-guard, keep working while paused. Attempt self-serving ADMIN approvals (e.g., de-guard) — publicly evented + `ADMIN_TIMELOCK`; owners cancel.
 
 **What stops them:** the Administrator is deliberately **not** a spending authority — the design is two independent authorization layers, and this adversary holds exactly one.
 
@@ -86,7 +90,7 @@ Can propose transactions and spam signatures; cannot reach threshold; cannot tou
 
 **Capabilities:** everything the Safe can classically do.
 
-**What stops them:** nothing permanently — **by design** (no-brick invariant: owners must always be able to eventually exit). The Guard converts "instant drain" into "14-day public, cancellable process": ADMIN pre-approvals need the Administrator's XMSS key, so the colluders' path is the owners-only emergency de-guard — time-locked and loudly evented. Only an owner-threshold Safe transaction can cancel it, so against a colluding threshold nothing on-chain stops it — the 14 days buy detection and off-chain response, not a veto. The Administrator deliberately has no cancel power: a stolen Ledger must never be able to block the owners' exit.
+**What stops them:** nothing permanently — **by design** (no-brick invariant: owners must always be able to eventually exit). The Guard converts "instant drain" into "14-day public, cancellable process": ADMIN pre-approvals need the Administrator's XMSS key, so the colluders' paths are the owners-only emergency de-guard and the emergency key revocation followed by registering their own key. Both are time-locked by 14 days and loudly evented. Only an owner-threshold Safe transaction can cancel it, so against a colluding threshold nothing on-chain stops it — the 14 days buy detection and off-chain response, not a veto. The Administrator deliberately has no cancel power: a stolen Ledger must never be able to block the owners' exit.
 
 **Residual risk:** if the collusion includes suppressing every watcher for 14 days, funds move. This is the accepted floor of the design; the timelock trades brick-risk for a detection window.
 
@@ -117,7 +121,7 @@ A token with hostile transfer hooks executes *after* the Guard's checks with the
 | Administrator's Ledger (no PIN) | No | Device wiped after 3 attempts | Emergency rotation, new device |
 | Administrator's Ledger + PIN | No (alone) | Quantum layer nullified until revocation | Revoke + re-register |
 | One owner key | No | Noise | Owner rotation via Safe |
-| Owner threshold (incl. quantum forgery) | **After 14 d** | De-guard then drain, unless cancelled | Honest owners cancel in window (owner-threshold Safe tx); the Administrator cannot |
+| Owner threshold (incl. quantum forgery) | **After 14 d** | De-guard (or key revocation + own key) then drain, unless cancelled | Honest owners cancel in window (owner-threshold Safe tx); the Administrator cannot |
 | Owners + Administrator | Yes, immediately | Total | None (by definition) |
 | SHA-256 | Yes | XMSS forgery | None — rotate the planet |
 
@@ -133,4 +137,4 @@ Why hybrid now: Safe owners keep signing with ECDSA, so a quantum attacker can a
 
 ## 5. Open item: the Watcher role (under-specified)
 
-Assumptions A5 and the residual risks in §2.1/§2.7 all lean on watchers who observe `AdminPreApprovalCreated`, de-guard initiations, and rotation events, and can escalate or cancel within the timelock. Not yet specified: who runs watchers (self-hosted daemon? third-party watchtower network?), redundancy requirements (N independent operators, at least one outside the backend's blast radius), alert transport diversity (the backend must not be the single alert channel), authorized cancellers per event type, and response-time SLA versus the 48 h / 14 d windows. **This needs its own spec (`watcher-service.md`) before the timelock numbers can be defended.**
+Assumptions A5 and the residual risks in §2.1/§2.7 all lean on watchers who observe `AdminPreApprovalCreated`, de-guard initiations (`EmergencyDeGuardRequested`), key-revocation requests (`KeyRevocationRequested`), and rotation events, and can escalate or cancel within the timelock. Not yet specified: who runs watchers (self-hosted daemon? third-party watchtower network?), redundancy requirements (N independent operators, at least one outside the backend's blast radius), alert transport diversity (the backend must not be the single alert channel), authorized cancellers per event type, and response-time SLA versus the 48 h / 14 d windows. **This needs its own spec (`watcher-service.md`) before the timelock numbers can be defended.**
