@@ -321,6 +321,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path in ("/", "/index.html"):
             path = "/index.html"
+        elif path == "/favicon.ico":
+            # Browsers that ignore the pages' <link rel="icon"> still ask for this.
+            path = "/safe-app/logo.svg"
         elif path in ("/safe-app", "/safe-app/"):
             # The FermionWallet Safe App, loaded by Safe{Wallet} in an iframe.
             path = "/safe-app/index.html"
