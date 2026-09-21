@@ -204,7 +204,17 @@ async function flow(name, btn, out) {
 $('btn-blocked').onclick = () => flow('blocked', $('btn-blocked'), $('out-blocked'));
 $('btn-approve').onclick = () => flow('approve', $('btn-approve'), $('out-approve'));
 $('btn-execute').onclick = () => flow('execute', $('btn-execute'), $('out-execute'));
-$('amount').oninput = () => $('amt1-echo').textContent = $('amount').value;
+// Step 1's text must always state the amount the flows will actually sign. Browsers
+// restore form values on reload and back/forward navigation without firing `input`,
+// so sync on load and on `pageshow` too — and never echo a value the flows refuse.
+const syncAmountEcho = () => {
+  const n = Number($('amount').value);
+  $('amt1-echo').textContent =
+    Number.isInteger(n) && n >= 1 && n <= 1000000 ? n.toLocaleString() : '—';
+};
+$('amount').oninput = syncAmountEcho;
+window.addEventListener('pageshow', syncAmountEcho);
+syncAmountEcho();
 
 refresh();
 setInterval(refresh, 5000);
