@@ -52,14 +52,19 @@ jobs:
         run: |
           DIST="fermionwallet-contracts-${TAG}"
           mkdir -p "dist/${DIST}/abi" "dist/${DIST}/bytecode" "dist/${DIST}/artifacts"
-          for C in FermionWalletGuard PreApprovalEngine QuantumKeyRegistry; do
-            ART="out/${C}.sol/${C}.json"
-            # Full Foundry artifact (ABI + bytecode + metadata + source hashes)
-            cp "${ART}" "dist/${DIST}/artifacts/${C}.json"
-            jq '.abi' "${ART}" > "dist/${DIST}/abi/${C}.abi.json"
-            jq -r '.bytecode.object' "${ART}" > "dist/${DIST}/bytecode/${C}.bin"
-            jq -r '.deployedBytecode.object' "${ART}" > "dist/${DIST}/bytecode/${C}.deployed.bin"
-          done
+          # FermionWalletGuard is the only deployable contract: QuantumKeyRegistry and
+          # PreApprovalEngine are abstract bases compiled into it (empty bytecode),
+          # and its ABI already covers their functions.
+          C=FermionWalletGuard
+          ART="out/${C}.sol/${C}.json"
+          # Full Foundry artifact (ABI + bytecode + metadata + source hashes)
+          cp "${ART}" "dist/${DIST}/artifacts/${C}.json"
+          jq '.abi' "${ART}" > "dist/${DIST}/abi/${C}.abi.json"
+          jq -r '.bytecode.object' "${ART}" > "dist/${DIST}/bytecode/${C}.bin"
+          jq -r '.deployedBytecode.object' "${ART}" > "dist/${DIST}/bytecode/${C}.deployed.bin"
+          # Byte ranges the constructor fills in at deployment (immutables): needed to
+          # compare a deployed Guard's runtime code against this release.
+          jq '.deployedBytecode.immutableReferences' "${ART}" > "dist/${DIST}/bytecode/${C}.immutable-references.json"
           # Compiler settings needed to reproduce byte-identical binaries
           cp foundry.toml remappings.txt "dist/${DIST}/"
           {
@@ -67,11 +72,17 @@ jobs:
             echo "commit: $(git rev-parse HEAD)"
             echo "solc: $(jq -r '.metadata.compiler.version' out/FermionWalletGuard.sol/FermionWalletGuard.json)"
             echo
-            echo "deployed codehashes (keccak256 of deployedBytecode):"
-            for C in FermionWalletGuard PreApprovalEngine QuantumKeyRegistry; do
-              HASH=$(cast keccak "$(jq -r '.deployedBytecode.object' "out/${C}.sol/${C}.json")")
-              echo "  ${C}: ${HASH}"
-            done
+            echo "FermionWalletGuard runtime code hash, immutables zeroed:"
+            echo "  $(cast keccak "$(jq -r '.deployedBytecode.object' "${ART}")")"
+            echo
+            echo "This is NOT the on-chain EXTCODEHASH. The constructor writes immutables into"
+            echo "the runtime code (timelocks, MultiSendCallOnly, batch and queue caps, and the"
+            echo "EIP-712 chain id / address / domain separator), so every deployment's"
+            echo "EXTCODEHASH is different, including on each chain. To verify a deployed Guard:"
+            echo "  1. fetch its runtime code (cast code <guard> --rpc-url <rpc>);"
+            echo "  2. overwrite every byte range in bytecode/${C}.immutable-references.json with zeros;"
+            echo "  3. keccak256 the result and compare with the hash above."
+            echo "Record each deployment's actual EXTCODEHASH per chain in deployments.json."
           } > "dist/${DIST}/MANIFEST.txt"
           cd dist
           tar -czf "${DIST}.tar.gz" "${DIST}"
