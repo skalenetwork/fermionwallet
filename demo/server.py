@@ -41,11 +41,15 @@ SEL_SAFE_TO_KEY = "0xe056ccae"
 GUARD_SLOT = "0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8"
 
 ERR_NO_MATCHING = "0x95828945"  # NoMatchingPreApproval(address,bytes32,bytes32)
+ERR_INSUFFICIENT_BALANCE = "0xe450d38c"  # ERC20InsufficientBalance(address,uint256,uint256)
 
-# Every flow reads chain state (next unused XMSS leaf, Safe nonce), signs against it,
-# and broadcasts from the same deployer account. The HTTP server is threaded, so two
-# overlapping requests (a quick second click, or two viewers) would pick the same leaf
-# and the same account/Safe nonce, and one would fail. Flows run strictly one at a time.
+# Every flow reads chain state (Safe nonce) and broadcasts from the same deployer
+# account. The HTTP server is threaded, so two overlapping requests (a quick second
+# click, or two viewers) would use the same account/Safe nonce, and one would fail.
+# Chain work runs strictly one at a time. The human decision on the device is NOT held
+# under this lock: the device serialises its own sessions ("Session already active"),
+# and holding the lock for minutes would freeze every other flow and silently queue a
+# second signing request to pop up on the device after the first is decided.
 FLOW_LOCK = threading.Lock()
 
 
@@ -130,11 +134,20 @@ def ledger(path, body=None, timeout=10):
         raise ValueError(json.load(e).get("error", "device error")) from None
 
 
+def safe_balance_tokens(d):
+    return as_int(eth_call(d["token"], SEL_BALANCE_OF + pad_addr(d["safe"]))) // 10**18
+
+
 def approve_on_ledger(amount):
     """Host side of a pre-approval: send the payload fields (never a hash) to the
     device, wait for the human to review and approve on it, then relay both
     signature halves to the Guard."""
     d = deployment()
+    bal = safe_balance_tokens(d)
+    if amount > bal:
+        # Approving it would spend a one-time leaf on a transfer that can never execute.
+        raise ValueError(f"The Safe holds only {bal:,} dUSD — a {amount:,} dUSD transfer could never "
+                         "execute, so the Ledger was not asked to spend a leaf on it.")
     now = as_int(rpc("eth_getBlockByNumber", ["latest", False])["timestamp"])
     fields = {
         "safe": d["safe"], "approvalClass": 0, "token": d["token"], "recipient": d["vendor"],
@@ -143,25 +156,41 @@ def approve_on_ledger(amount):
         "nonce": "0x" + secrets.token_hex(32), "quantumKeyId": d["keyId"],
         "policyHash": DEMO_POLICY_HASH, "txHash": "0x" + "00" * 32,
     }
-    res = ledger("/apdu", {
-        "ins": "SIGN_PREAPPROVAL", "slot": LEDGER_SLOT, "rootPrefix": d["xmssRoot"][:18],
-        "domain": {"chainId": as_int(rpc("eth_chainId", [])), "verifyingContract": d["guard"]},
-        "payload": fields,
-    }, timeout=150)
+    try:
+        # The device times out after 60 s without a button press, but an active reviewer
+        # can keep a session open longer: never give up on the device before it decides,
+        # or an approval pressed later would spend a leaf whose signatures nobody relays.
+        res = ledger("/apdu", {
+            "ins": "SIGN_PREAPPROVAL", "slot": LEDGER_SLOT, "rootPrefix": d["xmssRoot"][:18],
+            "domain": {"chainId": as_int(rpc("eth_chainId", [])), "verifyingContract": d["guard"]},
+            "payload": fields,
+        }, timeout=3600)
+    except ValueError as e:
+        msg = str(e)
+        if msg.startswith("Session already active"):
+            msg = ("The Ledger is already showing a signing request — approve or reject it on "
+                   "the device first.")
+        elif msg.startswith("Key exhausted"):
+            msg = ("Key exhausted — the Ledger has signed with all 16 one-time XMSS leaves of the "
+                   "demo key. Restart the demo to reset it (docker restart, or docker compose "
+                   "down -v && up for the Safe{Wallet} stack).")
+        raise ValueError(msg) from None
     if res.get("status") != "approved":
         return {"ok": True, "outcome": "rejected", "reason": res.get("status", "rejected")}
-    code, out = forge_script(
-        "submitApproval(uint256,uint64,uint64,bytes32,uint32,bytes,bytes)",
-        [str(amount), str(fields["validFrom"]), str(fields["validTo"]), fields["nonce"],
-         str(res["leaf"]), res["ecdsaSignature"], res["xmssSignature"]],
-        broadcast=True,
-    )
+    with FLOW_LOCK:
+        code, out = forge_script(
+            "submitApproval(uint256,uint64,uint64,bytes32,uint32,bytes,bytes)",
+            [str(amount), str(fields["validFrom"]), str(fields["validTo"]), fields["nonce"],
+             str(res["leaf"]), res["ecdsaSignature"], res["xmssSignature"]],
+            broadcast=True,
+        )
     m = re.search(r"RESULT APPROVED leaf=(\d+)", out)
     if code == 0 and m:
         idm = re.search(r"APPROVAL_ID\s*\n\s*(0x[0-9a-f]{64})", out)
         return {"ok": True, "outcome": "approved", "leaf": int(m.group(1)), "digest": res["digest"],
                 "approvalId": idm.group(1) if idm else None}
-    return {"ok": False, "error": friendly_error(out), "log": tail(out)}
+    return failure(out, f"The Ledger signed with leaf #{res['leaf']} (now spent — the device commits its "
+                        "counter before signing), but the Guard refused the approval: ")
 
 
 def forge_script(sig, args, broadcast):
@@ -190,7 +219,11 @@ def parse_amount(payload):
 
 
 def run_flow(flow, payload):
+    if not isinstance(payload, dict):
+        raise ValueError('request body must be a JSON object like {"amount": 100}')
     amount = parse_amount(payload)
+    if flow == "approve":
+        return approve_on_ledger(amount)  # takes FLOW_LOCK itself, after the device decides
     with FLOW_LOCK:
         return _run_flow_locked(flow, amount)
 
@@ -201,6 +234,10 @@ def _run_flow_locked(flow, amount):
         if "RESULT BLOCKED" in out:
             revert = re.search(r"0x[0-9a-f]{8,}", out.split("REVERT_DATA", 1)[-1])
             data = revert.group(0) if revert else ""
+            if data.startswith(ERR_INSUFFICIENT_BALANCE):
+                # A pre-approval for this amount exists, so the Guard let it through and
+                # the token transfer itself failed — not a Guard block.
+                return {"ok": False, "error": insufficient_balance_error(), "revertData": data[:74]}
             reason = ("NoMatchingPreApproval — the Guard found no quantum pre-approval "
                       "for this transfer") if data.startswith(ERR_NO_MATCHING) else "Guard revert"
             return {"ok": True, "outcome": "blocked", "reason": reason, "revertData": data[:74]}
@@ -209,24 +246,47 @@ def _run_flow_locked(flow, amount):
             # exists for this exact amount — the Guard is working, not failing.
             return {"ok": True, "outcome": "allowed", "amount": amount}
         return {"ok": False, "error": "unexpected outcome", "log": tail(out)}
-    if flow == "approve":
-        return approve_on_ledger(amount)
     if flow == "execute":
         code, out = forge_script("execute(uint256)", [str(amount)], broadcast=True)
         m = re.search(r"RESULT EXECUTED vendorBalance=(\d+)", out)
         if code == 0 and m:
             return {"ok": True, "outcome": "executed", "vendorBalance": m.group(1)}
-        return {"ok": False, "error": friendly_error(out), "log": tail(out)}
+        return failure(out)
     raise ValueError("unknown flow")
 
 
+def insufficient_balance_error():
+    try:
+        bal = f"{safe_balance_tokens(deployment()):,} dUSD"
+    except Exception:  # noqa: BLE001
+        bal = "less"
+    return f"The Safe holds only {bal} — the token transfer itself would fail."
+
+
+GENERIC_ERROR = "Flow failed — see log."
+
+
+def failure(out, prefix=""):
+    """Error response: the forge trace only when the error wasn't recognised — a
+    known revert already says everything, and a 25-line trace would bury it."""
+    msg = friendly_error(out)
+    res = {"ok": False, "error": prefix + msg}
+    if msg == GENERIC_ERROR:
+        res["log"] = tail(out)
+    return res
+
+
 def friendly_error(out):
-    if "demo key exhausted" in out:
-        return "All 16 XMSS demo leaves are used. Restart the demo to reset it (docker restart, or docker compose down -v && up for the Safe{Wallet} stack)."
-    if ERR_NO_MATCHING in out:
+    # forge prints decoded custom errors by name, raw selectors only when it can't decode.
+    if ERR_NO_MATCHING in out or "NoMatchingPreApproval" in out:
         return ("Blocked by the Guard: no matching quantum pre-approval. "
                 "Create a pre-approval for this exact amount first.")
-    return "Flow failed — see log."
+    if ERR_INSUFFICIENT_BALANCE in out or "ERC20InsufficientBalance" in out:
+        return insufficient_balance_error()
+    if "CommitmentQueueFull" in out:
+        return ("the Guard already holds the maximum number of pending pre-approvals for this "
+                "exact transfer — execute one of them first, or approve a different amount.")
+    return GENERIC_ERROR
 
 
 def tail(out, n=25):
@@ -287,9 +347,13 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 body = json.loads(self.rfile.read(length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError('request body must be a JSON object like {"button": "next"}')
                 self._json(ledger("/button", {"button": body.get("button")}))
             except ValueError as e:
                 self._json({"ok": False, "error": str(e)}, 400)
+            except Exception as e:  # noqa: BLE001  (device unreachable)
+                self._json({"ok": False, "error": str(e)}, 502)
             return
         m = re.fullmatch(r"/api/(blocked|approve|execute)", self.path.split("?")[0])
         if not m:
