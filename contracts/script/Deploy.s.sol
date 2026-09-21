@@ -6,9 +6,10 @@ import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
 
 /// @title FermionWallet deterministic deployment
 /// @notice Deploys the FermionWalletGuard singleton (which embeds the
-///         QuantumKeyRegistry and PreApprovalEngine) via CREATE2 through the
-///         ERC-2470-style singleton factory, so the canonical address is
-///         identical on every chain where the factory exists.
+///         QuantumKeyRegistry and PreApprovalEngine) via CREATE2 (`new{salt}`),
+///         which forge broadcasts through the deterministic deployment proxy
+///         0x4e59b44847b379578588920cA78FbF26c0B4956C, so the address is identical
+///         on every chain where that proxy exists and the constructor args match.
 ///
 /// Environment variables (all optional; production defaults):
 ///   MULTISEND_CALL_ONLY   canonical Safe MultiSendCallOnly (default v1.4.1)
