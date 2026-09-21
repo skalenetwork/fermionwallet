@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FermionWallet — Safe App</title>
+<link rel="icon" href="logo.svg" type="image/svg+xml">
 <style>
   :root {
     --bg: #0f1115; --panel: #171a21; --text: #f6f7f9; --text-muted: #99a1b3;
@@ -18,7 +19,7 @@
   }
   .wrap { max-width: 720px; margin: 0 auto; }
   header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
-  header img { width: 40px; height: 40px; }
+  header img { width: 40px; height: 40px; border-radius: 10px; }
   h1 { font-size: 20px; margin: 0; }
   h1 small { display: block; font-size: 12px; font-weight: 400; color: var(--text-muted); }
   .card {
@@ -31,8 +32,9 @@
   .row .k { color: var(--text-muted); white-space: nowrap; }
   .row .v { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px;
             word-break: break-all; text-align: right; }
-  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px;
-           font-size: 12px; font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 10px;
+           font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+           font-size: 12px; font-weight: 600; word-break: normal; text-align: left; }
   .badge.ok   { background: rgba(74,222,128,.12); color: var(--ok); }
   .badge.warn { background: rgba(251,191,36,.12); color: var(--warn); }
   .badge.off  { background: var(--accent-soft); color: var(--accent-strong); }
@@ -60,8 +62,11 @@
     <div class="row"><span class="k">Address</span><span class="v" id="safe-address"></span></div>
     <div class="row"><span class="k">Chain ID</span><span class="v" id="safe-chain"></span></div>
     <div class="row"><span class="k">Threshold</span><span class="v" id="safe-threshold"></span></div>
+    <div class="row"><span class="k">Safe version</span><span class="v" id="safe-version"></span></div>
     <div class="row"><span class="k">Transaction Guard</span><span class="v" id="safe-guard"></span></div>
     <div class="row"><span class="k">Fallback handler</span><span class="v" id="safe-fallback"></span></div>
+    <div class="row"><span class="k">Enabled modules</span><span class="v" id="safe-modules"></span></div>
+    <div class="row"><span class="k">Module Guard</span><span class="v" id="safe-module-guard"></span></div>
   </div>
 
   <div class="card">
@@ -76,8 +81,10 @@
     <p class="note">
       <strong>Onboarding preflight:</strong> before enrollment, the Safe's fallback
       handler must be removed (ERC-1271 <code>isValidSignature</code> would otherwise
-      bypass the Guard), and existing
-      token / Permit2 allowances must be revoked. This app checks the handler above.
+      bypass the Guard), the Safe must have no enabled modules (modules skip the
+      transaction Guard) unless it is on Safe&nbsp;1.5+ with the FermionWallet module
+      guard wired too, and existing token / Permit2 allowances must be revoked.
+      This app checks the handler and modules above; allowances are not checked here.
     </p>
     <p class="note">
       The Guard contracts are in <strong>pre-audit early access</strong> and are not
@@ -99,18 +106,6 @@
 </div>
 
 <script type="module">
-  import SafeAppsSDK from 'https://cdn.jsdelivr.net/npm/@safe-global/safe-apps-sdk@9.1.0/+esm';
-
-  // Safe storage slots: keccak256("guard_manager.guard.address") and
-  // keccak256("fallback_manager.handler.address").
-  const GUARD_SLOT = '0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8';
-  const FALLBACK_SLOT = '0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5';
-
-  // Canonical FermionWallet Guard deployments, by chain ID (lower-case addresses).
-  // Empty until deployments.json is published: until then no guard can be shown as
-  // a verified FermionWallet Guard.
-  const FERMIONWALLET_GUARDS = {};
-
   const $ = (id) => document.getElementById(id);
   const badge = (cls, text) => {
     const b = document.createElement('span');
@@ -118,54 +113,155 @@
     b.textContent = text;
     return b;
   };
-  const sdk = new SafeAppsSDK();
-  const timeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
-
-  async function slotAddress(safe, slot) {
-    const raw = await sdk.eth.getStorageAt([safe, slot, 'latest']);
-    const addr = '0x' + raw.slice(-40);
-    return /^0x0{40}$/.test(addr) ? null : addr;
-  }
-
-  try {
-    const info = await Promise.race([sdk.safe.getInfo(), timeout(15000)]);
-    $('status').innerHTML = '<span class="badge ok">Connected</span>';
-    $('safe-card').hidden = false;
-    $('safe-address').textContent = info.safeAddress;
-    $('safe-chain').textContent = info.chainId;
-    $('safe-threshold').textContent = info.threshold + ' of ' + info.owners.length + ' owners';
-
-    try {
-      const guard = await slotAddress(info.safeAddress, GUARD_SLOT);
-      const cell = $('safe-guard');
-      cell.replaceChildren();
-      if (!guard) {
-        cell.append(badge('warn', 'none — not quantum-protected'));
-      } else {
-        // Any other guard (another vendor's, or a look-alike) must not read as
-        // FermionWallet protection. The address is RPC data: insert as text only.
-        const known = (FERMIONWALLET_GUARDS[String(info.chainId)] || []).includes(guard.toLowerCase());
-        cell.append(
-          known
-            ? badge('ok', 'FermionWallet Guard (published deployment)')
-            : badge('warn', 'set — not a verified FermionWallet Guard'),
-          document.createElement('br'),
-          document.createTextNode(guard)
-        );
-      }
-    } catch { $('safe-guard').textContent = 'unavailable'; }
-
-    try {
-      const handler = await slotAddress(info.safeAddress, FALLBACK_SLOT);
-      $('safe-fallback').innerHTML = handler
-        ? '<span class="badge warn">set — must be removed before enrollment</span>'
-        : '<span class="badge ok">none (ERC-1271 bypass closed)</span>';
-    } catch { $('safe-fallback').textContent = 'unavailable'; }
-  } catch {
+  const setCell = (id, ...nodes) => $(id).replaceChildren(...nodes);
+  const showOutsideSafe = () => {
     $('status').innerHTML =
       '<span class="badge warn">Not running inside a Safe</span> ' +
       '<span class="note">Open this app from the Safe web UI: Apps → My custom apps → add ' +
       'https://skalenetwork.github.io/fermionwallet/app/</span>';
+  };
+
+  // Safe{Wallet} loads Safe Apps in an iframe. Opened directly, there is no parent
+  // to answer the SDK, so say so at once instead of waiting for the timeout.
+  if (window.parent === window) {
+    showOutsideSafe();
+  } else {
+    run().catch(showOutsideSafe);
+  }
+
+  async function run() {
+    const { default: SafeAppsSDK } =
+      await import('https://cdn.jsdelivr.net/npm/@safe-global/safe-apps-sdk@9.1.0/+esm');
+
+    // Safe storage slots: keccak256("guard_manager.guard.address"),
+    // keccak256("fallback_manager.handler.address") and (Safe >= 1.5)
+    // keccak256("module_manager.module_guard.address").
+    const GUARD_SLOT = '0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8';
+    const FALLBACK_SLOT = '0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5';
+    const MODULE_GUARD_SLOT = '0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947';
+    // VERSION() and getModulesPaginated(SENTINEL_MODULES = 0x1, 10).
+    const VERSION_CALL = '0xffa1ad74';
+    const MODULES_CALL = '0xcc2f8452' +
+      '0000000000000000000000000000000000000000000000000000000000000001' +
+      '000000000000000000000000000000000000000000000000000000000000000a';
+
+    // Canonical FermionWallet Guard deployments, by chain ID (lower-case addresses).
+    // Empty until deployments.json is published: until then no guard can be shown as
+    // a verified FermionWallet Guard.
+    const FERMIONWALLET_GUARDS = {};
+
+    const sdk = new SafeAppsSDK();
+    const timeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
+
+    const info = await Promise.race([sdk.safe.getInfo(), timeout(15000)]);
+    const safe = info.safeAddress;
+    const isFermionGuard = (addr) =>
+      (FERMIONWALLET_GUARDS[String(info.chainId)] || []).includes(addr.toLowerCase());
+
+    async function slotAddress(slot) {
+      const raw = await sdk.eth.getStorageAt([safe, slot, 'latest']);
+      const addr = '0x' + raw.slice(-40);
+      return /^0x0{40}$/.test(addr) ? null : addr;
+    }
+    const call = (data) => sdk.eth.call([{ to: safe, data }, 'latest']);
+    // Minimal ABI decoding for the two calls above.
+    const word = (hex, i) => hex.slice(2 + 64 * i, 2 + 64 * (i + 1));
+    function decodeString(hex) {
+      const off = parseInt(word(hex, 0), 16) / 32;
+      const len = parseInt(word(hex, off), 16);
+      const bytes = hex.slice(2 + 64 * (off + 1), 2 + 64 * (off + 1) + 2 * len);
+      return new TextDecoder().decode(new Uint8Array(bytes.match(/../g).map((b) => parseInt(b, 16))));
+    }
+    function decodeModules(hex) {
+      // (address[] array, address next): word 0 = offset of array.
+      const off = parseInt(word(hex, 0), 16) / 32;
+      const n = parseInt(word(hex, off), 16);
+      const mods = [];
+      for (let i = 0; i < n; i++) mods.push('0x' + word(hex, off + 1 + i).slice(24));
+      const next = '0x' + word(hex, 1).slice(24);
+      return { mods, more: !/^0x0*1$/.test(next) && !/^0x0{40}$/.test(next) };
+    }
+
+    $('status').innerHTML = '<span class="badge ok">Connected</span>';
+    $('safe-card').hidden = false;
+    $('safe-address').textContent = safe;
+    $('safe-chain').textContent = info.chainId;
+    $('safe-threshold').textContent = info.threshold + ' of ' + info.owners.length + ' owners';
+
+    let version = null;
+    try {
+      version = decodeString(await call(VERSION_CALL));
+      const [maj, min] = version.split('.').map(Number);
+      const supported = maj > 1 || (maj === 1 && min >= 3);
+      setCell('safe-version', supported
+        ? document.createTextNode(version)
+        : badge('warn', version + ' — FermionWallet needs Safe 1.3.0+'));
+    } catch { $('safe-version').textContent = 'unavailable'; }
+    const v15 = version ? (() => { const [a, b] = version.split('.').map(Number); return a > 1 || (a === 1 && b >= 5); })() : false;
+
+    // Transaction Guard. Any guard other than a published FermionWallet deployment
+    // (another vendor's, or a look-alike) must not read as FermionWallet protection.
+    // Addresses are RPC data: insert as text only.
+    let guardIsFermion = false;
+    try {
+      const guard = await slotAddress(GUARD_SLOT);
+      if (!guard) {
+        setCell('safe-guard', badge('warn', 'none — not quantum-protected'));
+      } else {
+        guardIsFermion = isFermionGuard(guard);
+        setCell('safe-guard',
+          guardIsFermion
+            ? badge('ok', 'FermionWallet Guard (published deployment)')
+            : badge('warn', 'set — not a verified FermionWallet Guard'),
+          document.createElement('br'),
+          document.createTextNode(guard));
+      }
+    } catch { $('safe-guard').textContent = 'unavailable'; }
+
+    // Fallback handler. "Bypass closed" is only true while a FermionWallet Guard is
+    // attached (it refuses to set a handler); without one, an empty slot just means
+    // this preflight item passes.
+    try {
+      const handler = await slotAddress(FALLBACK_SLOT);
+      setCell('safe-fallback', handler
+        ? badge('warn', 'set — must be removed before enrollment')
+        : guardIsFermion
+          ? badge('ok', 'none (ERC-1271 bypass closed)')
+          : badge('off', 'none — preflight OK'));
+      if (handler) $('safe-fallback').append(document.createElement('br'), document.createTextNode(handler));
+    } catch { $('safe-fallback').textContent = 'unavailable'; }
+
+    // Module Guard (Safe >= 1.5 only; older Safes have no such slot).
+    let moduleGuard = null;
+    if (!v15) {
+      $('safe-module-guard').textContent = version ? 'not supported before Safe 1.5' : 'unavailable';
+    } else {
+      try {
+        moduleGuard = await slotAddress(MODULE_GUARD_SLOT);
+        if (!moduleGuard) setCell('safe-module-guard', document.createTextNode('none'));
+        else setCell('safe-module-guard',
+          isFermionGuard(moduleGuard)
+            ? badge('ok', 'FermionWallet Guard (published deployment)')
+            : badge('warn', 'set — not a verified FermionWallet Guard'),
+          document.createElement('br'), document.createTextNode(moduleGuard));
+      } catch { $('safe-module-guard').textContent = 'unavailable'; }
+    }
+
+    // Enabled modules: modules execute without the transaction Guard.
+    try {
+      const { mods, more } = decodeModules(await call(MODULES_CALL));
+      if (mods.length === 0) {
+        setCell('safe-modules', badge('off', 'none — preflight OK'));
+      } else {
+        const covered = v15 && moduleGuard && isFermionGuard(moduleGuard);
+        const nodes = [covered
+          ? badge('ok', mods.length + (more ? '+' : '') + ' — covered by the FermionWallet module guard')
+          : badge('warn', mods.length + (more ? '+' : '') + ' — modules bypass the Guard; ' +
+              (v15 ? 'remove them or wire the module guard' : 'remove them before enrollment'))];
+        for (const m of mods) nodes.push(document.createElement('br'), document.createTextNode(m));
+        setCell('safe-modules', ...nodes);
+      }
+    } catch { $('safe-modules').textContent = 'unavailable'; }
   }
 </script>
 </body>
