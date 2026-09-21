@@ -489,6 +489,33 @@ Neither path may depend on any component that the Guard can render unusable (in 
 The fallback (path 2) is implemented **in the Guard itself**, so it requires no external contract and survives every Guard state:
 
 1. `requestEmergencyDeGuard()` — callable only by the enrolled Safe (`msg.sender == safe`), i.e., via a normal owner-threshold Safe transaction. **`checkTransaction` hardcodes an allow** for the single case `to == address(this) && selector == requestEmergencyDeGuard.selector && value == 0 && operation == CALL`, bypassing pause state and all pre-approval requirements — this is the one transaction the Guard may never block, and the allow must be the first check in `checkTransaction`.
+
+   The check order is **normative** — getting it wrong silently destroys the only no-brick safety net, and the bug is invisible until the exact moment the escape hatch is needed:
+
+   ```solidity
+   function checkTransaction(address to, uint256 value, bytes calldata data, Enum.Operation operation, ...) external {
+       // 1. FIRST — before pause, before enrollment, before everything:
+       //    the emergency escape hatch may never be blocked by any other state.
+       if (_isEmergencyEscapeCall(to, value, data, operation)) return;
+       //    (matches requestEmergencyDeGuard / cancelEmergencyDeGuard self-calls,
+       //     and setGuard(address(0)) once the emergency timelock has expired)
+
+       // 2. Only THEN the deny-all circuit breaker:
+       if (paused()) revert GuardPaused();
+
+       // 3. Then enrollment, reentrancy depth, class dispatch, pre-approval matching…
+   }
+   ```
+
+   ```solidity
+   // WRONG — a paused Guard permanently bricks the Safe, because unpausing
+   // is itself time-locked governance that may require the lost quantum key:
+   if (paused()) revert GuardPaused();
+   ...
+   if (_isEmergencyEscapeCall(...)) return; // unreachable while paused
+   ```
+
+   A mandatory test (see production checklist) executes `requestEmergencyDeGuard` **while the Guard is paused** and asserts success.
 2. The request starts `EMERGENCY_TIMELOCK` (immutable, materially longer than `ADMIN_TIMELOCK`, e.g., 14 days) and emits `EmergencyDeGuardRequested(safe, executableAt)` — the dashboard treats this as a highest-severity alert to all owners and the Administrator.
 3. During the window, the request can be cancelled by either a quantum `ADMIN`-class pre-approved transaction or another owner-signed Safe call to `cancelEmergencyDeGuard()` (also hardcoded-allowed) — whichever party is still healthy can stop a malicious request.
 4. After expiry, `checkTransaction` permits exactly one self-call: `setGuard(address(0))`, with no pre-approval required. Nothing else is unlocked.
@@ -504,6 +531,8 @@ Safe's refund mechanism (`gasPrice`, `gasToken`, `refundReceiver`) pays out afte
 - an explicit policy cap on refund parameters with `refundReceiver` restricted to an allowlist and `gasToken` restricted to approved tokens.
 
 ## Safe nonce recomputation quirk
+
+**Cross-chain replay (post-MVP note).** Pre-approval signatures use an EIP-712 domain bound to the Guard address **and `block.chainid`**, so a pre-approval signed for chain A verifies nowhere else — including on a CREATE2 twin of the same Safe at the same address on chain B, and on either fork after a chain split (the fork with a changed chainid rejects old signatures). This is the intended behavior, not a defect: cross-chain approvals must be signed per chain, one Ledger confirmation each. The MVP is single-chain; multi-chain operation multiplies leaf consumption by the number of chains and is a policy decision, not a protocol change.
 
 **Caller identity.** `checkTransaction`/`checkAfterExecution` have no dedicated caller parameter — the calling Safe *is* `msg.sender`. The Guard must treat `msg.sender` as the Safe identity and verify it is an **enrolled** Safe (`safeToQuantumKey[msg.sender]` exists with an `Active` key); calls from unenrolled addresses revert. This is safe precisely because `setGuard` can only be set by the Safe itself, so only a Safe that governance-installed this Guard ever calls these hooks; but the enrollment check still matters — it stops a *different, attacker-controlled* contract from calling `checkTransaction` directly to consume another Safe's field-matched pre-approvals (the commitment includes `safe`, and `safe` is taken from `msg.sender`, never from calldata, in the consumption path). Note the asymmetry with the create/register functions, where `msg.sender` is the relayer and `safe` is explicit calldata: consumption trusts `msg.sender`, creation never does.
 

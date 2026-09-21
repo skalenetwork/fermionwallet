@@ -73,6 +73,8 @@ Rows also carry **risk flags** computed automatically: 🆕 first-time recipient
 
 > *"Nonce #42 is still unapproved. This approval cannot execute until #42 clears. If #42 takes longer than your validity window (you chose 6 h; the queue ahead is estimated at 9 h), this approval expires unexecuted and **leaf #184,205 is burned**. Type the nonce number to confirm."*
 
+![Nonce override modal](./assets/ui/ui-override.svg)
+
 Typing the nonce (not just clicking OK) confirms; the override is written to the audit log with your identity, the queue state at that moment, and the estimate you overrode. If the skipped approval later expires, the audit entry is linked so the post-mortem writes itself.
 
 ## When an approved transaction is replaced
@@ -95,12 +97,18 @@ A replacement is sometimes routine (fee bump) and sometimes an attack (recipient
 Opening a 🟡 row shows the full decoded payload. Before the **Sign on Ledger** button enables:
 
 1. **Two-source check** (automatic): the payload from the Safe Transaction Service must byte-match a local decode of the on-chain queue. On success the screen shows *"✓ Payload verified from two independent sources."* On mismatch the flow **hard-stops with a full-screen, non-dismissable tamper screen**: red background, both payloads shown side by side with the differing bytes highlighted, *"The transaction service and the chain disagree about this transaction. Do not sign. All owners have been notified."* There is no retry, dismiss, or override on this screen — the only actions are **Notify owners again** and **Export evidence**; the row stays 🔴 until the discrepancy is resolved out-of-band. If the Safe Transaction Service is merely *unreachable* (timeout, not mismatch), the app says so explicitly and blocks signing until both sources respond — one source is not enough, availability failures fail closed.
+
+   ![Tamper warning](./assets/ui/ui-tamper.svg)
 2. **Out-of-band verification** (manual, first-time recipients only): the checkbox carries its instructions inline — *"Call or message the requester on a channel other than the one that delivered this request (if it arrived by email, verify by phone — never reply to the request itself). Confirm the full recipient address, then tick."* Hovering **why?** explains the attack this defeats (a compromised request channel supplying both the transfer and its 'confirmation'). For recurring internal recipients (e.g. the payroll processor), a policy admin can mark an address **verified-recurring** after its first out-of-band check — subsequent transfers to it skip the checkbox and show `recipient on verified list` instead. There is no "I am the requester" self-attestation: if you requested it, have a second person verify — the checkbox records *who* ticked it either way.
 3. **Pick the validity window**: how long the pre-approval stays executable (15-minute minimum, policy-bounded maximum). The app pre-fills a suggestion based on how many earlier nonces must execute first — accept it unless you know better. Too short and the approval expires in the queue (the leaf is spent either way, and everyone re-reviews); too long and a signed approval sits live longer than it needs to.
 
 Then sign on the Ledger — see [What you see on the Ledger](#what-you-see-on-the-ledger).
 
-**After the Ledger confirmation, the flow is not done — the approval must land on-chain.** The row immediately shows ⏳ **Submitting…**: the app simulates `createPreApproval` via `eth_call`, then the relayer submits it, and the row shows the pending tx hash with a block-confirmation counter. Only after on-chain confirmation does the row flip to 🟢 and operators get notified. If the submission **reverts** (e.g. a `LeafAlreadyUsed` race, an expired registration, or a full commitment queue), the row flips to 🔴 with the decoded revert reason and one action — **Retry submission** where the failure was transient (the signature is reused; no new Ledger interaction or leaf) or **Re-approve** where the signed payload itself can no longer be valid. A Ledger-signed approval that never confirmed on-chain is prominently flagged, never silently dropped: the leaf counter on the device has already advanced, so the audit log records the burned leaf either way.
+**After the Ledger confirmation, the flow is not done — the approval must land on-chain.**
+
+![Submission tracking](./assets/ui/ui-submitting.svg)
+
+The row immediately shows ⏳ **Submitting…**: the app simulates `createPreApproval` via `eth_call`, then the relayer submits it, and the row shows the pending tx hash with a block-confirmation counter. Only after on-chain confirmation does the row flip to 🟢 and operators get notified. If the submission **reverts** (e.g. a `LeafAlreadyUsed` race, an expired registration, or a full commitment queue), the row flips to 🔴 with the decoded revert reason and one action — **Retry submission** where the failure was transient (the signature is reused; no new Ledger interaction or leaf) or **Re-approve** where the signed payload itself can no longer be valid. A Ledger-signed approval that never confirmed on-chain is prominently flagged, never silently dropped: the leaf counter on the device has already advanced, so the audit log records the burned leaf either way.
 
 **Important:** if anyone edits or replaces the Safe transaction after you approve, the approval no longer matches and the row drops back to 🟡 automatically — see [When an approved transaction is replaced](#when-an-approved-transaction-is-replaced). Approvals bind to exact payloads, never to intents.
 
@@ -113,6 +121,8 @@ A genuine batch (payroll, vendor run) is **one transaction, one pre-approval, on
 - The queue row carries a **BATCH · n legs** badge and shows per-token totals instead of a single amount.
 - The approval screen decodes **every leg** into a table: recipient, amount, risk flags per leg. Three legs show by default; **Expand all** or **export CSV** for line-by-line review. Every 🆕 first-time recipient leg must pass out-of-band verification before Sign enables — verifying the batch means verifying its new recipients, not skimming totals.
 - **The Ledger does not page through legs.** The device shows `BATCH — 42 legs`, the per-token totals (informational), and the **batch dataHash** (binding). The division of labor is explicit on both screens: *verify legs in the app, verify the hash on the device* — the hash commits to every leg byte-for-byte, and the app displays the same hash so you can compare.
+
+  ![Ledger batch screens](./assets/ui/ledger/ledger-batch.svg)
 - The Guard independently re-decodes all legs on-chain (transfer selectors only, no Safe/Guard/registry targets, per-token caps), so even a lying host cannot smuggle a rogue leg under a correct-looking total.
 
 If any leg would be rejected on-chain, the app blocks signing with the failing leg highlighted — never waste a leaf on a doomed batch.
@@ -134,6 +144,8 @@ Denials are deliberately as visible as approvals: a veto nobody sees just teache
 ## The key ceremony (first-time setup and rotation)
 
 ![Key ceremony](./assets/ui/ui-ceremony.svg)
+![Ceremony stages A, B, D, E](./assets/ui/ui-ceremony-stages.svg)
+![Owner signing session](./assets/ui/ui-owner-sign.svg)
 
 Run once at onboarding and again at each rotation. Five stages, one on-chain transaction, target under 10 minutes with owners online:
 
@@ -208,7 +220,7 @@ The Quantum key tab shows the active key at a glance: ceremony words, parameter 
 
 ## Audit log and export
 
-The **Audit log** tab (top navigation) is the append-only record of everything with a signature or a decision behind it: approvals (with leaf index and safeTxHash), denials (with reasons), nonce-order overrides, revocations, replaced-transaction events, ceremony records, emergency-path initiations and cancellations, and desync alarms.
+The **Audit log** tab (top navigation) is the append-only record of everything with a signature or a decision behind it: approvals (with leaf index and safeTxHash), denials (with reasons), nonce-order overrides, revocations, replaced-transaction events, ceremony records, emergency-path initiations and cancellations, and desync alarms. Executed-approval entries also record **which lookup tier matched on-chain** — `pinned (safeTxHash)` or `field-matched (queue position N)` — so an auditor can distinguish an exact-transaction approval from a recurring-payment match without reading the contract events.
 
 - **Filters:** date range, event type, actor (Administrator / specific owner / system), Safe transaction, and status.
 - **Export** (button, top right of the tab): **CSV** for spreadsheets, **JSON** for programmatic ingestion, and **signed PDF** for the compliance file — the PDF embeds each event's on-chain transaction hash and the ceremony records, so an auditor can independently verify every line against the chain.
