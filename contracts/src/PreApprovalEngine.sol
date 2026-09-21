@@ -289,14 +289,16 @@ abstract contract PreApprovalEngine is QuantumKeyRegistry {
 
         // Index for O(1) execution-time lookup.
         if (a.txHash != bytes32(0)) {
-            // A pin may be replaced only when its approval can never execute (expired
-            // or revoked) — the documented recovery for "approval expired before
-            // execution" is to re-approve the same Safe transaction. A live pin, or a
-            // used one (that Safe transaction already executed), is never overwritten.
+            // A pin may be replaced only when its approval can never execute (expired,
+            // revoked, or created under a since-revoked key) — the documented recovery
+            // for "approval expired before execution", and for re-approving pending
+            // transactions after an emergency key revocation, is to re-approve the same
+            // Safe transaction. A live pin, or a used one (that Safe transaction already
+            // executed), is never overwritten.
             bytes32 prev = approvalByTxHash[a.safe][a.txHash];
             if (prev != bytes32(0)) {
                 PreApproval storage p = _approvals[prev];
-                if (p.used || (!p.revoked && block.timestamp <= p.validTo)) revert TxHashAlreadyPinned(a.safe, a.txHash);
+                if (p.used || !_isDead(p)) revert TxHashAlreadyPinned(a.safe, a.txHash);
             }
             approvalByTxHash[a.safe][a.txHash] = id;
         } else {
