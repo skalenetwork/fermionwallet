@@ -26,7 +26,7 @@ contract DemoToken is ERC20("Demo USD", "dUSD") {
 ///   setup()            deploy Safe v1.5.0 (2-of-3) + Guard, register the XMSS key, set the Guard
 ///   setupWallet()      same on the canonical Safe v1.4.1 (L2, 1-of-1) for the Safe{Wallet} stack
 ///   blocked(uint256)   SIMULATION: owner-signed transfer with NO quantum approval → guard revert
-///   approve(uint256)   create a hybrid ECDSA+XMSS pre-approval for a vendor payout
+///   submitApproval(...) relay a pre-approval the (simulated) Ledger signed: ECDSA + XMSS halves
 ///   execute(uint256)   owner-signed execTransaction for that payout → allowed by the Guard
 /// Mirrors the helpers in test/GuardIntegration.t.sol; XMSS signatures come from the
 /// RFC 8391 reference implementation via FFI (py/sign_digest.py, demo key h = 4).
