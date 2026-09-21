@@ -9,8 +9,10 @@ directly over JSON-RPC. Stdlib only.
 import json
 import os
 import re
+import secrets
 import subprocess
 import threading
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -21,6 +23,11 @@ RPC = os.environ.get("RPC_URL", "http://127.0.0.1:8545")
 FORGE = os.environ.get("FORGE_BIN", "forge")
 PORT = int(os.environ.get("PORT", "8080"))
 STATE_FILE = os.path.join(CONTRACTS, "demo-state", "deployment.json")
+# The simulated FermionWallet Ledger (demo/ledger_sim.py) — the only signer of approvals.
+LEDGER = os.environ.get("LEDGER_SIM_URL", "http://127.0.0.1:9999")
+LEDGER_SLOT = 1
+# keccak256("demo-policy-v1") — must match Demo.s.sol submitApproval().
+DEMO_POLICY_HASH = "0xaca8cad3f07d01b449747b697e498c47495dc59343bf992f3776347cd1ff6e2f"
 
 TREE_LEAVES = 16  # demo key h = 4
 
@@ -101,6 +108,51 @@ def chain_state():
     }
 
 
+def ledger(path, body=None, timeout=10):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(LEDGER + path, data=data, headers={"Content-Type": "application/json"},
+                                 method="POST" if body is not None else "GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as e:
+        raise ValueError(json.load(e).get("error", "device error")) from None
+
+
+def approve_on_ledger(amount):
+    """Host side of a pre-approval: send the payload fields (never a hash) to the
+    device, wait for the human to review and approve on it, then relay both
+    signature halves to the Guard."""
+    d = deployment()
+    now = as_int(rpc("eth_getBlockByNumber", ["latest", False])["timestamp"])
+    fields = {
+        "safe": d["safe"], "approvalClass": 0, "token": d["token"], "recipient": d["vendor"],
+        "amount": str(amount * 10**18), "target": "0x" + "00" * 20, "value": "0",
+        "dataHash": "0x" + "00" * 32, "validFrom": now, "validTo": now + 86400,
+        "nonce": "0x" + secrets.token_hex(32), "quantumKeyId": d["keyId"],
+        "policyHash": DEMO_POLICY_HASH, "txHash": "0x" + "00" * 32,
+    }
+    res = ledger("/apdu", {
+        "ins": "SIGN_PREAPPROVAL", "slot": LEDGER_SLOT, "rootPrefix": d["xmssRoot"][:18],
+        "domain": {"chainId": as_int(rpc("eth_chainId", [])), "verifyingContract": d["guard"]},
+        "payload": fields,
+    }, timeout=150)
+    if res.get("status") != "approved":
+        return {"ok": True, "outcome": "rejected", "reason": res.get("status", "rejected")}
+    code, out = forge_script(
+        "submitApproval(uint256,uint64,uint64,bytes32,uint32,bytes,bytes)",
+        [str(amount), str(fields["validFrom"]), str(fields["validTo"]), fields["nonce"],
+         str(res["leaf"]), res["ecdsaSignature"], res["xmssSignature"]],
+        broadcast=True,
+    )
+    m = re.search(r"RESULT APPROVED leaf=(\d+)", out)
+    if code == 0 and m:
+        idm = re.search(r"APPROVAL_ID\s*\n\s*(0x[0-9a-f]{64})", out)
+        return {"ok": True, "outcome": "approved", "leaf": int(m.group(1)), "digest": res["digest"],
+                "approvalId": idm.group(1) if idm else None}
+    return {"ok": False, "error": friendly_error(out), "log": tail(out)}
+
+
 def forge_script(sig, args, broadcast):
     cmd = [FORGE, "script", "script/Demo.s.sol:Demo", "-s", sig, *args,
            "--rpc-url", RPC, "--skip-simulation" if False else "-vv"]
@@ -147,13 +199,7 @@ def _run_flow_locked(flow, amount):
             return {"ok": True, "outcome": "allowed", "amount": amount}
         return {"ok": False, "error": "unexpected outcome", "log": tail(out)}
     if flow == "approve":
-        code, out = forge_script("approve(uint256)", [str(amount)], broadcast=True)
-        m = re.search(r"RESULT APPROVED leaf=(\d+)", out)
-        if code == 0 and m:
-            idm = re.search(r"APPROVAL_ID\s*\n\s*(0x[0-9a-f]{64})", out)
-            return {"ok": True, "outcome": "approved", "leaf": int(m.group(1)),
-                    "approvalId": idm.group(1) if idm else None}
-        return {"ok": False, "error": friendly_error(out), "log": tail(out)}
+        return approve_on_ledger(amount)
     if flow == "execute":
         code, out = forge_script("execute(uint256)", [str(amount)], broadcast=True)
         m = re.search(r"RESULT EXECUTED vendorBalance=(\d+)", out)
@@ -190,6 +236,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
+        if path == "/api/device/screen":
+            try:
+                self._json(ledger("/screen"))
+            except Exception as e:  # noqa: BLE001
+                self._json({"error": str(e)}, 502)
+            return
         if path == "/api/state":
             try:
                 self._json(chain_state())
@@ -214,6 +266,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
+        if self.path.split("?")[0] == "/api/device/button":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}")
+                self._json(ledger("/button", {"button": body.get("button")}))
+            except ValueError as e:
+                self._json({"ok": False, "error": str(e)}, 400)
+            return
         m = re.fullmatch(r"/api/(blocked|approve|execute)", self.path.split("?")[0])
         if not m:
             self.send_error(404)
