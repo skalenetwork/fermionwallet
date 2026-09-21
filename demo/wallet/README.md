@@ -25,7 +25,7 @@ Nothing is kept between runs. Any restart, including `docker compose restart`, s
 | 8000 | Safe{Wallet}, its backend services, and the chain RPC at `/rpc` |
 | 8001 | The FermionWallet Safe App and its simulated Ledger |
 
-To build the two FermionWallet images from a source checkout instead of pulling them:
+`docker compose up -d --wait` pulls the two FermionWallet images from ghcr.io, which are published with each release. Until the first release that includes this demo, or to run your own changes, build them from a source checkout instead:
 
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
