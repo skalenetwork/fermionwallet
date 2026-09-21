@@ -205,13 +205,20 @@ abstract contract PreApprovalEngine is QuantumKeyRegistry {
     ///         owner's own address. Revocation is deliberately cheaper than approval: a
     ///         false alarm costs one re-approval, a missed alarm can cost the Safe.
     ///         Damage control, not undo — the consumed leaf is not recoverable.
+    ///
+    ///         Exception: a single owner may NOT revoke an ADMIN approval. ADMIN approvals
+    ///         are how the owner threshold changes governance — including removeOwner /
+    ///         swapOwner / changeThreshold to eject a rogue owner. If one owner could
+    ///         revoke them, that owner could veto their own removal forever and force the
+    ///         Safe onto the 14-day emergency de-guard. ADMIN approvals stay revocable by
+    ///         the Safe (owner threshold, no quantum approval needed) and the Administrator;
+    ///         executing one needs the threshold anyway.
     function revokePreApproval(bytes32 preApprovalId) external returns (bool) {
         PreApproval storage a = _approvals[preApprovalId];
         if (a.id == bytes32(0)) revert UnknownApproval(preApprovalId);
-        if (
-            msg.sender != a.safe && msg.sender != _keys[a.quantumKeyId].quantumAdmin
-                && !_isSafeOwner(a.safe, msg.sender)
-        ) revert NotAuthorized();
+        if (msg.sender != a.safe && msg.sender != _keys[a.quantumKeyId].quantumAdmin) {
+            if (!_isSafeOwner(a.safe, msg.sender) || a.class_ == ApprovalClass.ADMIN) revert NotAuthorized();
+        }
         if (a.used || a.revoked) revert NotRevocable(preApprovalId);
         a.revoked = true;
         emit PreApprovalRevoked(preApprovalId, a.safe);
