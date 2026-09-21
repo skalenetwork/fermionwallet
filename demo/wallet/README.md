@@ -36,11 +36,11 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build -
 1. **Connect the owner.** Click **Connect wallet**, choose **Private key**, and paste the demo owner's key. This is anvil's public test account #1, so never use it anywhere else:
    `0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d`
 2. **Open the demo Safe.** Go to http://localhost:8000/home?safe=fwdemo:0x8E3fd7B315486ce7Ea44A6E5129046148f807D49. This 1-of-1 Safe holds 10 ETH and 1,000,000 dUSD.
-3. **Open FermionWallet.** Go to **Apps** and open **FermionWallet**.
-4. **Pay without approval.** Click **Propose payout in Safe{Wallet}**. Safe{Wallet} opens its normal review. Trust the Safe when asked, then click **Continue**.
+3. **Open FermionWallet.** Go to **Apps**, click the **FermionWallet** card, then **Open Safe App**. The first time, accept Safe{Wallet}'s Safe Apps disclaimer.
+4. **Pay without approval.** Click **Propose payout in Safe{Wallet}**. Safe{Wallet} opens its normal review. Trust the Safe when asked (give it any name and confirm), then click **Continue**.
    - Safe{Wallet} warns *"This transaction will most likely fail"*.
    - If you press **Execute** anyway, Safe{Wallet} shows *"Error submitting the transaction"* and sends nothing. The owner's signature is valid, but the Guard reverts the transfer because no quantum pre-approval exists. Under **Details**, the revert data starts with `0x95828945`, the selector of `NoMatchingPreApproval`.
-   - To go back to the app, close the review with ✕ and confirm. Close the red notification first if it covers the ✕.
+   - To go back to the app, close the review with ✕ and confirm in the browser's dialog. Close the red notification first if it covers the ✕.
 5. **Approve on the Ledger.** Click **Send to Ledger for approval**. On the simulated device, page through all eight screens with ▶, then press **Approve**.
    - The device signs the exact payment twice over one EIP-712 digest: once with ECDSA and once with XMSS. This uses one of its 16 one-time leaves.
    - The pre-approval is then stored in the Guard.
