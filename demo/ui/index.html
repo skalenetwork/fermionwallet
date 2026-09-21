@@ -152,9 +152,12 @@ async function refresh() {
   }
 }
 
+const flowButtons = ['btn-blocked', 'btn-approve', 'btn-execute'];
+const setBusy = busy => flowButtons.forEach(id => { $(id).disabled = busy; });
+
 async function flow(name, btn, out) {
   const amount = Number($('amount').value);
-  btn.disabled = true;
+  setBusy(true); // one flow at a time: each signs against the chain state the previous one leaves
   out.className = 'out show';
   out.textContent = name === 'approve'
     ? 'Signing (ECDSA + XMSS one-time signature)…' : 'Running…';
@@ -189,7 +192,7 @@ async function flow(name, btn, out) {
     out.className = 'out show fail';
     out.textContent = '✘ ' + e.message;
   }
-  btn.disabled = false;
+  setBusy(false);
   refresh();
 }
 

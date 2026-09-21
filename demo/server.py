@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -31,6 +32,12 @@ SEL_SAFE_TO_KEY = "0xe056ccae"
 GUARD_SLOT = "0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8"
 
 ERR_NO_MATCHING = "0x95828945"  # NoMatchingPreApproval(address,bytes32,bytes32)
+
+# Every flow reads chain state (next unused XMSS leaf, Safe nonce), signs against it,
+# and broadcasts from the same deployer account. The HTTP server is threaded, so two
+# overlapping requests (a quick second click, or two viewers) would pick the same leaf
+# and the same account/Safe nonce, and one would fail. Flows run strictly one at a time.
+FLOW_LOCK = threading.Lock()
 
 
 def deployment():
@@ -113,6 +120,11 @@ def parse_amount(payload):
 
 def run_flow(flow, payload):
     amount = parse_amount(payload)
+    with FLOW_LOCK:
+        return _run_flow_locked(flow, amount)
+
+
+def _run_flow_locked(flow, amount):
     if flow == "blocked":
         code, out = forge_script("blocked(uint256)", [str(amount)], broadcast=False)
         if "RESULT BLOCKED" in out:
