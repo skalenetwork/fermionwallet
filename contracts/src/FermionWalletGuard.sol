@@ -229,28 +229,33 @@ contract FermionWalletGuard is
         // 5. Module-bypass mitigation: no enabled modules, or this contract wired
         //    as the module guard (Safe >= 1.5). Exemptions so a bad posture can
         //    always be remediated (no-brick): the quantum-approved Guard removal,
-        //    and the ADMIN self-calls that fix the posture itself (disableModule,
-        //    setModuleGuard). Entering the state is gated instead: enableModule is
+        //    and the ADMIN self-calls that fix the posture itself (see the posture
+        //    re-checks below). Entering the state is gated instead: enableModule is
         //    rejected unless this Guard is already the module guard — which also
         //    rejects it outright on Safe <= 1.4.1, where module transactions can
         //    never be guarded and would bypass the quantum layer entirely.
         bytes4 selfSelector =
             (to == safe && operation == Enum.Operation.Call && data.length >= 4) ? bytes4(data) : bytes4(0);
-        bool moduleRemediation = selfSelector == SEL_DISABLE_MODULE || selfSelector == SEL_SET_MODULE_GUARD;
         if (selfSelector == SEL_ENABLE_MODULE && !_isModuleGuard(safe)) revert ModuleGuardNotWired(safe);
-        if (!(isSetGuard && newGuard == address(0)) && !moduleRemediation) _checkModulePosture(safe);
 
         // 5b. ERC-1271 bypass mitigation: any fallback handler can validate
         //     owner-signed messages (isValidSignature) with no Safe transaction —
         //     Permit / Permit2 / order protocols would then move funds without the
-        //     Guard ever running. So a guarded Safe has NO fallback handler. Skipped
-        //     only for the quantum-approved Guard removal (no-brick) and for the ADMIN
-        //     self-call that removes the handler (setFallbackHandler(address(0))).
+        //     Guard ever running. So a guarded Safe has NO fallback handler; the only
+        //     handler change allowed is its removal (setFallbackHandler(address(0))).
         (bool isSetFallback, address newHandler) = _selfCallWithAddress(safe, to, value, data, operation, SEL_SET_FALLBACK);
         if (isSetFallback && newHandler != address(0)) {
             revert FallbackHandlerForbidden(safe, newHandler);
         }
-        if (!(isSetGuard && newGuard == address(0)) && !isSetFallback) {
+
+        // Posture re-checks. Exempt: the quantum-approved Guard removal (no-brick),
+        // and every posture remediation (ADMIN self-calls disableModule,
+        // setModuleGuard, setFallbackHandler(address(0))) from BOTH checks — a Safe
+        // can be bad on both counts (handler and module installed before the Guard
+        // was attached), and each fix must not be blocked by the other defect.
+        bool remediation = selfSelector == SEL_DISABLE_MODULE || selfSelector == SEL_SET_MODULE_GUARD || isSetFallback;
+        if (!(isSetGuard && newGuard == address(0)) && !remediation) {
+            _checkModulePosture(safe);
             _checkFallbackPosture(safe);
         }
 
