@@ -57,6 +57,9 @@ services:
     image: ${FERMION_DEMO_IMAGE:-ghcr.io/skalenetwork/fermionwallet-demo:latest}
     environment:
       DEMO_MODE: wallet
+    # Forward SIGTERM to every process of the demo (the entrypoint shell, anvil, the
+    # server), so a restart stops the old chain at once instead of after 10 s.
+    init: true
     ports:
       - "8001:8080"
     healthcheck:
@@ -131,6 +134,15 @@ services:
             raise SystemExit("the chain did not come up")
         print("chain ready", flush=True)
         EOF
+        # On `docker compose restart` the old chain can still answer the wait above
+        # while it shuts down; setup_service then meets the fresh chain before its Safe
+        # contracts exist. So repeat it until it has registered the Safe singletons.
+        for i in $$(seq 60); do
+          python manage.py migrate --noinput >/dev/null && python manage.py setup_service >/dev/null &&
+            python manage.py shell -c "from safe_transaction_service.history.models import SafeMasterCopy as M; raise SystemExit(0 if M.objects.exists() else 1)" >/dev/null &&
+            break
+          echo "Safe singletons not registered yet, retrying" && sleep 3
+        done
         exec docker/web/celery/worker/run.sh
     healthcheck:
       test: ["CMD", "celery", "-A", "config.celery_app", "inspect", "ping"]

@@ -10,7 +10,9 @@ import json
 import os
 import re
 import secrets
+import signal
 import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -373,5 +375,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    # PID 1 in the container: without a handler SIGTERM is ignored, and `docker stop`
+    # (or `docker compose restart`) would wait its full grace period, serving the
+    # old chain's state all the while.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     print(f"FermionWallet demo UI on http://0.0.0.0:{PORT}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
