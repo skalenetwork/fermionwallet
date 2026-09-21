@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FermionWallet — Safe App</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --text: #f6f7f9; --text-muted: #99a1b3;
+    --border: #343a46; --accent: #58c4dc; --accent-strong: #8ad7ea;
+    --accent-soft: #1b3440; --on-accent: #0f1115; --ok: #4ade80; --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px; line-height: 1.55;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  header img { width: 40px; height: 40px; }
+  h1 { font-size: 20px; margin: 0; }
+  h1 small { display: block; font-size: 12px; font-weight: 400; color: var(--text-muted); }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+             color: var(--text-muted); margin: 0 0 10px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }
+  .row .k { color: var(--text-muted); white-space: nowrap; }
+  .row .v { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px;
+            word-break: break-all; text-align: right; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px;
+           font-size: 12px; font-weight: 600; }
+  .badge.ok   { background: rgba(74,222,128,.12); color: var(--ok); }
+  .badge.warn { background: rgba(251,191,36,.12); color: var(--warn); }
+  .badge.off  { background: var(--accent-soft); color: var(--accent-strong); }
+  .note { color: var(--text-muted); font-size: 13px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { color: var(--accent-strong); }
+  .cta { display: inline-block; margin-top: 4px; background: var(--accent);
+         color: var(--on-accent); font-weight: 600; padding: 9px 18px;
+         border-radius: 8px; }
+  .cta:hover { background: var(--accent-strong); color: var(--on-accent); }
+  #status { margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img src="logo.svg" alt="">
+    <h1>FermionWallet<small>Quantum security add-on for your Safe</small></h1>
+  </header>
+
+  <div id="status"><span class="badge off">Connecting to Safe…</span></div>
+
+  <div class="card" id="safe-card" hidden>
+    <h2>Connected Safe</h2>
+    <div class="row"><span class="k">Address</span><span class="v" id="safe-address"></span></div>
+    <div class="row"><span class="k">Chain ID</span><span class="v" id="safe-chain"></span></div>
+    <div class="row"><span class="k">Threshold</span><span class="v" id="safe-threshold"></span></div>
+    <div class="row"><span class="k">Transaction Guard</span><span class="v" id="safe-guard"></span></div>
+    <div class="row"><span class="k">Fallback handler</span><span class="v" id="safe-fallback"></span></div>
+  </div>
+
+  <div class="card">
+    <h2>Quantum protection</h2>
+    <p class="note">
+      FermionWallet adds a second, post-quantum authorization layer to this Safe:
+      every transaction must carry a hybrid ECDSA&nbsp;+&nbsp;XMSS (RFC&nbsp;8391)
+      pre-approval signed on a Ledger, enforced on-chain by the FermionWallet Guard.
+      Your owner keys and address stay exactly as they are — the Guard is an
+      add-on, and it is removable by design (no-brick escape hatch).
+    </p>
+    <p class="note">
+      <strong>Onboarding preflight:</strong> before enrollment, the Safe's fallback
+      handler must be removed or replaced with a vetted one (ERC-1271
+      <code>isValidSignature</code> would otherwise bypass the Guard), and existing
+      token / Permit2 allowances must be revoked. This app checks the handler above.
+    </p>
+    <p class="note">
+      The Guard contracts are in <strong>pre-audit early access</strong> and are not
+      yet deployed to production networks. Enrollment from this app is enabled once
+      canonical deployments are published in
+      <a href="https://github.com/skalenetwork/fermionwallet" target="_blank" rel="noopener">deployments.json</a>.
+    </p>
+    <a class="cta" href="https://skalenetwork.github.io/fermionwallet/#early-access" target="_blank" rel="noopener">Request early access</a>
+  </div>
+
+  <div class="card">
+    <h2>Verify before you trust</h2>
+    <p class="note">
+      Contract source, the full test suite (real Safe v1.5.0 integration), compiled
+      binaries and deployed-codehash manifests ship with every release:
+      <a href="https://github.com/skalenetwork/fermionwallet/releases" target="_blank" rel="noopener">github.com/skalenetwork/fermionwallet/releases</a>
+    </p>
+  </div>
+</div>
+
+<script type="module">
+  import SafeAppsSDK from 'https://cdn.jsdelivr.net/npm/@safe-global/safe-apps-sdk@9.1.0/+esm';
+
+  // Safe storage slots: keccak256("guard_manager.guard.address") and
+  // keccak256("fallback_manager.handler.address").
+  const GUARD_SLOT = '0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8';
+  const FALLBACK_SLOT = '0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5';
+
+  const $ = (id) => document.getElementById(id);
+  const sdk = new SafeAppsSDK();
+  const timeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
+
+  async function slotAddress(safe, slot) {
+    const raw = await sdk.eth.getStorageAt([safe, slot, 'latest']);
+    const addr = '0x' + raw.slice(-40);
+    return /^0x0{40}$/.test(addr) ? null : addr;
+  }
+
+  try {
+    const info = await Promise.race([sdk.safe.getInfo(), timeout(15000)]);
+    $('status').innerHTML = '<span class="badge ok">Connected</span>';
+    $('safe-card').hidden = false;
+    $('safe-address').textContent = info.safeAddress;
+    $('safe-chain').textContent = info.chainId;
+    $('safe-threshold').textContent = info.threshold + ' of ' + info.owners.length + ' owners';
+
+    try {
+      const guard = await slotAddress(info.safeAddress, GUARD_SLOT);
+      $('safe-guard').innerHTML = guard
+        ? guard
+        : '<span class="badge warn">none — not quantum-protected</span>';
+    } catch { $('safe-guard').textContent = 'unavailable'; }
+
+    try {
+      const handler = await slotAddress(info.safeAddress, FALLBACK_SLOT);
+      $('safe-fallback').innerHTML = handler
+        ? '<span class="badge warn">set — must be vetted/removed before enrollment</span>'
+        : '<span class="badge ok">none (ERC-1271 bypass closed)</span>';
+    } catch { $('safe-fallback').textContent = 'unavailable'; }
+  } catch {
+    $('status').innerHTML =
+      '<span class="badge warn">Not running inside a Safe</span> ' +
+      '<span class="note">Open this app from the Safe web UI: Apps → My custom apps → add ' +
+      'https://skalenetwork.github.io/fermionwallet/app/</span>';
+  }
+</script>
+</body>
+</html>

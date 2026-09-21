@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "site/**"
+      - "app/**"
       - "assets/**"
       - ".github/workflows/pages.yml"
 
@@ -29,10 +30,13 @@ jobs:
 
       - name: Assemble site
         run: |
-          mkdir -p _site/assets
+          mkdir -p _site/assets _site/app
           cp site/index.html _site/
           cp assets/fermionwallet-logo.svg _site/assets/
           cp -r assets/ui _site/assets/
+          # Custom Safe App (manifest.json + UI + icon) at /app/
+          cp app/index.html app/manifest.json _site/app/
+          cp assets/fermionwallet-logo.svg _site/app/logo.svg
           touch _site/.nojekyll
 
       - uses: actions/configure-pages@v5

@@ -1,0 +1,5 @@
+{
+  "name": "FermionWallet",
+  "description": "Quantum security add-on for your Safe: hybrid ECDSA + XMSS (RFC 8391) pre-approvals enforced by an on-chain transaction Guard. Ledger-anchored, no key migration, removable by design.",
+  "iconPath": "logo.svg"
+}
