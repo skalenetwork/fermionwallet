@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="400" viewBox="0 0 860 400" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="400" fill="#0c1626"/>
+  <text x="30" y="44" fill="#e8eef7" font-size="18" font-weight="700">Batch signing (PAYLOAD class) — the device never pages through legs</text>
+  <!-- screen 1: batch header -->
+  <g>
+    <rect x="30" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#22354f" stroke-width="2"/>
+    <rect x="48" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="60" y="122" fill="#57d6c0" font-size="11" font-weight="700">SIGN APPROVAL</text>
+    <text x="60" y="150" fill="#e8eef7" font-size="12" font-weight="700">BATCH — 42 legs</text>
+    <text x="60" y="176" fill="#8fa3bf" font-size="10.5">Leaf #184,204</text>
+    <text x="60" y="192" fill="#8fa3bf" font-size="10.5">1 leaf for the whole batch</text>
+    <text x="60" y="262" fill="#5b7292" font-size="9.5">Batch 1 · header</text>
+    <circle cx="122" cy="312" r="12" fill="#22354f"/>
+  </g>
+  <!-- screen 2: totals -->
+  <g>
+    <rect x="235" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#22354f" stroke-width="2"/>
+    <rect x="253" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="265" y="122" fill="#57d6c0" font-size="11" font-weight="700">TOTALS</text>
+    <text x="265" y="152" fill="#e8eef7" font-size="12" font-weight="700">1,240,500.00 USDC</text>
+    <text x="265" y="172" fill="#e8eef7" font-size="11">42 recipients · 0 ETH</text>
+    <text x="265" y="202" fill="#8fa3bf" font-size="9.5">host-supplied,</text>
+    <text x="265" y="216" fill="#8fa3bf" font-size="9.5">informational only</text>
+    <text x="265" y="262" fill="#5b7292" font-size="9.5">Batch 2 · totals</text>
+    <circle cx="327" cy="312" r="12" fill="#22354f"/>
+  </g>
+  <!-- screen 3: dataHash -->
+  <g>
+    <rect x="440" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#22354f" stroke-width="2"/>
+    <rect x="458" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="470" y="122" fill="#57d6c0" font-size="11" font-weight="700">BATCH HASH</text>
+    <text x="470" y="152" fill="#e8eef7" font-size="11.5">0x5e21 09fc</text>
+    <text x="470" y="170" fill="#8fa3bf" font-size="11">…</text>
+    <text x="470" y="188" fill="#e8eef7" font-size="11.5">31d0 aa93</text>
+    <text x="470" y="216" fill="#8fa3bf" font-size="9.5">BINDING — compare with</text>
+    <text x="470" y="230" fill="#8fa3bf" font-size="9.5">the hash in the app</text>
+    <text x="470" y="262" fill="#5b7292" font-size="9.5">Batch 3 · dataHash</text>
+    <circle cx="532" cy="312" r="12" fill="#22354f"/>
+  </g>
+  <!-- screen 4: decision -->
+  <g>
+    <rect x="645" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#22354f" stroke-width="2"/>
+    <rect x="663" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="675" y="122" fill="#57d6c0" font-size="11" font-weight="700">APPROVE BATCH?</text>
+    <text x="675" y="150" fill="#e8eef7" font-size="11.5">Hold to approve</text>
+    <text x="675" y="176" fill="#e05555" font-size="11.5">Tap to reject</text>
+    <text x="675" y="206" fill="#8fa3bf" font-size="9.5">validity + context screens</text>
+    <text x="675" y="220" fill="#8fa3bf" font-size="9.5">precede this (as Flow 2)</text>
+    <text x="675" y="262" fill="#5b7292" font-size="9.5">Batch · decision</text>
+    <circle cx="737" cy="312" r="12" fill="#57d6c0"/>
+  </g>
+  <text x="30" y="374" fill="#5b7292" font-size="11.5">Division of labor: verify legs in the app (per-leg table, Expand all, Export CSV) — verify the hash on the device. The hash binds all 42 legs byte-for-byte; the Guard re-decodes every leg on-chain.</text>
+</svg>

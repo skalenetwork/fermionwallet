@@ -1,0 +1,3 @@
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+@safe-global/safe-contracts/contracts/=lib/safe-smart-account/contracts/
+forge-std/=lib/forge-std/src/
