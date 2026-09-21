@@ -28,7 +28,9 @@ No signature exists until all eight screens are traversed and the decision scree
 7. **Policy hash** — first/last 8 hex; compare against the hash shown in the app.
 8. **Decision** — hold to approve (counter commits in SE NVRAM *before* the signature streams out), single tap to reject. 60 s idle = reject; reject/timeout consumes no leaf.
 
-**PAYLOAD/ADMIN classes** reuse this flow with screens 2–4 replaced by target address, native value, and payload `dataHash`; ADMIN additionally shows the `ADMIN ACTION — affects Safe governance` warning header. A **batch** shows `BATCH — n legs`, per-token totals (informational), and the binding batch `dataHash` — legs are reviewed in the app, the hash is verified on the device.
+**PAYLOAD/ADMIN classes** reuse this flow with screens 2–4 replaced by target address, native value, and payload `dataHash`; ADMIN additionally shows the `ADMIN ACTION — affects Safe governance` warning header. A **batch** shows `BATCH — n legs`, per-token totals (informational), and the binding batch `dataHash` — legs are reviewed in the app, the hash is verified on the device:
+
+![Batch signing screens](./assets/ui/ledger/ledger-batch.svg)
 
 ## Denial flow — red frames, zero leaf cost
 
