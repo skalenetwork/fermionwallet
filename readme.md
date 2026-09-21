@@ -8,6 +8,10 @@
 
 <p align="center"><a href="https://skalenetwork.github.io/fermionwallet/"><b>🌐 skalenetwork.github.io/fermionwallet</b></a> — product site</p>
 
+> **Official Safe App URL:** `https://skalenetwork.github.io/fermionwallet/app/`
+>
+> Add it in Safe{Wallet} under *Apps → My custom apps → Add custom Safe App*. Only ever copy this URL from this README — never from an email, chat message or search result. The app is a preview: it shows your Safe's FermionWallet readiness (Guard and fallback-handler status); approvals and the key ceremony are not live yet, and the contracts are not audited.
+
 Banks, qualified custodians, and enterprise treasuries already run the gold-standard stack: Gnosis Safe, policy engines, hardware keys, and regulated operations. FermionWallet does not replace that stack. It **hardens it** — adding a cryptographically independent second gate that sits in the execution path of every high-value transfer.
 
 If a signer is compromised, a policy is misconfigured, or classical signatures eventually fall to quantum computers, the transfer still does not move. Not until a separate, domain-bound, post-quantum authorization says yes.
