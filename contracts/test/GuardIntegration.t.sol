@@ -1302,6 +1302,31 @@ contract GuardIntegrationTest is Test {
         _revokeAndReregister();
         assertFalse(guard.allowedSelectors(address(safe), IERC20.transfer.selector));
     }
+
+    /// Removing `transfer` from the permit-list must actually stop TRANSFER-class
+    /// execution — directly and inside batches — even with a matching approval.
+    function test_DisabledTransferSelector_BlocksTransfers() public {
+        _disableTransferSelector();
+        bytes memory pay = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
+        _createTransfer(recipient, 1 ether, 2, bytes32(0));
+        _expectExecRevertWith(
+            address(token),
+            0,
+            pay,
+            abi.encodeWithSelector(FermionWalletGuard.SelectorNotAllowed.selector, address(safe), IERC20.transfer.selector)
+        );
+
+        bytes memory batch = abi.encodeWithSignature("multiSend(bytes)", _leg(address(token), 0, pay));
+        _createPayload(address(msco), 0, keccak256(batch), 3);
+        _expectExecRevertOp(
+            address(msco),
+            0,
+            batch,
+            Enum.Operation.DelegateCall,
+            abi.encodeWithSelector(FermionWalletGuard.SelectorNotAllowed.selector, address(safe), IERC20.transfer.selector)
+        );
+        assertEq(token.balanceOf(recipient), 0);
+    }
 }
 
 /// Re-enters Safe.execTransaction twice from inside an approved outer transaction:
