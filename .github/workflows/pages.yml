@@ -2,6 +2,12 @@ name: Deploy product site
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "assets/**"
+      - ".github/workflows/pages.yml"
 
 permissions:
   contents: read
