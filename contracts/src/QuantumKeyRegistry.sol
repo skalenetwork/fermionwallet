@@ -214,16 +214,15 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
         uint256 nonce = nonces(safe);
 
         // Owner threshold co-signs the root itself (anti-substitution property).
-        bytes32 ownerDigest = _hashTypedDataV4(
+        _checkOwnerSignatures(
+            safe,
             keccak256(
                 abi.encode(
                     APPROVE_KEY_TYPEHASH, safe, quantumAdmin, xmssRoot, xmssSeed, treeHeight, parameterSet, nonce, validUntil
                 )
-            )
+            ),
+            ownerSignatures
         );
-        // Verified via the legacy overload (portable across Safe 1.3.0/1.4.1/1.5.0);
-        // the relayer never counts toward the threshold (executor is this contract).
-        ISafeLegacySignatures(safe).checkSignatures(ownerDigest, "", ownerSignatures);
 
         _verifyAttestation(safe, quantumAdmin, xmssRoot, xmssSeed, treeHeight, parameterSet, nonce, ledgerAttestation);
 
@@ -256,7 +255,8 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
         if (block.timestamp > validUntil) revert SignatureExpired(validUntil);
 
         uint256 nonce = nonces(safe);
-        bytes32 digest = _hashTypedDataV4(
+        bytes32 digest = _checkOwnerSignatures(
+            safe,
             keccak256(
                 abi.encode(
                     ROTATE_KEY_TYPEHASH,
@@ -270,10 +270,9 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
                     nonce,
                     validUntil
                 )
-            )
+            ),
+            ownerSignatures
         );
-
-        ISafeLegacySignatures(safe).checkSignatures(digest, "", ownerSignatures);
         _verifyAttestation(safe, newQuantumAdmin, newXmssRoot, newXmssSeed, treeHeight, parameterSet, nonce, ledgerAttestation);
         // Possession proof: the old key signs the same digest, one leaf consumed.
         _verifyAndConsumeXmss(oldKey.quantumKeyId, digest, oldKeyXmssProof);
@@ -305,10 +304,11 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
         KeyRegistration storage k = _activeKey(safe);
         if (block.timestamp > validUntil) revert SignatureExpired(validUntil);
 
-        bytes32 digest = _hashTypedDataV4(
-            keccak256(abi.encode(REVOKE_KEY_TYPEHASH, safe, k.quantumKeyId, _useNonce(safe), validUntil))
+        _checkOwnerSignatures(
+            safe,
+            keccak256(abi.encode(REVOKE_KEY_TYPEHASH, safe, k.quantumKeyId, _useNonce(safe), validUntil)),
+            ownerSignatures
         );
-        ISafeLegacySignatures(safe).checkSignatures(digest, "", ownerSignatures);
         // The nonce is consumed above: a request's owner signatures work exactly once,
         // so nobody can replay them from chain history to re-arm a cancelled request.
         // (Side effect by design: in-flight ceremony signatures also go stale.)
@@ -401,6 +401,23 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
             xmssRoot == bytes32(0) || xmssSeed == bytes32(0) || parameterSet == bytes32(0) || treeHeight == 0
                 || treeHeight > XMSS.MAX_HEIGHT
         ) revert InvalidKeyParams();
+    }
+
+    /// Owner-threshold check of an EIP-712 message of this registry; returns its digest.
+    /// Verified via the legacy overload (portable across Safe 1.3.0/1.4.1/1.5.0); the
+    /// relayer never counts toward the threshold (executor is this contract). `data`
+    /// MUST be the digest's preimage (0x1901 ‖ domainSeparator ‖ structHash): v1.3.0/
+    /// v1.4.1 require keccak256(data) == dataHash for contract-owner (EIP-1271)
+    /// signatures (GS027) and hand `data` — not the hash — to the owner's legacy
+    /// isValidSignature(bytes,bytes). v1.5.0 ignores it.
+    function _checkOwnerSignatures(address safe, bytes32 structHash, bytes calldata ownerSignatures)
+        private
+        view
+        returns (bytes32 digest)
+    {
+        bytes memory preimage = abi.encodePacked(hex"1901", _domainSeparatorV4(), structHash);
+        digest = keccak256(preimage);
+        ISafeLegacySignatures(safe).checkSignatures(digest, preimage, ownerSignatures);
     }
 
     function _verifyAttestation(
