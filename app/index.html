@@ -75,8 +75,8 @@
     </p>
     <p class="note">
       <strong>Onboarding preflight:</strong> before enrollment, the Safe's fallback
-      handler must be removed or replaced with a vetted one (ERC-1271
-      <code>isValidSignature</code> would otherwise bypass the Guard), and existing
+      handler must be removed (ERC-1271 <code>isValidSignature</code> would otherwise
+      bypass the Guard), and existing
       token / Permit2 allowances must be revoked. This app checks the handler above.
     </p>
     <p class="note">
@@ -134,7 +134,7 @@
     try {
       const handler = await slotAddress(info.safeAddress, FALLBACK_SLOT);
       $('safe-fallback').innerHTML = handler
-        ? '<span class="badge warn">set — must be vetted/removed before enrollment</span>'
+        ? '<span class="badge warn">set — must be removed before enrollment</span>'
         : '<span class="badge ok">none (ERC-1271 bypass closed)</span>';
     } catch { $('safe-fallback').textContent = 'unavailable'; }
   } catch {

@@ -33,8 +33,21 @@ You do not migrate anything. Your Safe, owners, threshold, and history stay exac
 |---|---|
 | Safe version 1.3.0+ | Guards don't exist before 1.3.0 |
 | **No enabled modules** (or Safe 1.5+ with a module guard) | Modules execute *around* the Guard — an enabled module is an open back door, so it must be removed first or covered by a FermionWallet module guard. A *module guard* is a second Safe hook (`setModuleGuard`, Safe 1.5+) that vets module-initiated transactions the way the ordinary Guard vets owner-signed ones; FermionWallet uses one contract for both. The preflight reads your Safe's module list on-chain and shows it to you. **There is no chicken-and-egg problem here:** removing a module (`disableModule`) is an ordinary owner-signed Safe transaction executed *before* the FermionWallet Guard is enabled — at that point nothing requires quantum approval yet. Remove unneeded modules first, then proceed; on Safe 1.5+ you may instead keep them and let Step 3 install the module guard alongside the transaction guard |
+| **No fallback handler** | Safe's standard fallback handler approves signed messages (ERC-1271 `isValidSignature`) using only the owners' classical keys, with no Safe transaction — Permit, Permit2 and order protocols could then move funds without the Guard ever running. Remove it (`setFallbackHandler(address(0))`) as an ordinary owner-signed Safe transaction *before* the key ceremony; registration is refused while one is set. See [Working without a fallback handler](#working-without-a-fallback-handler) |
 | A designated Quantum Administrator with a Ledger running the FermionWallet XMSS app | The quantum key must exist before enforcement starts |
 | Owners available to sign | Two Safe transactions and one co-signed ceremony need the threshold |
+
+### Working without a fallback handler
+
+A guarded Safe runs with no fallback handler. What that means day to day:
+
+| Works as normal | Doesn't work (yet) |
+|---|---|
+| Holding, receiving and sending ERC-20 tokens | Signed messages: token `permit`, Permit2, CowSwap orders, "sign in with Safe" |
+| Holding, receiving and sending ETH | Receiving NFTs via `safeTransferFrom` (ERC-721) and ERC-1155 tokens — plain ERC-721 `transferFrom` still works |
+| Plain ERC-721 `transferFrom` | Tokens that call back on receipt (ERC-1363 `transferAndCall`, ERC-777 `send`) — their ERC-20-style `transfer` still works |
+
+Safe{Wallet} may warn that no fallback handler is set; that is expected. Support for signed messages will come from a FermionWallet handler that also requires a quantum approval for each message.
 
 **Step 1 — Open the app.** In Safe{Wallet}: *Apps → add custom Safe App → FermionWallet*. Get the app URL **only** from the FermionWallet GitHub README or the `fermionwallet.eth` ENS record — never from an email, chat message, or search result (a phishing clone at a look-alike URL is the cheapest possible attack on this step). On load, the app displays the Guard and Registry addresses it will use next to the published canonical values and refuses to continue if they differ. Connect while the Safe has **no** FermionWallet Guard yet; everything below happens through ordinary Safe transactions your owners already know how to sign.
 

@@ -4,6 +4,9 @@ pragma solidity ^0.8.24;
 import {ISafe} from "@safe-global/safe-contracts/contracts/interfaces/ISafe.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {BitMaps} from "@openzeppelin/contracts/utils/structs/BitMaps.sol";
 import {XMSS} from "./XMSS.sol";
 
 /// @dev Version-portable owner-threshold check. Safe v1.3.0 and v1.4.1 expose ONLY
@@ -31,8 +34,9 @@ interface ISafeLegacySignatures {
 ///         storage — see fermionwallet-guard-module.md, "Module-guard architecture").
 ///         The used-leaf bitmap lives here because leaf state is a property of the
 ///         key, not of any particular approval.
-abstract contract QuantumKeyRegistry is EIP712 {
+abstract contract QuantumKeyRegistry is EIP712, Nonces {
     using SignatureChecker for address;
+    using BitMaps for BitMaps.BitMap;
 
     // ── Types ───────────────────────────────────────────────────────────────
 
@@ -113,10 +117,9 @@ abstract contract QuantumKeyRegistry is EIP712 {
     /// Sticky enrollment flag: set at first registration, never cleared, so the
     /// emergency de-guard path stays reachable even after key revocation.
     mapping(address safe => bool) public enrolledSafe;
-    mapping(address safe => uint256) public registryNonce;
-    /// Used-leaf bitmap per key: word index => 256 leaf flags. Consensus-critical —
-    /// XMSS leaf reuse enables forgery (quantum-key-registry.md, "on-chain only").
-    mapping(bytes32 quantumKeyId => mapping(uint256 => uint256)) private _usedLeaves;
+    /// Used-leaf bitmap per key. Consensus-critical — XMSS leaf reuse enables forgery
+    /// (quantum-key-registry.md, "on-chain only").
+    mapping(bytes32 quantumKeyId => BitMaps.BitMap) private _usedLeaves;
     /// Pending emergency revocations: safe => executableAt (0 = none pending).
     mapping(address safe => uint64) public keyRevocationExecutableAt;
     /// The exact key each pending revocation names. Execution revokes THIS key only:
@@ -149,7 +152,19 @@ abstract contract QuantumKeyRegistry is EIP712 {
     }
 
     function isLeafUsed(bytes32 quantumKeyId, uint32 leafIndex) public view returns (bool) {
-        return _usedLeaves[quantumKeyId][leafIndex >> 8] & (1 << (leafIndex & 0xff)) != 0;
+        return _usedLeaves[quantumKeyId].get(leafIndex);
+    }
+
+    /// Per-Safe ceremony nonce (OpenZeppelin `Nonces`). Bound into every owner-signed
+    /// registry digest and consumed by each registration, rotation, revocation request
+    /// and revocation — so every owner-signed registry message is single-use.
+    function registryNonce(address safe) public view returns (uint256) {
+        return nonces(safe);
+    }
+
+    modifier onlySafe(address safe) {
+        if (msg.sender != safe) revert NotAuthorized();
+        _;
     }
 
     /// True iff `account` is currently an owner of `safe`. Never reverts: a Safe that
@@ -196,7 +211,7 @@ abstract contract QuantumKeyRegistry is EIP712 {
         if (rootRegistered[safe][xmssRoot]) revert RootAlreadyRegistered(xmssRoot);
         if (block.timestamp > validUntil) revert SignatureExpired(validUntil);
 
-        uint256 nonce = registryNonce[safe];
+        uint256 nonce = nonces(safe);
 
         // Owner threshold co-signs the root itself (anti-substitution property).
         bytes32 ownerDigest = _hashTypedDataV4(
@@ -240,7 +255,7 @@ abstract contract QuantumKeyRegistry is EIP712 {
         if (rootRegistered[safe][newXmssRoot]) revert RootAlreadyRegistered(newXmssRoot);
         if (block.timestamp > validUntil) revert SignatureExpired(validUntil);
 
-        uint256 nonce = registryNonce[safe];
+        uint256 nonce = nonces(safe);
         bytes32 digest = _hashTypedDataV4(
             keccak256(
                 abi.encode(
@@ -291,9 +306,12 @@ abstract contract QuantumKeyRegistry is EIP712 {
         if (block.timestamp > validUntil) revert SignatureExpired(validUntil);
 
         bytes32 digest = _hashTypedDataV4(
-            keccak256(abi.encode(REVOKE_KEY_TYPEHASH, safe, k.quantumKeyId, registryNonce[safe], validUntil))
+            keccak256(abi.encode(REVOKE_KEY_TYPEHASH, safe, k.quantumKeyId, _useNonce(safe), validUntil))
         );
         ISafeLegacySignatures(safe).checkSignatures(digest, "", ownerSignatures);
+        // The nonce is consumed above: a request's owner signatures work exactly once,
+        // so nobody can replay them from chain history to re-arm a cancelled request.
+        // (Side effect by design: in-flight ceremony signatures also go stale.)
 
         uint64 executableAt = uint64(block.timestamp) + EMERGENCY_ROTATION_TIMELOCK;
         keyRevocationExecutableAt[safe] = executableAt;
@@ -305,9 +323,8 @@ abstract contract QuantumKeyRegistry is EIP712 {
     ///         The Quantum Administrator's key alone must NOT be able to cancel: this is
     ///         the owners' remedy for a lost or stolen Ledger, and a thief holding the
     ///         Ledger could otherwise block it forever.
-    function cancelKeyRevocation(address safe) external {
+    function cancelKeyRevocation(address safe) external onlySafe(safe) {
         KeyRegistration storage k = _activeKey(safe);
-        if (msg.sender != safe) revert NotAuthorized();
         if (keyRevocationExecutableAt[safe] == 0) revert RevocationNotRequested(safe);
         keyRevocationExecutableAt[safe] = 0;
         keyRevocationKeyId[safe] = bytes32(0);
@@ -332,7 +349,7 @@ abstract contract QuantumKeyRegistry is EIP712 {
         KeyRegistration storage k = _keys[keyId];
         k.status = KeyStatus.Revoked;
         safeToQuantumKey[safe] = bytes32(0);
-        registryNonce[safe] = registryNonce[safe] + 1; // kill concurrent stale ceremonies
+        _useNonce(safe); // kill concurrent stale ceremonies
         emit QuantumKeyRevoked(keyId, safe);
     }
 
@@ -351,19 +368,18 @@ abstract contract QuantumKeyRegistry is EIP712 {
         XMSS.Signature memory sig = abi.decode(xmssSignature, (XMSS.Signature));
 
         if (sig.authPath.length != k.treeHeight) {
-            revert LeafIndexMismatch(k.treeHeight, uint32(sig.authPath.length));
+            revert LeafIndexMismatch(k.treeHeight, SafeCast.toUint32(sig.authPath.length));
         }
         leafIndex = sig.leafIdx;
 
-        uint256 word = _usedLeaves[keyId][leafIndex >> 8];
-        uint256 bit = 1 << (leafIndex & 0xff);
-        if (word & bit != 0) revert LeafAlreadyUsed(keyId, leafIndex);
+        BitMaps.BitMap storage used = _usedLeaves[keyId];
+        if (used.get(leafIndex)) revert LeafAlreadyUsed(keyId, leafIndex);
 
         if (!XMSS.verify(digest, sig, XMSS.PublicKey({root: k.xmssRoot, seed: k.xmssSeed}))) {
             revert InvalidXmssSignature();
         }
 
-        _usedLeaves[keyId][leafIndex >> 8] = word | bit;
+        used.set(leafIndex);
         unchecked {
             ++k.useCounter;
         }
@@ -430,7 +446,7 @@ abstract contract QuantumKeyRegistry is EIP712 {
         safeToQuantumKey[safe] = quantumKeyId;
         rootRegistered[safe][xmssRoot] = true;
         enrolledSafe[safe] = true;
-        registryNonce[safe] = nonce + 1;
+        _useCheckedNonce(safe, nonce);
     }
 
     /// Hook for the Guard: initialize per-Safe policy defaults at first enrollment.

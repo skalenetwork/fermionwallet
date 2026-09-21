@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {ERC20Mock as MockToken} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
 import {ITransactionGuard} from "@safe-global/safe-contracts/contracts/base/GuardManager.sol";
 
@@ -82,20 +84,6 @@ contract MockSafe {
     }
 }
 
-contract MockToken {
-    mapping(address => uint256) public balanceOf;
-
-    function mint(address to, uint256 amount) external {
-        balanceOf[to] += amount;
-    }
-
-    function transfer(address to, uint256 amount) external returns (bool) {
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
-        return true;
-    }
-}
-
 contract Placeholder {}
 
 contract FermionWalletGuardTest is Test {
@@ -124,7 +112,6 @@ contract FermionWalletGuardTest is Test {
     address admin;
     address owner = makeAddr("owner");
     address stranger = makeAddr("stranger");
-    address guardian = makeAddr("guardian");
     address recipient = makeAddr("recipient");
 
     bytes32 keyId;
@@ -135,7 +122,7 @@ contract FermionWalletGuardTest is Test {
     function setUp() public {
         admin = vm.addr(adminPk);
         guard = new FermionWalletGuard(
-            address(new Placeholder()), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, 100, 16, address(this), guardian
+            address(new Placeholder()), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, 100, 16
         );
         safe = new MockSafe(owner);
         token = new MockToken();
@@ -161,12 +148,6 @@ contract FermionWalletGuardTest is Test {
         vm.prank(stranger);
         vm.expectRevert(QuantumKeyRegistry.NotAuthorized.selector);
         guard.pauseSafe(address(safe));
-    }
-
-    function test_enrolledSafeCannotPauseEveryoneGlobally() public {
-        vm.prank(address(safe));
-        vm.expectRevert(QuantumKeyRegistry.NotAuthorized.selector);
-        guard.pause();
     }
 
     function test_safePausesItselfWithoutQuantumApproval() public {
@@ -250,16 +231,6 @@ contract FermionWalletGuardTest is Test {
         _approveAdminRemoval();
         vm.prank(owner);
         guard.pauseSafe(address(safe));
-
-        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
-        safe.exec(address(safe), 0, abi.encodeWithSignature("setGuard(address)", address(0)));
-        assertEq(safe.guard(), address(0));
-    }
-
-    function test_adminApprovedRemovalWorksWhileGloballyPaused() public {
-        _approveAdminRemoval();
-        vm.prank(guardian);
-        guard.pause();
 
         vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
         safe.exec(address(safe), 0, abi.encodeWithSignature("setGuard(address)", address(0)));
@@ -393,6 +364,75 @@ contract FermionWalletGuardTest is Test {
 
     function approveTransferExternal(uint256 amount, bytes32 txHash) external returns (bytes32) {
         return _approveTransfer(amount, txHash);
+    }
+
+    // ── Registry key and leaf checks (formerly covered via XMSSStateful) ─────
+
+    function test_registryRejectsZeroKey() public {
+        MockSafe other = new MockSafe(owner);
+        vm.expectRevert(QuantumKeyRegistry.InvalidKeyParams.selector);
+        guard.registerQuantumKey(
+            address(other), admin, bytes32(0), bytes32(uint256(1)), 4, PARAM_SET, block.timestamp + 1 days, "", "owners-ok"
+        );
+    }
+
+    function test_registryRejectsWrongHeightSignature() public {
+        PreApprovalEngine.PreApprovalRequest memory req = _baseRequest(bytes32(0));
+        req.token = address(token);
+        req.recipient = recipient;
+        req.amount = 1;
+        (bytes memory ecdsa, bytes memory encoded) = _signRequest(req, 0);
+
+        XMSS.Signature memory sig = abi.decode(encoded, (XMSS.Signature));
+        bytes32[] memory shortPath = new bytes32[](3);
+        for (uint256 i = 0; i < 3; ++i) {
+            shortPath[i] = sig.authPath[i];
+        }
+        sig.authPath = shortPath;
+
+        vm.expectRevert(abi.encodeWithSelector(QuantumKeyRegistry.LeafIndexMismatch.selector, uint32(4), uint32(3)));
+        guard.createPreApproval(req, ecdsa, abi.encode(sig));
+    }
+
+    // ── Non-upgradeable once deployed ───────────────────────────────────────
+
+    /// The deployed Guard must contain no opcode that could change or replace its
+    /// logic: no DELEGATECALL (proxy/upgrade pattern), SELFDESTRUCT, CALLCODE, or
+    /// CREATE/CREATE2. Scans the runtime code, skipping PUSH data and the trailing
+    /// CBOR metadata, so any future upgrade hook fails CI.
+    function test_guardBytecodeHasNoUpgradeOrSelfDestructPath() public view {
+        bytes memory code = address(guard).code;
+        uint256 metadataLength = (uint256(uint8(code[code.length - 2])) << 8) | uint8(code[code.length - 1]);
+        uint256 end = code.length - metadataLength - 2;
+        for (uint256 i = 0; i < end; ++i) {
+            uint8 op = uint8(code[i]);
+            assertTrue(op != 0xf4, "DELEGATECALL");
+            assertTrue(op != 0xff, "SELFDESTRUCT");
+            assertTrue(op != 0xf2, "CALLCODE");
+            assertTrue(op != 0xf0 && op != 0xf5, "CREATE/CREATE2");
+            if (op >= 0x60 && op <= 0x7f) i += op - 0x5f; // skip PUSH1..PUSH32 immediates
+        }
+    }
+
+    // ── Queue: dead entries never count toward the cap ──────────────────────
+
+    /// A commitment queue full of expired approvals must not lock that payment out
+    /// forever — creation prunes dead entries before checking the cap.
+    function test_queueOfExpiredApprovalsDoesNotJam() public {
+        guard = new FermionWalletGuard(
+            address(new Placeholder()), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, 100, 2
+        );
+        keyId = _register(safe, 4);
+        nextLeaf = 0;
+        safe.setGuardDirect(address(guard));
+
+        _approveTransfer(300, bytes32(0));
+        _approveTransfer(300, bytes32(0));
+        vm.warp(block.timestamp + 16 minutes); // both expire unused; the cap (2) is reached
+
+        _approveTransfer(300, bytes32(0));
+        safe.exec(address(token), 0, _transferData(300));
+        assertEq(token.balanceOf(recipient), 300);
     }
 
     // ── Fix 7: an XMSS root can be registered only once, ever ────────────────
@@ -543,7 +583,7 @@ contract FermionWalletGuardTest is Test {
     }
 
     function _transferData(uint256 amount) internal view returns (bytes memory) {
-        return abi.encodeCall(MockToken.transfer, (recipient, amount));
+        return abi.encodeCall(IERC20.transfer, (recipient, amount));
     }
 
     function _sign(bytes32 structHash) internal view returns (bytes memory) {

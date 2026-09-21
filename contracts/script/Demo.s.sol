@@ -99,7 +99,7 @@ contract Demo is Script {
 
         // Demo-friendly timelocks: ADMIN 60 s, emergency de-guard 120 s.
         guard = new FermionWalletGuard(
-            address(msco), 60, 120, 4, 8, vm.addr(DEPLOYER_PK), vm.addr(DEPLOYER_PK)
+            address(msco), 60, 120, 4, 8
         );
 
         token.mint(address(safe), 1_000_000 ether);

@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {ERC20Mock as MockToken} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {Safe} from "@safe-global/safe-contracts/contracts/Safe.sol";
 import {SafeProxyFactory} from "@safe-global/safe-contracts/contracts/proxies/SafeProxyFactory.sol";
@@ -12,26 +14,6 @@ import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
 import {PreApprovalEngine} from "../src/PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "../src/QuantumKeyRegistry.sol";
 import {XMSS} from "../src/XMSS.sol";
-
-/// Minimal ERC-20 for transfer-path tests.
-contract MockToken {
-    string public constant name = "Mock";
-    mapping(address => uint256) public balanceOf;
-
-    function mint(address to, uint256 amount) external {
-        balanceOf[to] += amount;
-    }
-
-    function transfer(address to, uint256 amount) external returns (bool) {
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
-        return true;
-    }
-
-    function approve(address, uint256) external pure returns (bool) {
-        return true;
-    }
-}
 
 /// Malicious "token": its transfer() re-enters Safe.execTransaction with a fully
 /// signed, pre-approved inner transaction. The Guard's transient depth flag must
@@ -75,7 +57,6 @@ contract GuardIntegrationTest is Test {
     address internal owner3 = vm.addr(OWNER3_PK);
     address internal ledger = vm.addr(LEDGER_PK);
     address internal deployer = makeAddr("deployer");
-    address internal guardian = makeAddr("guardian");
     address internal relayer = makeAddr("relayer");
     address internal recipient = makeAddr("recipient");
 
@@ -135,7 +116,7 @@ contract GuardIntegrationTest is Test {
         safe = Safe(payable(factory.createProxyWithNonce(address(singleton), initializer, 0xF3E)));
 
         guard = new FermionWalletGuard(
-            address(msco), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, MAX_BATCH_LEGS, MAX_QUEUE, deployer, guardian
+            address(msco), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, MAX_BATCH_LEGS, MAX_QUEUE
         );
 
         token.mint(address(safe), 1_000_000 ether);
@@ -164,8 +145,8 @@ contract GuardIntegrationTest is Test {
         assertEq(uint8(k.status), uint8(QuantumKeyRegistry.KeyStatus.Active));
         assertEq(guard.registryNonce(address(safe)), 1);
         // Enrollment hook: transfer allowed, approve not.
-        assertTrue(guard.allowedSelectors(address(safe), MockToken.transfer.selector));
-        assertFalse(guard.allowedSelectors(address(safe), MockToken.approve.selector));
+        assertTrue(guard.allowedSelectors(address(safe), IERC20.transfer.selector));
+        assertFalse(guard.allowedSelectors(address(safe), IERC20.approve.selector));
     }
 
     function test_DoubleRegistrationReverts() public {
@@ -181,7 +162,7 @@ contract GuardIntegrationTest is Test {
     /// The production-checklist integration test: pin the exact hash the Safe will
     /// compute, then verify the Guard's nonce()-1 recomputation matches it in-flight.
     function test_Tier1_PinnedTransfer_Executes() public {
-        bytes memory data = abi.encodeCall(MockToken.transfer, (recipient, 5 ether));
+        bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 5 ether));
         bytes32 pin = safe.getTransactionHash(
             address(token), 0, data, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
         );
@@ -198,7 +179,7 @@ contract GuardIntegrationTest is Test {
 
     function test_Tier2_FieldMatchedTransfer_Executes() public {
         bytes32 id = _createTransfer(recipient, 7 ether, 1, bytes32(0));
-        _safeExec(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 7 ether)), Enum.Operation.Call);
+        _safeExec(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 7 ether)), Enum.Operation.Call);
         assertEq(token.balanceOf(recipient), 7 ether);
         assertTrue(guard.getPreApproval(id).used);
     }
@@ -206,31 +187,31 @@ contract GuardIntegrationTest is Test {
     function test_Tier2_FifoOrder() public {
         bytes32 first = _createTransfer(recipient, 3 ether, 1, bytes32(0));
         bytes32 second = _createTransfer(recipient, 3 ether, 2, bytes32(0));
-        _safeExec(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 3 ether)), Enum.Operation.Call);
+        _safeExec(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 3 ether)), Enum.Operation.Call);
         assertTrue(guard.getPreApproval(first).used);
         assertFalse(guard.getPreApproval(second).used);
     }
 
     function test_NoApproval_Reverts() public {
-        _expectExecRevert(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 1 ether)));
+        _expectExecRevert(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)));
     }
 
     function test_AmountMismatch_Reverts() public {
         _createTransfer(recipient, 5 ether, 1, bytes32(0));
-        _expectExecRevert(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 6 ether)));
+        _expectExecRevert(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 6 ether)));
     }
 
     function test_ExpiredApproval_Reverts() public {
         _createTransfer(recipient, 5 ether, 1, bytes32(0));
         vm.warp(block.timestamp + 2 days + 1); // beyond validTo
-        _expectExecRevert(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 5 ether)));
+        _expectExecRevert(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 5 ether)));
     }
 
     function test_RevokedApproval_Reverts() public {
         bytes32 id = _createTransfer(recipient, 5 ether, 1, bytes32(0));
         vm.prank(ledger);
         guard.revokePreApproval(id);
-        _expectExecRevert(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 5 ether)));
+        _expectExecRevert(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 5 ether)));
     }
 
     // ═════════════════════════ Hybrid signature rules ═══════════════════════
@@ -281,8 +262,8 @@ contract GuardIntegrationTest is Test {
         _expectExecRevertWith(
             address(token),
             0,
-            abi.encodeCall(MockToken.approve, (recipient, 1 ether)),
-            abi.encodeWithSelector(FermionWalletGuard.DeniedSelector.selector, MockToken.approve.selector)
+            abi.encodeCall(IERC20.approve, (recipient, 1 ether)),
+            abi.encodeWithSelector(FermionWalletGuard.DeniedSelector.selector, IERC20.approve.selector)
         );
     }
 
@@ -298,7 +279,7 @@ contract GuardIntegrationTest is Test {
     }
 
     function test_GasRefund_Reverts() public {
-        bytes memory data = abi.encodeCall(MockToken.transfer, (recipient, 1 ether));
+        bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
         bytes32 txHash = safe.getTransactionHash(
             address(token), 0, data, Enum.Operation.Call, 0, 0, 1, address(0), address(0), safe.nonce()
         );
@@ -336,7 +317,7 @@ contract GuardIntegrationTest is Test {
         // Inner: a legitimately approved real-token transfer the attacker will replay.
         _createTransfer(recipient, 2 ether, 2, bytes32(0));
 
-        bytes memory innerData = abi.encodeCall(MockToken.transfer, (recipient, 2 ether));
+        bytes memory innerData = abi.encodeCall(IERC20.transfer, (recipient, 2 ether));
         bytes32 innerHash = safe.getTransactionHash(
             address(token), 0, innerData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce() + 1
         );
@@ -345,7 +326,7 @@ contract GuardIntegrationTest is Test {
         // The nested inner execTransaction reverts inside the Guard
         // (NestedSafeTransaction); with safeTxGas == 0 the outer Safe then reverts
         // the whole transaction — the attack is dead and no tokens move.
-        bytes memory outerData = abi.encodeCall(MockToken.transfer, (recipient, 1 ether));
+        bytes memory outerData = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
         bytes32 outerHash = safe.getTransactionHash(
             address(attacker), 0, outerData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
         );
@@ -395,26 +376,27 @@ contract GuardIntegrationTest is Test {
     }
 
     function test_SetSelectorPolicy_DenyListImmutable() public {
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.DeniedSelector.selector, MockToken.approve.selector));
+        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.DeniedSelector.selector, IERC20.approve.selector));
         vm.prank(address(safe));
-        guard.setSelectorPolicy(address(safe), MockToken.approve.selector, true);
+        guard.setSelectorPolicy(address(safe), IERC20.approve.selector, true);
     }
 
     // ═══════════════ Emergency de-guard — the no-brick invariant ════════════
 
-    /// Production-checklist mandatory test: the escape hatch works WHILE GLOBALLY
-    /// PAUSED and with the quantum key presumed lost — request, wait out the timelock,
+    /// Production-checklist mandatory test: the escape hatch works WHILE PAUSED
+    /// and with the quantum key presumed lost — request, wait out the timelock,
     /// detach the Guard with setGuard(0), and confirm the Safe is free. End to end.
     function test_EmergencyDeGuard_WorksWhilePaused_EndToEnd() public {
-        vm.prank(guardian);
-        guard.pause();
+        _safeExec(
+            address(guard), 0, abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe))), Enum.Operation.Call
+        );
 
         // Any normal transaction is now dead…
         _expectExecRevertWith(
             address(token),
             0,
-            abi.encodeCall(MockToken.transfer, (recipient, 1 ether)),
-            abi.encodeWithSelector(FermionWalletGuard.GuardPausedError.selector)
+            abi.encodeCall(IERC20.transfer, (recipient, 1 ether)),
+            abi.encodeWithSelector(FermionWalletGuard.SafePausedError.selector, address(safe))
         );
 
         // …but the escape hatch is not (check-order rule #1).
@@ -431,7 +413,7 @@ contract GuardIntegrationTest is Test {
         _safeExec(address(safe), 0, abi.encodeWithSignature("setGuard(address)", address(0)), Enum.Operation.Call);
 
         // The Safe is unguarded: plain owner-threshold transfers work again.
-        _safeExec(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 9 ether)), Enum.Operation.Call);
+        _safeExec(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 9 ether)), Enum.Operation.Call);
         assertEq(token.balanceOf(recipient), 9 ether);
     }
 
@@ -455,7 +437,7 @@ contract GuardIntegrationTest is Test {
         _expectExecRevertWith(
             address(token),
             0,
-            abi.encodeCall(MockToken.transfer, (recipient, 1 ether)),
+            abi.encodeCall(IERC20.transfer, (recipient, 1 ether)),
             abi.encodeWithSelector(FermionWalletGuard.SafePausedError.selector, address(safe))
         );
 
@@ -469,15 +451,15 @@ contract GuardIntegrationTest is Test {
         assertFalse(guard.safePaused(address(safe)));
 
         _createTransfer(recipient, 1 ether, 1, bytes32(0));
-        _safeExec(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 1 ether)), Enum.Operation.Call);
+        _safeExec(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)), Enum.Operation.Call);
         assertEq(token.balanceOf(recipient), 1 ether);
     }
 
     // ══════════════════════ Batch (MultiSendCallOnly) ═══════════════════════
 
     function test_Batch_TwoTransfers_Executes() public {
-        bytes memory leg1 = abi.encodeCall(MockToken.transfer, (recipient, 2 ether));
-        bytes memory leg2 = abi.encodeCall(MockToken.transfer, (owner3, 3 ether));
+        bytes memory leg1 = abi.encodeCall(IERC20.transfer, (recipient, 2 ether));
+        bytes memory leg2 = abi.encodeCall(IERC20.transfer, (owner3, 3 ether));
         bytes memory txs = bytes.concat(_leg(address(token), 0, leg1), _leg(address(token), 0, leg2));
         bytes memory data = abi.encodeWithSignature("multiSend(bytes)", txs);
 
@@ -496,18 +478,18 @@ contract GuardIntegrationTest is Test {
     function test_Batch_DataLengthOverrun_Reverts() public {
         // Header claims 1000 bytes of leg calldata; only 4 are present.
         bytes memory txs =
-            abi.encodePacked(uint8(0), address(token), uint256(0), uint256(1000), MockToken.transfer.selector);
+            abi.encodePacked(uint8(0), address(token), uint256(0), uint256(1000), IERC20.transfer.selector);
         _expectDirectBatchRevert(txs, abi.encodeWithSelector(FermionWalletGuard.MalformedBatch.selector));
     }
 
     function test_Batch_TrailingBytes_Reverts() public {
-        bytes memory leg = _leg(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 1 ether)));
+        bytes memory leg = _leg(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)));
         bytes memory txs = bytes.concat(leg, hex"deadbe"); // 3-byte smuggled suffix
         _expectDirectBatchRevert(txs, abi.encodeWithSelector(FermionWalletGuard.MalformedBatch.selector));
     }
 
     function test_Batch_TooManyLegs_Reverts() public {
-        bytes memory leg = _leg(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 1 ether)));
+        bytes memory leg = _leg(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)));
         bytes memory txs;
         for (uint256 i = 0; i <= MAX_BATCH_LEGS; ++i) {
             txs = bytes.concat(txs, leg);
@@ -525,9 +507,9 @@ contract GuardIntegrationTest is Test {
     }
 
     function test_Batch_LegWithDeniedSelector_Reverts() public {
-        bytes memory txs = _leg(address(token), 0, abi.encodeCall(MockToken.approve, (recipient, 1 ether)));
+        bytes memory txs = _leg(address(token), 0, abi.encodeCall(IERC20.approve, (recipient, 1 ether)));
         _expectDirectBatchRevert(
-            txs, abi.encodeWithSelector(FermionWalletGuard.DeniedSelector.selector, MockToken.approve.selector)
+            txs, abi.encodeWithSelector(FermionWalletGuard.DeniedSelector.selector, IERC20.approve.selector)
         );
     }
 
@@ -669,12 +651,39 @@ contract GuardIntegrationTest is Test {
         _expectExecRevertWith(
             address(token),
             0,
-            abi.encodeCall(MockToken.transfer, (recipient, 1 ether)),
+            abi.encodeCall(IERC20.transfer, (recipient, 1 ether)),
             abi.encodeWithSelector(FermionWalletGuard.NotEnrolledSafe.selector, address(safe))
         );
         _safeExec(
             address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call
         );
+    }
+
+    /// A cancelled revocation request cannot be re-armed by replaying its owner
+    /// signatures from chain history: the request consumed the registry nonce.
+    function test_EmergencyRevocation_CancelledRequestCannotBeReplayed() public {
+        uint256 validUntil = block.timestamp + 30 days;
+        bytes32 digest = _guardDigest(
+            keccak256(
+                abi.encode(REVOKE_KEY_TYPEHASH, address(safe), keyId, guard.registryNonce(address(safe)), validUntil)
+            )
+        );
+        bytes memory sigs = _ownerSigs(digest);
+        vm.prank(relayer);
+        guard.requestKeyRevocation(address(safe), validUntil, sigs);
+
+        _safeExec(
+            address(guard),
+            0,
+            abi.encodeCall(QuantumKeyRegistry.cancelKeyRevocation, (address(safe))),
+            Enum.Operation.Call
+        );
+        assertEq(guard.keyRevocationExecutableAt(address(safe)), 0);
+
+        vm.prank(relayer);
+        vm.expectRevert(); // stale nonce ⇒ Safe's checkSignatures rejects the old signatures
+        guard.requestKeyRevocation(address(safe), validUntil, sigs);
+        assertEq(guard.keyRevocationExecutableAt(address(safe)), 0);
     }
 
     // ══════════════ Regressions: root squatting & ERC-1271 bypass ═══════════
@@ -734,7 +743,7 @@ contract GuardIntegrationTest is Test {
         _expectExecRevertWith(
             address(token),
             0,
-            abi.encodeCall(MockToken.transfer, (recipient, 1 ether)),
+            abi.encodeCall(IERC20.transfer, (recipient, 1 ether)),
             abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), evil)
         );
     }
@@ -764,7 +773,7 @@ contract GuardIntegrationTest is Test {
         _safeExec(address(safe), 0, clear, Enum.Operation.Call);
 
         _createTransfer(recipient, 2 ether, 2, bytes32(0));
-        _safeExec(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 2 ether)), Enum.Operation.Call);
+        _safeExec(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 2 ether)), Enum.Operation.Call);
         assertEq(token.balanceOf(recipient), 2 ether);
     }
 
@@ -796,20 +805,8 @@ contract GuardIntegrationTest is Test {
         _safeExec(address(safe), 0, enable, Enum.Operation.Call);
 
         _createTransfer(recipient, 1 ether, 4, bytes32(0));
-        _safeExec(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 1 ether)), Enum.Operation.Call);
+        _safeExec(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)), Enum.Operation.Call);
         assertEq(token.balanceOf(recipient), 1 ether);
-    }
-
-    /// Governance-vetted handlers are accepted.
-    function test_FallbackHandler_AllowlistedAccepted() public {
-        address vetted = makeAddr("vettedHandler");
-        vm.prank(deployer);
-        guard.setFallbackHandlerAllowlist(vetted, true);
-        vm.store(address(safe), FALLBACK_SLOT, bytes32(uint256(uint160(vetted))));
-
-        _createTransfer(recipient, 3 ether, 1, bytes32(0));
-        _safeExec(address(token), 0, abi.encodeCall(MockToken.transfer, (recipient, 3 ether)), Enum.Operation.Call);
-        assertEq(token.balanceOf(recipient), 3 ether);
     }
 
     // ═════════════════════════════ Helpers ══════════════════════════════════

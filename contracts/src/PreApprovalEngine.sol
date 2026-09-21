@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import {DoubleEndedQueue} from "@openzeppelin/contracts/utils/structs/DoubleEndedQueue.sol";
 import {QuantumKeyRegistry} from "./QuantumKeyRegistry.sol";
 
 /// @title PreApprovalEngine — hybrid (ECDSA + XMSS) time-bound pre-approvals
@@ -19,6 +20,7 @@ import {QuantumKeyRegistry} from "./QuantumKeyRegistry.sol";
 /// @dev    Abstract: deployed only as part of `FermionWalletGuard`.
 abstract contract PreApprovalEngine is QuantumKeyRegistry {
     using SignatureChecker for address;
+    using DoubleEndedQueue for DoubleEndedQueue.Bytes32Deque;
 
     // ── Types ───────────────────────────────────────────────────────────────
 
@@ -121,8 +123,8 @@ abstract contract PreApprovalEngine is QuantumKeyRegistry {
     /// Tier 1: exact safeTxHash pin. Pinned approvals never collide — Safe nonces differ.
     mapping(address safe => mapping(bytes32 safeTxHash => bytes32 id)) public approvalByTxHash;
     /// Tier 2: FIFO queue per field commitment (recurring identical payouts queue naturally).
-    mapping(bytes32 commitment => bytes32[]) internal _queue;
-    mapping(bytes32 commitment => uint256) internal _queueHead;
+    /// Permanently dead entries are popped from the front on every create and consume.
+    mapping(bytes32 commitment => DoubleEndedQueue.Bytes32Deque) internal _queue;
 
     constructor(uint64 adminTimelock, uint32 maxCommitmentQueue) {
         ADMIN_TIMELOCK = adminTimelock;
@@ -298,10 +300,13 @@ abstract contract PreApprovalEngine is QuantumKeyRegistry {
             }
             approvalByTxHash[a.safe][a.txHash] = id;
         } else {
+            // Prune first: dead entries must never count toward the cap, or a queue of
+            // expired/revoked approvals would lock this commitment out forever.
             bytes32 c = _commitment(a);
-            bytes32[] storage q = _queue[c];
-            if (q.length - _queueHead[c] >= MAX_COMMITMENT_QUEUE) revert CommitmentQueueFull(c);
-            q.push(id);
+            DoubleEndedQueue.Bytes32Deque storage q = _queue[c];
+            _pruneDead(q);
+            if (q.length() >= MAX_COMMITMENT_QUEUE) revert CommitmentQueueFull(c);
+            q.pushBack(id);
         }
     }
 
@@ -336,33 +341,28 @@ abstract contract PreApprovalEngine is QuantumKeyRegistry {
             id = bytes32(0); // pinned but dead (expired/revoked/mismatched) — fall through
         }
 
-        // Tier 2 — field-matched FIFO with lazy head advance. The head only advances
-        // past permanently dead entries (used / revoked / expired / dead key); an
-        // entry that is merely not-yet-valid (future validFrom) stays in the queue,
-        // and consuming a later entry over it does not move the head past it —
+        // Tier 2 — field-matched FIFO. Only permanently dead entries (used / revoked /
+        // expired / revoked key) are ever popped; a merely not-yet-valid entry (future
+        // validFrom) stays queued even when a later entry is consumed over it —
         // otherwise a scheduled approval would be silently lost and its leaf wasted.
         bytes32 c = _commitment(expected);
-        bytes32[] storage q = _queue[c];
-        uint256 i = _queueHead[c];
-        uint256 len = q.length;
-        bool advance = true;
-        while (i < len) {
-            PreApproval storage a = _approvals[q[i]];
+        DoubleEndedQueue.Bytes32Deque storage q = _queue[c];
+        _pruneDead(q);
+        uint256 len = q.length();
+        for (uint256 i = 0; i < len; ++i) {
+            PreApproval storage a = _approvals[q.at(i)];
             if (_isConsumable(a)) {
-                if (advance) _queueHead[c] = i + 1;
                 _markUsed(a);
+                _pruneDead(q);
                 return a.id;
-            }
-            if (_isPendingValidity(a)) {
-                advance = false; // still live, just early: keep it at/behind the head
-            } else if (advance) {
-                _queueHead[c] = i + 1; // permanently dead: skip forever
-            }
-            unchecked {
-                ++i;
             }
         }
         revert NoMatchingPreApproval(safe, c, safeTxHash);
+    }
+
+    /// Pop permanently dead entries off the front of a Tier-2 queue (bounded by its cap).
+    function _pruneDead(DoubleEndedQueue.Bytes32Deque storage q) private {
+        while (!q.empty() && _isDead(_approvals[q.front()])) q.popFront();
     }
 
     function _isConsumable(PreApproval storage a) private view returns (bool) {
@@ -370,10 +370,9 @@ abstract contract PreApprovalEngine is QuantumKeyRegistry {
             && block.timestamp <= a.validTo && _keyUsable(a.quantumKeyId);
     }
 
-    /// Alive but not yet valid: must never be permanently skipped by the queue head.
-    function _isPendingValidity(PreApproval storage a) private view returns (bool) {
-        return a.id != bytes32(0) && !a.used && !a.revoked && block.timestamp < a.validFrom
-            && block.timestamp <= a.validTo && _keyUsable(a.quantumKeyId);
+    /// Can never become consumable again (as opposed to merely not-yet-valid).
+    function _isDead(PreApproval storage a) private view returns (bool) {
+        return a.used || a.revoked || block.timestamp > a.validTo || !_keyUsable(a.quantumKeyId);
     }
 
     /// Approvals created under a key stay executable after routine rotation — they

@@ -3,14 +3,19 @@ pragma solidity ^0.8.24;
 
 import {BaseTransactionGuard, ITransactionGuard} from "@safe-global/safe-contracts/contracts/base/GuardManager.sol";
 import {BaseModuleGuard, IModuleGuard} from "@safe-global/safe-contracts/contracts/base/ModuleManager.sol";
+import {IFallbackManager} from "@safe-global/safe-contracts/contracts/interfaces/IFallbackManager.sol";
 import {IGuardManager} from "@safe-global/safe-contracts/contracts/interfaces/IGuardManager.sol";
+import {IModuleManager} from "@safe-global/safe-contracts/contracts/interfaces/IModuleManager.sol";
 import {ISafe} from "@safe-global/safe-contracts/contracts/interfaces/ISafe.sol";
 import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
+import {MultiSendCallOnly} from "@safe-global/safe-contracts/contracts/libraries/MultiSendCallOnly.sol";
 
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+import {Bytes} from "@openzeppelin/contracts/utils/Bytes.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {SlotDerivation} from "@openzeppelin/contracts/utils/SlotDerivation.sol";
 import {TransientSlot} from "@openzeppelin/contracts/utils/TransientSlot.sol";
 
 import {PreApprovalEngine} from "./PreApprovalEngine.sol";
@@ -25,21 +30,22 @@ import {QuantumKeyRegistry} from "./QuantumKeyRegistry.sol";
 ///
 ///         `checkTransaction` check order is NORMATIVE (spec, "Emergency de-guard path"):
 ///           1. emergency escape hatch — may never be blocked by any other state;
-///           2. pause (deny-all circuit breaker);
+///           2. the Safe's own pause (deny-all for that Safe only);
 ///           3. enrollment, reentrancy depth, refund policy, class dispatch, consumption.
 /// @dev    Non-upgradeable by design; a fix is a new deployment set via Safe governance.
+///         No global powers: there is no admin, guardian, role, global pause, or
+///         governance-curated list. Every control is scoped to one Safe and held by
+///         that Safe's own owners.
 contract FermionWalletGuard is
     PreApprovalEngine,
     BaseTransactionGuard,
-    BaseModuleGuard,
-    Pausable,
-    AccessControl
+    BaseModuleGuard
 {
     using TransientSlot for *;
+    using SlotDerivation for bytes32;
 
     // ── Errors ──────────────────────────────────────────────────────────────
 
-    error GuardPausedError();
     error NotEnrolledSafe(address caller);
     error NestedSafeTransaction(address safe);
     error DelegateCallForbidden(address to);
@@ -63,9 +69,6 @@ contract FermionWalletGuard is
 
     // ── Events ──────────────────────────────────────────────────────────────
 
-    event GuardPaused(address indexed by);
-    event GuardUnpauseRequested(address indexed by, uint64 executableAt);
-    event GuardUnpaused(address indexed by);
     event EmergencyDeGuardRequested(address indexed safe, uint64 executableAt);
     event EmergencyDeGuardCancelled(address indexed safe, address indexed by);
     event EmergencyDeGuardCleared(address indexed safe);
@@ -75,12 +78,8 @@ contract FermionWalletGuard is
     event SelectorPolicyChanged(address indexed safe, bytes4 indexed selector, bool allowed);
     event TransactionChecked(address indexed safe, bytes32 indexed safeTxHash, bytes32 indexed preApprovalId);
     event ModuleTransactionChecked(address indexed safe, address indexed module, bytes32 indexed preApprovalId);
-    event FallbackHandlerAllowlisted(address indexed handler, bool allowed);
 
     // ── Roles / immutables / constants ──────────────────────────────────────
-
-    /// Fast, low-privilege pause (guardian); unpause is slow and high-privilege.
-    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
 
     /// The sole permitted delegatecall target: canonical MultiSendCallOnly, pinned at
     /// deployment. Delegatecall-capable MultiSend stays banned forever.
@@ -95,18 +94,29 @@ contract FermionWalletGuard is
     bytes4 private constant SEL_TRANSFER = IERC20.transfer.selector; //          0xa9059cbb
     bytes4 private constant SEL_APPROVE = IERC20.approve.selector; //            0x095ea7b3
     bytes4 private constant SEL_TRANSFER_FROM = IERC20.transferFrom.selector; // 0x23b872dd
+    // No OpenZeppelin v5 interface declares increaseAllowance — the one hand-built selector.
     bytes4 private constant SEL_INCREASE_ALLOWANCE = bytes4(keccak256("increaseAllowance(address,uint256)"));
-    bytes4 private constant SEL_PERMIT =
-        bytes4(keccak256("permit(address,address,uint256,uint256,uint8,bytes32,bytes32)"));
+    bytes4 private constant SEL_PERMIT = IERC20Permit.permit.selector;
     bytes4 private constant SEL_SET_GUARD = IGuardManager.setGuard.selector;
-    bytes4 private constant SEL_SET_FALLBACK = bytes4(keccak256("setFallbackHandler(address)"));
-    bytes4 private constant SEL_ENABLE_MODULE = bytes4(keccak256("enableModule(address)"));
-    bytes4 private constant SEL_DISABLE_MODULE = bytes4(keccak256("disableModule(address,address)"));
-    bytes4 private constant SEL_SET_MODULE_GUARD = bytes4(keccak256("setModuleGuard(address)"));
+    bytes4 private constant SEL_SET_FALLBACK = IFallbackManager.setFallbackHandler.selector;
+    bytes4 private constant SEL_ENABLE_MODULE = IModuleManager.enableModule.selector;
+    bytes4 private constant SEL_DISABLE_MODULE = IModuleManager.disableModule.selector;
+    bytes4 private constant SEL_SET_MODULE_GUARD = IModuleManager.setModuleGuard.selector;
+    bytes4 private constant SEL_MULTISEND = MultiSendCallOnly.multiSend.selector;
 
-    /// Safe FallbackManager storage slot: keccak256("fallback_manager.handler.address").
+    /// Safe storage slots. Safe keeps the getters for these internal, so the Guard reads
+    /// them through `getStorageAt` (StorageAccessible).
+    /// keccak256("fallback_manager.handler.address")
     uint256 private constant FALLBACK_HANDLER_SLOT =
         0x6c9a6c4a39284e37ed1cf53d337577d14212a4870fb976a4366c693b939918d5;
+    /// keccak256("module_manager.module_guard.address") — Safe >= 1.5
+    uint256 private constant MODULE_GUARD_SLOT = 0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947;
+    /// Safe's linked-list sentinel for module pagination.
+    address private constant SENTINEL_MODULES = address(0x1);
+
+    /// Transient-storage namespaces, derived per Safe (SlotDerivation.deriveMapping).
+    bytes32 private constant DEPTH_NAMESPACE = keccak256("fermionwallet.guard.depth");
+    bytes32 private constant CLEAR_EMERGENCY_NAMESPACE = keccak256("fermionwallet.guard.clearEmergency");
 
     /// MultiSendCallOnly packed leg header: uint8 op + address to + uint256 value + uint256 dataLength.
     uint256 private constant LEG_HEADER = 85;
@@ -117,8 +127,6 @@ contract FermionWalletGuard is
     mapping(address safe => mapping(bytes4 selector => bool)) public allowedSelectors;
     /// Pending emergency de-guards: safe => executableAt (0 = none).
     mapping(address safe => uint64) public emergencyDeGuardExecutableAt;
-    /// Time-locked unpause request (0 = none).
-    uint64 public unpauseExecutableAt;
     /// Per-Safe deny-all pause: any owner of the Safe (or the Safe, or its Quantum
     /// Administrator) pauses instantly; only the Safe unpauses, after ADMIN_TIMELOCK.
     mapping(address safe => bool) public safePaused;
@@ -128,37 +136,24 @@ contract FermionWalletGuard is
     /// itself (owner threshold) can. Without it, one stolen/disgruntled key could
     /// freeze an M-of-N Safe forever by re-pausing before every unpause matured.
     mapping(address safe => uint64) public safePauseCooldownUntil;
-    /// ERC-1271 bypass mitigation: fallback handlers vetted to refuse (or quantum-gate)
-    /// isValidSignature. The Safe's handler answers off-chain owner-signature queries
-    /// (Permit, Permit2, order protocols) with NO Safe transaction and therefore no
-    /// Guard check — a quantum attacker with forged owner ECDSA signatures could drain
-    /// ERC-1271-accepting tokens without ever touching execTransaction. Enrollment and
-    /// every checked transaction require handler == 0 or an allowlisted handler.
-    /// Governance-curated (DEFAULT_ADMIN_ROLE); the stock CompatibilityFallbackHandler
-    /// must never be listed.
-    mapping(address handler => bool) public allowedFallbackHandlers;
 
     constructor(
         address multiSendCallOnly,
         uint64 adminTimelock,
         uint64 emergencyTimelock,
         uint32 maxBatchLegs,
-        uint32 maxCommitmentQueue,
-        address admin,
-        address guardian
+        uint32 maxCommitmentQueue
     )
         QuantumKeyRegistry(emergencyTimelock)
         PreApprovalEngine(adminTimelock, maxCommitmentQueue)
         EIP712("FermionWalletGuard", "1")
     {
-        if (multiSendCallOnly == address(0) || admin == address(0) || guardian == address(0)) revert ZeroAddress();
+        if (multiSendCallOnly == address(0)) revert ZeroAddress();
         if (multiSendCallOnly.code.length == 0) revert InvalidKeyParams();
         require(emergencyTimelock > adminTimelock, "EMERGENCY_TIMELOCK must exceed ADMIN_TIMELOCK");
         MULTISEND_CALL_ONLY = multiSendCallOnly;
         EMERGENCY_TIMELOCK = emergencyTimelock;
         MAX_BATCH_LEGS = maxBatchLegs;
-        _grantRole(DEFAULT_ADMIN_ROLE, admin);
-        _grantRole(PAUSER_ROLE, guardian);
     }
 
     // ── ERC165 (Safe checks this in setGuard/setModuleGuard — GS300 otherwise) ──
@@ -166,11 +161,11 @@ contract FermionWalletGuard is
     function supportsInterface(bytes4 interfaceId)
         public
         view
-        override(BaseTransactionGuard, BaseModuleGuard, AccessControl)
+        override(BaseTransactionGuard, BaseModuleGuard)
         returns (bool)
     {
         return interfaceId == type(ITransactionGuard).interfaceId || interfaceId == type(IModuleGuard).interfaceId
-            || AccessControl.supportsInterface(interfaceId);
+            || interfaceId == type(IERC165).interfaceId;
     }
 
     // ── ITransactionGuard ───────────────────────────────────────────────────
@@ -193,30 +188,27 @@ contract FermionWalletGuard is
         address /* msgSender */
     ) external override {
         address safe = msg.sender;
-        (bool isSetGuard, address newGuard) = _setGuardCall(safe, to, value, data, operation);
+        (bool isSetGuard, address newGuard) = _selfCallWithAddress(safe, to, value, data, operation, SEL_SET_GUARD);
 
         // 1. FIRST — before pause, before enrollment, before everything: the
         //    emergency escape hatch and the owner safety calls may never be blocked
         //    by any other state.
         if (_isEmergencyEscapeCall(safe, to, value, data, operation)) {
-            if (isSetGuard) _clearEmergencySlot(safe).asBoolean().tstore(true);
+            if (isSetGuard) CLEAR_EMERGENCY_NAMESPACE.deriveMapping(safe).asBoolean().tstore(true);
             return;
         }
 
-        // 2. Only THEN the deny-all circuit breaker — which never blocks the quantum-
+        // 2. Only THEN the Safe's own deny-all pause — which never blocks the quantum-
         //    approved Guard removal (no-brick path 1 must work while paused; it still
         //    needs a matching, timelock-elapsed ADMIN approval below).
-        if (!(isSetGuard && newGuard == address(0))) {
-            if (paused()) revert GuardPausedError();
-            if (safePaused[safe]) revert SafePausedError(safe);
-        }
+        if (safePaused[safe] && !(isSetGuard && newGuard == address(0))) revert SafePausedError(safe);
 
         // 3. Enrollment: stops attacker-controlled contracts from burning another
         //    Safe's approvals (the consumption path takes `safe` from msg.sender only).
         _requireEnrolledActive(safe);
 
         // 4. Reentrancy depth: nested Safe transactions are rejected for the MVP.
-        TransientSlot.BooleanSlot depth = _depthSlot(safe).asBoolean();
+        TransientSlot.BooleanSlot depth = DEPTH_NAMESPACE.deriveMapping(safe).asBoolean();
         if (depth.tload()) revert NestedSafeTransaction(safe);
         depth.tstore(true);
 
@@ -234,15 +226,14 @@ contract FermionWalletGuard is
         if (selfSelector == SEL_ENABLE_MODULE && !_isModuleGuard(safe)) revert ModuleGuardNotWired(safe);
         if (!(isSetGuard && newGuard == address(0)) && !moduleRemediation) _checkModulePosture(safe);
 
-        // 5b. ERC-1271 bypass mitigation: a non-allowlisted fallback handler can
-        //     validate owner-signed messages (isValidSignature) with no Safe
-        //     transaction — Permit / Permit2 / order protocols would then move
-        //     funds without the Guard ever running. Skipped only for the quantum-
-        //     approved Guard removal (no-brick) and for the ADMIN self-call that
-        //     remediates the handler itself; the replacement handler must be
-        //     address(0) or allowlisted, and still needs a matured ADMIN approval.
-        (bool isSetFallback, address newHandler) = _setFallbackHandlerCall(safe, to, value, data, operation);
-        if (isSetFallback && newHandler != address(0) && !allowedFallbackHandlers[newHandler]) {
+        // 5b. ERC-1271 bypass mitigation: any fallback handler can validate
+        //     owner-signed messages (isValidSignature) with no Safe transaction —
+        //     Permit / Permit2 / order protocols would then move funds without the
+        //     Guard ever running. So a guarded Safe has NO fallback handler. Skipped
+        //     only for the quantum-approved Guard removal (no-brick) and for the ADMIN
+        //     self-call that removes the handler (setFallbackHandler(address(0))).
+        (bool isSetFallback, address newHandler) = _selfCallWithAddress(safe, to, value, data, operation, SEL_SET_FALLBACK);
+        if (isSetFallback && newHandler != address(0)) {
             revert FallbackHandlerForbidden(safe, newHandler);
         }
         if (!(isSetGuard && newGuard == address(0)) && !isSetFallback) {
@@ -263,7 +254,7 @@ contract FermionWalletGuard is
         bytes32 id = _dispatch(safe, to, value, data, operation, safeTxHash);
         // Any executed setGuard ends this Guard's tenure on the Safe: a pending or
         // matured emergency request must not outlive it (checkAfterExecution clears it).
-        if (isSetGuard) _clearEmergencySlot(safe).asBoolean().tstore(true);
+        if (isSetGuard) CLEAR_EMERGENCY_NAMESPACE.deriveMapping(safe).asBoolean().tstore(true);
         emit TransactionChecked(safe, safeTxHash, id);
     }
 
@@ -273,9 +264,9 @@ contract FermionWalletGuard is
     ///      Guard it checked with, even when that transaction just removed the Guard.
     function checkAfterExecution(bytes32, bool success) external override {
         address safe = msg.sender;
-        _depthSlot(safe).asBoolean().tstore(false);
+        DEPTH_NAMESPACE.deriveMapping(safe).asBoolean().tstore(false);
 
-        TransientSlot.BooleanSlot clearEmergency = _clearEmergencySlot(safe).asBoolean();
+        TransientSlot.BooleanSlot clearEmergency = CLEAR_EMERGENCY_NAMESPACE.deriveMapping(safe).asBoolean();
         if (clearEmergency.tload()) {
             clearEmergency.tstore(false);
             // "Exactly one" removal per request: a later re-enabled Guard starts clean.
@@ -299,7 +290,6 @@ contract FermionWalletGuard is
         returns (bytes32 moduleTxHash)
     {
         address safe = msg.sender;
-        if (paused()) revert GuardPausedError();
         if (safePaused[safe]) revert SafePausedError(safe);
         _requireEnrolledActive(safe);
         if (operation != Enum.Operation.Call) revert ModuleDelegateCallForbidden(module);
@@ -331,8 +321,7 @@ contract FermionWalletGuard is
     ///         (spec, "Emergency de-guard path", step 3). The Quantum Administrator's key
     ///         alone must NOT be able to cancel: a stolen Ledger could then veto every
     ///         emergency removal forever and brick the Safe.
-    function cancelEmergencyDeGuard(address safe) external {
-        if (msg.sender != safe) revert NotAuthorized();
+    function cancelEmergencyDeGuard(address safe) external onlySafe(safe) {
         if (emergencyDeGuardExecutableAt[safe] == 0) revert EmergencyDeGuardNotRequested(safe);
         emergencyDeGuardExecutableAt[safe] = 0;
         emit EmergencyDeGuardCancelled(safe, msg.sender);
@@ -367,7 +356,7 @@ contract FermionWalletGuard is
             return false;
         }
 
-        (bool isSetGuard, address newGuard) = _setGuardCall(safe, to, value, data, operation);
+        (bool isSetGuard, address newGuard) = _selfCallWithAddress(safe, to, value, data, operation, SEL_SET_GUARD);
         if (isSetGuard && newGuard == address(0)) {
             uint64 executableAt = emergencyDeGuardExecutableAt[safe];
             return executableAt != 0 && block.timestamp >= executableAt; // nothing else is unlocked
@@ -375,32 +364,19 @@ contract FermionWalletGuard is
         return false;
     }
 
-    /// @dev Is this a Safe self-call to setGuard(newGuard)?
-    function _setGuardCall(address safe, address to, uint256 value, bytes memory data, Enum.Operation operation)
-        private
-        pure
-        returns (bool isSetGuard, address newGuard)
-    {
+    /// @dev Is this a plain, zero-value Safe self-call `selector(address arg)`? Used for
+    ///      setGuard and setFallbackHandler.
+    function _selfCallWithAddress(
+        address safe,
+        address to,
+        uint256 value,
+        bytes memory data,
+        Enum.Operation operation,
+        bytes4 selector
+    ) private pure returns (bool matches, address arg) {
         if (to != safe || operation != Enum.Operation.Call || value != 0 || data.length != 36) return (false, address(0));
-        if (bytes4(data) != SEL_SET_GUARD) return (false, address(0));
-        assembly ("memory-safe") {
-            newGuard := mload(add(data, 36))
-        }
-        return (true, newGuard);
-    }
-
-    /// @dev Is this a Safe self-call to setFallbackHandler(newHandler)?
-    function _setFallbackHandlerCall(address safe, address to, uint256 value, bytes memory data, Enum.Operation operation)
-        private
-        pure
-        returns (bool isSetFallback, address newHandler)
-    {
-        if (to != safe || operation != Enum.Operation.Call || value != 0 || data.length != 36) return (false, address(0));
-        if (bytes4(data) != SEL_SET_FALLBACK) return (false, address(0));
-        assembly ("memory-safe") {
-            newHandler := mload(add(data, 36))
-        }
-        return (true, newHandler);
+        if (bytes4(data) != selector) return (false, address(0));
+        return (true, abi.decode(Bytes.slice(data, 4), (address))); // reverts on dirty address bits
     }
 
     // ── Per-Safe pause (fast, any owner) / unpause (slow, Safe governance) ──
@@ -451,49 +427,21 @@ contract FermionWalletGuard is
         emit SafeUnpaused(safe);
     }
 
-    // ── Pause (fast) / unpause (slow, time-locked) ──────────────────────────
-
-    /// @notice Global deny-all circuit breaker, for incidents affecting every Safe
-    ///         (e.g. a verifier bug). Guardian only: on a shared singleton, letting any
-    ///         enrolled Safe pause would let one Safe freeze all others. Individual
-    ///         Safes use `pauseSafe`.
-    function pause() external {
-        if (!hasRole(PAUSER_ROLE, msg.sender)) revert NotAuthorized();
-        _pause();
-        emit GuardPaused(msg.sender);
-    }
-
-    /// @notice Unpausing is slow and high-privilege: governance role + time lock.
-    function requestUnpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        unpauseExecutableAt = uint64(block.timestamp) + ADMIN_TIMELOCK;
-        emit GuardUnpauseRequested(msg.sender, unpauseExecutableAt);
-    }
-
-    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        uint64 executableAt = unpauseExecutableAt;
-        if (executableAt == 0) revert UnpauseNotRequested();
-        if (block.timestamp < executableAt) revert UnpauseTimelocked(executableAt);
-        unpauseExecutableAt = 0;
-        _unpause();
-        emit GuardUnpaused(msg.sender);
-    }
-
     // ── Selector policy (deny-list hardcoded; permit-list ADMIN-governed) ───
 
     /// @notice Mutate a Safe's selector permit-list. Only callable by the Safe itself —
     ///         which forces the call through checkTransaction's ADMIN path (this Guard is
     ///         an ADMIN target): hybrid dual signature + owner threshold + ADMIN_TIMELOCK.
-    ///         No EOA, guardian, or deployer can modify any Safe's allowlist.
-    function setSelectorPolicy(address safe, bytes4 selector, bool allowed) external {
-        if (msg.sender != safe) revert NotAuthorized();
+    ///         No EOA or deployer can modify any Safe's allowlist.
+    function setSelectorPolicy(address safe, bytes4 selector, bool allowed) external onlySafe(safe) {
         if (_isDeniedSelector(selector)) revert DeniedSelector(selector); // never re-enableable
         allowedSelectors[safe][selector] = allowed;
         emit SelectorPolicyChanged(safe, selector, allowed);
     }
 
     /// Enrollment hook: permit-list initialized to {transfer} only. Enrollment is
-    /// refused while the Safe carries a non-allowlisted fallback handler — the
-    /// onboarding flow must remove/replace it (and revoke pre-existing token and
+    /// refused while the Safe has any fallback handler — the onboarding flow must
+    /// remove it (and revoke pre-existing token and
     /// Permit2 allowances) BEFORE the quantum key ceremony.
     function _afterEnrollment(address safe) internal override {
         _checkFallbackPosture(safe);
@@ -502,14 +450,6 @@ contract FermionWalletGuard is
         _checkModulePosture(safe);
         allowedSelectors[safe][SEL_TRANSFER] = true;
         emit SelectorPolicyChanged(safe, SEL_TRANSFER, true);
-    }
-
-    /// @notice Governance curation of ERC-1271-safe fallback handlers. Handlers must
-    ///         refuse isValidSignature outright or gate it on a quantum approval.
-    function setFallbackHandlerAllowlist(address handler, bool allowed) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (handler == address(0)) revert ZeroAddress(); // zero means "no handler", always acceptable
-        allowedFallbackHandlers[handler] = allowed;
-        emit FallbackHandlerAllowlisted(handler, allowed);
     }
 
     // ── Class dispatch ──────────────────────────────────────────────────────
@@ -590,22 +530,15 @@ contract FermionWalletGuard is
     ///      the leg cap is enforced BEFORE decoding further legs, so adversarial input
     ///      costs at most MAX_BATCH_LEGS header reads.
     function _checkBatchLegs(address safe, bytes memory data) private view {
-        // Outer calldata: multiSend(bytes) — selector + abi-encoded bytes.
-        if (data.length < 4 + 64 || bytes4(data) != bytes4(keccak256("multiSend(bytes)"))) revert MalformedBatch();
-
-        uint256 txsOffset;
-        uint256 txsLen;
-        assembly ("memory-safe") {
-            txsOffset := mload(add(data, 36)) // offset word of the bytes argument (rel. to arg area at data+36)
-            txsLen := mload(add(add(data, 36), txsOffset)) // length word of the bytes argument
-        }
-        if (txsOffset != 0x20) revert MalformedBatch(); // canonical head-encoding only
-        // The packed transactions blob must sit exactly inside the (padded) calldata.
-        if (68 + txsLen > data.length) revert MalformedBatch();
-
+        // Outer calldata: multiSend(bytes). abi.decode validates the offset/length
+        // encoding exactly as MultiSendCallOnly's own ABI decoder will, so the Guard
+        // checks the same packed blob MultiSend executes.
+        if (data.length < 4 || bytes4(data) != SEL_MULTISEND) revert MalformedBatch();
+        bytes memory txs = abi.decode(Bytes.slice(data, 4), (bytes));
+        uint256 txsLen = txs.length;
         uint256 base;
         assembly ("memory-safe") {
-            base := add(add(data, 68), txsOffset) // first packed leg (length word + 32)
+            base := add(txs, 32) // first packed leg
         }
 
         uint256 offset = 0;
@@ -659,23 +592,11 @@ contract FermionWalletGuard is
     /// Module-bypass re-check: the tx guard is skipped by execTransactionFromModule
     /// pre-1.5, so either no modules are enabled or this contract is the module guard.
     function _checkModulePosture(address safe) private view {
-        (bool ok, bytes memory ret) =
-            safe.staticcall(abi.encodeWithSignature("getModulesPaginated(address,uint256)", address(0x1), 1));
-        if (!ok || ret.length < 64) return; // pre-module-manager Safe: nothing to bypass with
-        (address[] memory modules,) = abi.decode(ret, (address[], address));
-        if (modules.length == 0) return;
-
-        // Safe >= 1.5: acceptable iff this contract is wired as the module guard.
-        (bool ok2, bytes memory slot) = safe.staticcall(
-            abi.encodeWithSignature(
-                "getStorageAt(uint256,uint256)",
-                uint256(0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947), // MODULE_GUARD_STORAGE_SLOT
-                1
-            )
-        );
-        if (ok2 && slot.length >= 96) {
-            address moduleGuard = abi.decode(abi.decode(slot, (bytes)), (address));
-            if (moduleGuard == address(this)) return;
+        try ISafe(payable(safe)).getModulesPaginated(SENTINEL_MODULES, 1) returns (address[] memory modules, address) {
+            // Safe >= 1.5: modules are acceptable iff this contract is the module guard.
+            if (modules.length == 0 || _isModuleGuard(safe)) return;
+        } catch {
+            return; // pre-module-manager Safe: nothing to bypass with
         }
         revert ModulesEnabledWithoutModuleGuard(safe);
     }
@@ -683,27 +604,26 @@ contract FermionWalletGuard is
     /// True iff this contract is wired as the Safe's module guard (Safe >= 1.5).
     /// Always false on Safe <= 1.4.1 (slot empty / no module-guard support).
     function _isModuleGuard(address safe) private view returns (bool) {
-        (bool ok, bytes memory slot) = safe.staticcall(
-            abi.encodeWithSignature(
-                "getStorageAt(uint256,uint256)",
-                uint256(0xb104e0b93118902c651344349b610029d694cfdec91c589c91ebafbcd0289947), // MODULE_GUARD_STORAGE_SLOT
-                1
-            )
-        );
-        if (!ok || slot.length < 96) return false;
-        return abi.decode(abi.decode(slot, (bytes)), (address)) == address(this);
+        (bool ok, address moduleGuard) = _readSafeSlotAddress(safe, MODULE_GUARD_SLOT);
+        return ok && moduleGuard == address(this);
     }
 
-    /// ERC-1271 bypass re-check: the Safe must have no fallback handler, or one the
-    /// governance allowlist has vetted to refuse quantum-unsafe isValidSignature.
+    /// ERC-1271 bypass re-check: a guarded Safe must have no fallback handler.
     function _checkFallbackPosture(address safe) private view {
-        (bool ok, bytes memory slot) =
-            safe.staticcall(abi.encodeWithSignature("getStorageAt(uint256,uint256)", FALLBACK_HANDLER_SLOT, 1));
-        if (!ok || slot.length < 96) return; // no FallbackManager: nothing to bypass with
-        address handler = abi.decode(abi.decode(slot, (bytes)), (address));
-        if (handler != address(0) && !allowedFallbackHandlers[handler]) {
+        (bool ok, address handler) = _readSafeSlotAddress(safe, FALLBACK_HANDLER_SLOT);
+        if (ok && handler != address(0)) {
             revert FallbackHandlerForbidden(safe, handler);
         }
+    }
+
+    /// Read one address-valued storage slot of a Safe via StorageAccessible. `ok` is
+    /// false if the Safe can't answer (no StorageAccessible) — callers fail open on it,
+    /// exactly as before this refactor.
+    function _readSafeSlotAddress(address safe, uint256 slot) private view returns (bool ok, address value) {
+        try ISafe(payable(safe)).getStorageAt(slot, 1) returns (bytes memory word) {
+            if (word.length == 32) return (true, address(uint160(uint256(bytes32(word)))));
+        } catch {}
+        return (false, address(0));
     }
 
     function _isDeniedSelector(bytes4 selector) private pure returns (bool) {
@@ -713,18 +633,8 @@ contract FermionWalletGuard is
 
     function _decodeTransfer(bytes memory data) private pure returns (address recipient, uint256 amount) {
         if (data.length != 68) revert MalformedTransferCalldata();
-        assembly ("memory-safe") {
-            recipient := mload(add(data, 36))
-            amount := mload(add(data, 68))
-        }
-        if (uint256(uint160(recipient)) != uint256(bytes32(uint256(uint160(recipient))))) revert MalformedTransferCalldata();
+        // abi.decode rejects a recipient word with dirty upper bits (non-canonical ABI).
+        return abi.decode(Bytes.slice(data, 4), (address, uint256));
     }
 
-    function _depthSlot(address safe) private pure returns (bytes32) {
-        return keccak256(abi.encode("fermionwallet.guard.depth", safe));
-    }
-
-    function _clearEmergencySlot(address safe) private pure returns (bytes32) {
-        return keccak256(abi.encode("fermionwallet.guard.clearEmergency", safe));
-    }
 }
