@@ -132,51 +132,35 @@ contract Demo is Script {
         }
     }
 
-    /// Hybrid-sign (Ledger ECDSA + XMSS via FFI) and store a TRANSFER pre-approval.
-    function approve(uint256 tokens) external {
+    /// Relay a TRANSFER pre-approval signed by the (simulated) Ledger. The device chose
+    /// the leaf, rendered every field and returned both hybrid halves over the digest it
+    /// computed itself; this script only rebuilds the same request from those fields and
+    /// submits it. If the device signed anything else, the Guard rejects the signatures.
+    function submitApproval(
+        uint256 tokens,
+        uint64 validFrom,
+        uint64 validTo,
+        bytes32 nonce,
+        uint32 leaf,
+        bytes calldata ecdsaSignature,
+        bytes calldata xmssBlob
+    ) external {
         _load();
-        uint32 leaf = _freeLeaf();
-
         PreApprovalEngine.PreApprovalRequest memory req;
         req.safe = address(safe);
         req.token = address(token);
         req.recipient = vendor;
         req.amount = tokens * 1 ether;
-        req.validFrom = uint64(block.timestamp);
-        req.validTo = uint64(block.timestamp) + 1 days;
-        req.nonce = keccak256(abi.encode(vm.unixTime(), leaf));
+        req.validFrom = validFrom;
+        req.validTo = validTo;
+        req.nonce = nonce;
         req.quantumKeyId = keyId;
         req.xmssLeafIndex = leaf;
         req.policyHash = keccak256("demo-policy-v1");
         req.txHash = bytes32(0); // Tier 2: field-matched
 
-        bytes32 digest = _guardDigest(
-            keccak256(
-                abi.encode(
-                    PRE_APPROVAL_TYPEHASH,
-                    req.safe,
-                    uint8(0),
-                    req.token,
-                    req.recipient,
-                    req.amount,
-                    req.target,
-                    req.value,
-                    req.dataHash,
-                    req.validFrom,
-                    req.validTo,
-                    req.nonce,
-                    req.quantumKeyId,
-                    req.xmssLeafIndex,
-                    req.policyHash,
-                    req.txHash
-                )
-            )
-        );
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LEDGER_PK, digest);
-        (,, bytes memory xmssSig) = _xmssSign(leaf, digest);
-
         vm.startBroadcast(DEPLOYER_PK); // the relayer
-        bytes32 id = guard.createPreApproval(req, abi.encodePacked(r, s, v), xmssSig);
+        bytes32 id = guard.createPreApproval(req, ecdsaSignature, _decodeXmss(leaf, xmssBlob));
         vm.stopBroadcast();
 
         console2.log("RESULT APPROVED leaf=%s", uint256(leaf));
@@ -206,13 +190,6 @@ contract Demo is Script {
         xmssSeed = vm.parseJsonBytes32(j, ".xmssSeed");
     }
 
-    function _freeLeaf() internal view returns (uint32) {
-        for (uint32 i = 0; i < uint32(1) << H; ++i) {
-            if (!guard.isLeafUsed(keyId, i)) return i;
-        }
-        revert("demo key exhausted - restart the container");
-    }
-
     function _xmssSign(uint32 leaf, bytes32 digest)
         internal
         returns (bytes32 root, bytes32 seed, bytes memory encodedSig)
@@ -224,12 +201,17 @@ contract Demo is Script {
         cmd[3] = vm.toString(uint256(leaf));
         cmd[4] = vm.toString(digest);
         bytes memory blob = vm.ffi(cmd);
-        require(blob.length == 32 * (3 + 67 + H), "ffi blob size");
-
-        XMSS.Signature memory sig;
-        sig.leafIdx = leaf;
         root = _word(blob, 0);
         seed = _word(blob, 1);
+        encodedSig = _decodeXmss(leaf, blob);
+    }
+
+    /// Blob layout (py/sign_digest.py and the simulated Ledger):
+    /// root | seed | r | wotsSig[67] | authPath[H], 32-byte words.
+    function _decodeXmss(uint32 leaf, bytes memory blob) internal pure returns (bytes memory encodedSig) {
+        require(blob.length == 32 * (3 + 67 + H), "xmss blob size");
+        XMSS.Signature memory sig;
+        sig.leafIdx = leaf;
         sig.r = _word(blob, 2);
         for (uint256 i = 0; i < 67; ++i) {
             sig.wotsSig[i] = _word(blob, 3 + i);

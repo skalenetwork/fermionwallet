@@ -53,6 +53,19 @@
   .out.show { display:block; }
   .out.good { border-color:rgba(74,222,128,.4); color:var(--ok); }
   .out.fail { border-color:rgba(248,113,113,.4); color:var(--bad); }
+  .device { margin-top:14px; }
+  .device-body { display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; }
+  .lcd { flex:1; min-width:260px; min-height:150px; background:#05070a; border:2px solid #2b3240;
+         border-radius:14px; padding:14px 16px; font:13px/1.5 ui-monospace,Menlo,Consolas,monospace; }
+  .lcd .t { font-weight:700; font-size:14px; color:var(--accent-strong); margin-bottom:6px; }
+  .lcd .pg { float:right; color:var(--muted); font-weight:400; }
+  .lcd .l { white-space:pre; }
+  .lcd .warn { color:var(--warn); }
+  .device-ctl { display:flex; flex-direction:column; gap:8px; justify-content:center; }
+  .device-ctl .nav { display:flex; gap:8px; }
+  button.reject { background:transparent; color:var(--text); border:1px solid var(--border); }
+  button.reject:hover { background:var(--border); }
+  .sim { color:var(--muted); font-size:12.5px; margin:8px 0 0; }
   footer { margin-top:22px; color:var(--muted); font-size:12.5px; }
   a { color:var(--accent); text-decoration:none; }
 </style>
@@ -83,6 +96,21 @@
     </div>
   </div>
 
+  <div class="card device">
+    <h2>Quantum Administrator's Ledger — FermionWallet XMSS app <span class="badge bad">simulated</span></h2>
+    <div class="device-body">
+      <div class="lcd" id="lcd">Connecting to device…</div>
+      <div class="device-ctl">
+        <div class="nav"><button class="reject" id="dev-prev">◀</button><button class="reject" id="dev-next">▶</button></div>
+        <button id="dev-approve" disabled>Approve</button>
+        <button class="reject" id="dev-reject" disabled>Reject</button>
+      </div>
+    </div>
+    <p class="sim">The real FermionWallet Ledger app isn't built yet, so this device is simulated: it follows
+    the app spec — it holds the keys, picks the leaf from its own counter, shows every signed field, and
+    signs only after you've paged through every screen and pressed Approve. Rejecting consumes no leaf.</p>
+  </div>
+
   <div class="story">
     <div class="step">
       <div class="num">1</div>
@@ -100,9 +128,10 @@
       <div class="num">2</div>
       <div style="flex:1">
         <h3>Create a hybrid quantum pre-approval</h3>
-        <p>The Quantum Administrator signs the exact payment twice over one EIP-712 digest:
-        classical ECDSA (Ledger) + post-quantum XMSS, consuming one one-time leaf on-chain.</p>
-        <button id="btn-approve">Sign &amp; submit pre-approval</button>
+        <p>The payment goes to the Quantum Administrator's Ledger. Review every screen on the
+        device above, then approve: it signs the exact payment twice over one EIP-712 digest —
+        classical ECDSA + post-quantum XMSS, consuming one one-time leaf.</p>
+        <button id="btn-approve">Send to Ledger for approval</button>
         <div class="out" id="out-approve"></div>
       </div>
     </div>
@@ -165,7 +194,8 @@ async function flow(name, btn, out) {
   setBusy(true); // one flow at a time: each signs against the chain state the previous one leaves
   out.className = 'out show';
   out.textContent = name === 'approve'
-    ? 'Signing (ECDSA + XMSS one-time signature)…' : 'Running…';
+    ? 'Waiting for approval on the Ledger — review every screen, then press Approve (or Reject)…'
+    : 'Running…';
   try {
     const r = await (await fetch('/api/' + name, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -181,10 +211,14 @@ async function flow(name, btn, out) {
         Number(r.amount).toLocaleString() + ' dUSD already exists, so the Guard would allow it.\n' +
         'This check is a simulation only: nothing was sent. Use step 3 to execute it, ' +
         'or pick a different amount to see the Guard block it.';
+    } else if (r.ok && r.outcome === 'rejected') {
+      out.className = 'out show';
+      out.textContent = (r.reason === 'timeout' ? '✘ Timed out on the Ledger' : '✘ Rejected on the Ledger') +
+        ' — nothing was signed and no leaf was consumed.';
     } else if (r.ok && r.outcome === 'approved') {
       out.className = 'out show good';
-      out.textContent = '✔ Pre-approval stored on-chain\nXMSS leaf consumed: #' + r.leaf +
-        '\napprovalId: ' + r.approvalId;
+      out.textContent = '✔ Approved on the Ledger and stored on-chain\nXMSS leaf consumed: #' + r.leaf +
+        '\ndigest the device signed: ' + r.digest + '\napprovalId: ' + r.approvalId;
     } else if (r.ok && r.outcome === 'executed') {
       out.className = 'out show good';
       out.textContent = '✔ Transfer executed — Guard verified & consumed the pre-approval\n' +
@@ -200,6 +234,44 @@ async function flow(name, btn, out) {
   setBusy(false);
   refresh();
 }
+
+// ── Simulated Ledger ─────────────────────────────────────────────────────
+const esc = t => String(t).replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
+async function refreshDevice() {
+  try {
+    const d = await (await fetch('/api/device/screen')).json();
+    if (d.error) throw new Error(d.error);
+    if (!d.active) {
+      $('lcd').innerHTML = '<div class="t">FermionWallet XMSS</div>' +
+        '<div class="l">' + esc(d.key) + '</div>' +
+        '<div class="l">Next leaf #' + d.nextLeaf + ' of ' + d.totalLeaves + '</div>' +
+        '<div class="l">Idle — waiting for a signing request</div>';
+      ['dev-prev', 'dev-next', 'dev-approve', 'dev-reject'].forEach(id => { $(id).disabled = true; });
+      return;
+    }
+    const sc = d.screen;
+    $('lcd').innerHTML = '<div class="t">' + esc(sc.title) + '<span class="pg">' + (d.index + 1) + ' / ' +
+      d.total + '</span></div>' + sc.lines.map(l =>
+        '<div class="l' + (/NOT PINNED|any matching/.test(l) ? ' warn' : '') + '">' + esc(l) + '</div>').join('');
+    $('dev-prev').disabled = d.index === 0;
+    $('dev-next').disabled = d.index === d.total - 1;
+    $('dev-approve').disabled = !d.canApprove;
+    $('dev-reject').disabled = false;
+  } catch (e) {
+    $('lcd').textContent = 'Device not reachable: ' + e.message;
+  }
+}
+async function press(button) {
+  await fetch('/api/device/button', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({button})});
+  refreshDevice();
+}
+$('dev-prev').onclick = () => press('prev');
+$('dev-next').onclick = () => press('next');
+$('dev-approve').onclick = () => press('approve');
+$('dev-reject').onclick = () => press('reject');
+refreshDevice();
+setInterval(refreshDevice, 700);
 
 $('btn-blocked').onclick = () => flow('blocked', $('btn-blocked'), $('out-blocked'));
 $('btn-approve').onclick = () => flow('approve', $('btn-approve'), $('out-approve'));

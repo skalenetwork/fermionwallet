@@ -18,5 +18,12 @@ if [ ! -f demo-state/deployment.json ]; then
   echo "[demo] FATAL: setup failed"; exit 1
 fi
 
+echo "[demo] starting the simulated FermionWallet Ledger (device API on 127.0.0.1:9999) ..."
+rm -f demo-state/ledger-device.json  # fresh device counter for a fresh chain
+python3 /app/demo/ledger_sim.py &
+until curl -fsS http://127.0.0.1:9999/screen >/dev/null 2>&1; do
+  sleep 0.3
+done
+
 echo "[demo] ready — UI on port 8080, JSON-RPC on port 8545"
 exec python3 /app/demo/server.py

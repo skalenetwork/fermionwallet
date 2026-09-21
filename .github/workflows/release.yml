@@ -160,8 +160,15 @@ jobs:
           docker logs demo 2>&1 | tail -5
           docker logs demo 2>&1 | grep -q "ready —"
           post() { curl -fsS -X POST "http://localhost:8080/api/$1" -H 'content-type: application/json' -d '{"amount": 1000}'; }
+          dev() { curl -fsS -X POST http://localhost:8080/api/device/button -H 'content-type: application/json' -d "{\"button\": \"$1\"}"; }
           post blocked | tee /dev/stderr | grep -q '"outcome": "blocked"'
-          post approve | tee /dev/stderr | grep -q '"outcome": "approved"'
+          # Approval goes through the simulated Ledger: page through every screen, then Approve.
+          post approve > approve.json &
+          timeout 60 sh -c 'until curl -fsS http://localhost:8080/api/device/screen | grep -q "\"active\": true"; do sleep 1; done'
+          for i in 1 2 3 4 5 6 7; do dev next > /dev/null; done
+          dev approve
+          wait
+          tee /dev/stderr < approve.json | grep -q '"outcome": "approved"'
           post execute | tee /dev/stderr | grep -q '"outcome": "executed"'
           docker rm -f demo
 
