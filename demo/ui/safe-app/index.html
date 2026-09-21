@@ -75,7 +75,7 @@
 
   <div class="grid">
     <div class="card">
-      <h2>This Safe</h2>
+      <h2>Demo Safe</h2>
       <div class="row"><span class="k">Safe</span><span class="v" id="safe"></span></div>
       <div class="row"><span class="k">Guard</span><span class="v" id="guard"></span></div>
       <div class="row"><span class="k">Quantum admin (Ledger)</span><span class="v" id="qadmin"></span></div>
@@ -98,7 +98,7 @@
       review. Sign and execute it: the owner signature is valid, and the Guard still refuses it because
       no quantum pre-approval exists. This is what an attacker with a forged owner key would run into.</p>
       <input id="amount" type="number" min="1" max="1000000" step="1" value="100"> dUSD
-      <button id="btn-propose-1">Propose payout in Safe{Wallet}</button>
+      <button id="btn-propose-1" disabled>Propose payout in Safe{Wallet}</button>
       <div class="out" id="out-1"></div>
     </div>
   </div>
@@ -110,7 +110,7 @@
       <p>The payment fields go to the Quantum Administrator's Ledger below. Page through every screen, then
       Approve: the device signs the exact payment with ECDSA and with XMSS over one EIP-712 digest and
       consumes one one-time leaf. The pre-approval is then stored in the Guard.</p>
-      <button id="btn-approve">Send to Ledger for approval</button>
+      <button id="btn-approve" disabled>Send to Ledger for approval</button>
       <div class="out" id="out-2"></div>
     </div>
   </div>
@@ -137,7 +137,7 @@
       <p>Propose the same payout, or execute the one from step 1 if it's still queued. It's the same
       owner-signed Safe transaction. This time the Guard finds the matching pre-approval, marks it used and
       lets the payment through.</p>
-      <button id="btn-propose-3">Propose payout in Safe{Wallet}</button>
+      <button id="btn-propose-3" disabled>Propose payout in Safe{Wallet}</button>
       <div class="out" id="out-3"></div>
     </div>
   </div>
@@ -186,12 +186,18 @@ async function refresh() {
     $('vendor-bal').textContent = Number(s.vendorBalance).toLocaleString();
     $('leaf-count').textContent = s.leavesUsed + ' / ' + s.leavesTotal;
     $('leaves').innerHTML = s.leaves.map(u => `<div class="leaf${u ? ' used' : ''}"></div>`).join('');
+    syncButtons();
   } catch (e) {
     $('guard-badge').className = 'badge bad';
     $('guard-badge').textContent = 'demo server unreachable';
   }
 }
 
+// The payouts are only meaningful from the demo Safe: it is the one with the Guard and
+// the registered Ledger key. Any other Safe would pay the vendor with no Guard in the
+// way, and the app would then report the Guard "letting it through". So proposing and
+// approving stay disabled until Safe{Wallet} confirms it has the demo Safe open.
+let safeOk = false;
 async function checkSafe() {
   if (!inSafeWallet) {
     showBanner('Open this app from Safe{Wallet} (Apps → FermionWallet) to propose transactions.');
@@ -199,16 +205,34 @@ async function checkSafe() {
   }
   try {
     const info = await safeCall('getSafeInfo', undefined, 10000);
-    await refresh();
-    if (state && info.safeAddress.toLowerCase() !== state.safe.toLowerCase()) {
-      showBanner('This Safe (' + info.safeAddress + ') is not the demo Safe. Open ' + state.safe +
-        ' in Safe{Wallet} — only the demo Safe has the FermionWallet Guard and a registered Ledger key.');
+    if (!state) await refresh();
+    if (!state) return showBanner('The FermionWallet demo server is unreachable. Reload the app.');
+    if (info.safeAddress.toLowerCase() !== state.safe.toLowerCase()) {
+      showBanner('Safe{Wallet} has ' + info.safeAddress + ' open, which is not the demo Safe. Only the demo Safe ' +
+        state.safe + ' has the FermionWallet Guard and a registered Ledger key, so this app is disabled here. ' +
+        'Switch to the demo Safe in Safe{Wallet} and open FermionWallet again.');
+      return;
     }
+    safeOk = true;
+    syncButtons();
   } catch (e) {
-    showBanner('Safe{Wallet} did not answer: ' + e.message);
+    showBanner('Safe{Wallet} did not answer (' + e.message + '). Reload the app.');
   }
 }
 function showBanner(t) { $('banner').textContent = t; $('banner').className = 'banner show'; }
+
+const exhausted = () => !!state && state.leavesUsed >= state.leavesTotal;
+const exhaustedMsg = () => 'All ' + state.leavesTotal + ' one-time XMSS leaves of the demo key are used, so the ' +
+  'Ledger cannot sign another approval. Reset the demo to get a fresh key: docker compose down -v, then ' +
+  'docker compose up -d --wait.';
+let approving = false;
+function syncButtons() {
+  $('btn-propose-1').disabled = !safeOk;
+  $('btn-propose-3').disabled = !safeOk;
+  $('btn-approve').disabled = !safeOk || approving || exhausted();
+  $('btn-approve').title = exhausted() ? exhaustedMsg() : '';
+  if (safeOk && exhausted() && !approving && !$('out-2').textContent) show($('out-2'), 'fail', '✘ ' + exhaustedMsg());
+}
 
 function amount() {
   const n = Number($('amount').value);
@@ -266,7 +290,9 @@ $('btn-approve').onclick = async () => {
   const out = $('out-2');
   const n = amount();
   if (!n) return show(out, 'fail', '✘ Enter a whole number of dUSD between 1 and 1,000,000.');
-  $('btn-approve').disabled = true;
+  if (exhausted()) return show(out, 'fail', '✘ ' + exhaustedMsg());
+  approving = true;
+  syncButtons();
   show(out, '', 'Waiting for the Ledger: review every screen on the device, then press Approve (or Reject)…');
   try {
     const r = await (await fetch('/api/approve', {method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -277,14 +303,18 @@ $('btn-approve').onclick = async () => {
     } else if (r.ok && r.outcome === 'rejected') {
       show(out, '', (r.reason === 'timeout' ? '✘ Timed out on the Ledger' : '✘ Rejected on the Ledger') +
         '. Nothing was signed and no leaf was used.');
+    } else if (/exhausted/i.test(r.error || '')) {
+      await refresh();
+      show(out, 'fail', '✘ ' + (state ? exhaustedMsg() : r.error));
     } else {
       show(out, 'fail', '✘ ' + (r.error || 'failed') + (r.log ? '\n\n' + r.log : ''));
     }
   } catch (e) {
     show(out, 'fail', '✘ ' + e.message);
   }
-  $('btn-approve').disabled = false;
-  refresh();
+  approving = false;
+  await refresh();
+  syncButtons();
 };
 
 // ── simulated Ledger ──
@@ -294,8 +324,12 @@ async function refreshDevice() {
     if (d.error) throw new Error(d.error);
     if (!d.active) {
       $('lcd').innerHTML = '<div class="t">FermionWallet XMSS</div><div class="l">' + esc(d.key) + '</div>' +
-        '<div class="l">Next leaf #' + d.nextLeaf + ' of ' + d.totalLeaves + '</div>' +
-        '<div class="l">Idle, waiting for a signing request</div>';
+        (d.nextLeaf >= d.totalLeaves
+          ? '<div class="l warn">All ' + d.totalLeaves + ' one-time leaves used</div>' +
+            '<div class="l warn">Key exhausted: cannot sign</div>'
+          : '<div class="l">Next leaf #' + d.nextLeaf + ' (' + (d.totalLeaves - d.nextLeaf) + ' of ' +
+            d.totalLeaves + ' left)</div>' +
+            '<div class="l">Idle, waiting for a signing request</div>');
       ['dev-prev', 'dev-next', 'dev-approve', 'dev-reject'].forEach(id => { $(id).disabled = true; });
       return;
     }
