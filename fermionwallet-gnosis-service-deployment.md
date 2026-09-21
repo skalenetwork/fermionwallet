@@ -22,7 +22,7 @@ This document specifies the architecture, operational topology, contract deploym
                    ^                     |  - Pre-Approval Orchestrator   |
                    |                     +---------------+----------------+
                    |                                     |
-                   |               (Signs XMSS half)     v
+                   |      (Signs both hybrid halves)     v
                    |         +--------------------------------------------+
                    |         | Ledger (FermionWallet XMSS app)            |
                    |         |  - ST33 SE: XMSS seed + ECDSA key          |
@@ -78,14 +78,14 @@ To enroll a client Safe:
 1. **Key Ceremony**:
    * Quantum Administrator generates the root inside the Ledger's secure element (FermionWallet XMSS app).
    * Safe owners sign EIP-712 registration hash.
-   * Safe owners first remove the fallback handler and any unguarded modules (ordinary Safe transactions, before the Guard is attached) — registration is refused otherwise.
+   * Safe owners first remove the fallback handler and make sure no module is unguarded — disable every module, or on Safe ≥ 1.5 wire this Guard as the module guard with `Safe.setModuleGuard(address(FermionWalletGuard))`. These are ordinary Safe transactions, done before the Guard is attached; registration is refused otherwise (`FallbackHandlerForbidden`, `ModulesEnabledWithoutModuleGuard`).
    * Administrator calls `FermionWalletGuard.registerQuantumKey(...)`.
 2. **Guard Activation**:
    * Safe owners execute multisig transaction:
      ```solidity
      Safe.setGuard(address(FermionWalletGuard));
      ```
-   * Safe ≥ 1.5 with modules: also wire the module guard (the same address), before enabling any module:
+   * Safe ≥ 1.5: once the Guard is attached, `setModuleGuard` and `enableModule` are Safe self-calls, so each needs a timelocked `ADMIN` pre-approval; `enableModule` is rejected (`ModuleGuardNotWired`) unless this Guard is already the module guard:
      ```solidity
      Safe.setModuleGuard(address(FermionWalletGuard));
      ```
@@ -195,7 +195,7 @@ The service ships as a single Docker image (`ghcr.io/skalenetwork/fermionwallet-
 4. **XMSS Signature Execution**:
    * The Ledger secure element reserves leaf `i`, commits the counter to `i+1` in SE NVRAM, then outputs the XMSS signature (counter-before-signature invariant).
 5. **On-Chain Pre-Approval Mining**:
-   * Relayer submits `createPreApproval` (or `createPayloadPreApproval` for batches).
+   * Relayer submits `createPreApproval` for an ERC-20 transfer, `createPayloadPreApproval` for a batch, native send or permit-listed call, or `createAdminPreApproval` for a Safe self-call or Guard policy call.
    * Service monitors confirmation; upon inclusion, Safe App flags status as 🟢 **Ready to Execute**.
 
 ### 4.2 High Availability & Failover Architecture

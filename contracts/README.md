@@ -1,9 +1,11 @@
 # FermionWallet contracts
 
-MIT-licensed Solidity contracts for FermionWallet. First component: a
-**clean-room XMSS signature verifier** (RFC 8391 / NIST SP 800-208),
-implemented from the specification — no code taken from poqeth (unlicensed)
-or hashsigs-solidity (AGPL).
+Solidity contracts for FermionWallet. `XMSS.sol` and the deploy/demo scripts
+are MIT-licensed; `FermionWalletGuard.sol`, `QuantumKeyRegistry.sol` and
+`PreApprovalEngine.sol` are LGPL-3.0-only (they build on Safe's LGPL
+contracts). The XMSS verifier is a **clean-room implementation** (RFC 8391 /
+NIST SP 800-208), written from the specification — no code taken from poqeth
+(unlicensed) or hashsigs-solidity (AGPL).
 
 ## Contents
 
@@ -14,6 +16,14 @@ or hashsigs-solidity (AGPL).
 - `src/QuantumKeyRegistry.sol` — owns leaf-index consumption:
   `_verifyAndConsumeXmss` checks the key's used-leaf bitmap (OpenZeppelin
   `BitMaps`), verifies, and burns the leaf atomically; reverts loudly on reuse.
+- `src/PreApprovalEngine.sol` — hybrid (ECDSA + XMSS) pre-approvals: creation,
+  revocation and consumption. Abstract, like the registry.
+- `src/FermionWalletGuard.sol` — the Safe transaction guard and module guard;
+  the only deployable contract (it contains the registry and the engine).
+- `script/Deploy.s.sol` — CREATE2 deployment of the Guard (env vars
+  `MULTISEND_CALL_ONLY`, `ADMIN_TIMELOCK`, `EMERGENCY_TIMELOCK`,
+  `MAX_BATCH_LEGS`, `MAX_COMMITMENT_QUEUE`, `SALT`; defaults 2 days,
+  14 days, 100, 16). `script/Demo.s.sol` drives the demo container.
 - `py/xmss_ref.py` — independent Python reference implementation
   (RFC 8391 keygen/sign/verify) used to generate the test vectors in
   `test/vectors/` (h = 4, 10). `py/gen_h20.py` generates the h = 20
@@ -29,8 +39,8 @@ or hashsigs-solidity (AGPL).
 
 | Operation | Gas |
 |---|---|
-| `XMSS.verify` (h = 10) | 957,370 |
-| `XMSS.verify` (h = 20, **measured**) | **999,247** |
+| `XMSS.verify` (h = 10) | 703,258 |
+| `XMSS.verify` (h = 20, **measured**) | **736,700** |
 
 Within the 0.4–1M target set in `../fermionwallet-guard-module.md`
 (asserted in CI: `test_gas_verify_h20` fails above 1.1M).

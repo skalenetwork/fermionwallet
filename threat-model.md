@@ -97,7 +97,7 @@ Total compromise: both layers cooperate, funds move immediately and "legitimatel
 ### 2.9 Network-level adversary (mempool, RPC, relayer)
 
 - **Front-running `registerQuantumKey`/`rotateQuantumKey`:** signatures bind `safe`, `chainid`, `registryNonce` — a copied transaction executes identically or reverts on the bumped nonce; nothing redirectable.
-- **Front-running `createPreApproval`:** replaying it creates the same approval for the same Safe (idempotent by commitment/txHash); an attacker paying our gas is a gift.
+- **Front-running `createPreApproval`:** a front-runner who submits the same calldata first creates exactly the approval the Administrator signed, for the same Safe; any second submission reverts (`ApprovalExists` — the ID is `keccak256(safe, nonce)` — and the XMSS leaf is already used). An attacker paying our gas is a gift.
 - **Censorship (RPC/relayer/builder):** liveness only; validity windows may lapse and burn leaves (~1M budget absorbs this); nonce-order discipline in the queue limits cascade.
 - **Reorgs:** leaf bitmap writes finalize with the chain; the service resyncs from chain before any advisory decision; "fail toward waste, never toward reuse."
 

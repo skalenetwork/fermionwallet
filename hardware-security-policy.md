@@ -57,10 +57,15 @@ both confined to the SE. The physical boundary is the SE package; the MCU, USB/B
 | Service (APDU) | Role | SSPs touched | Description |
 |---|---|---|---|
 | `GEN_XMSS_KEY` | Administrator | SK_SEED, SK_PRF of one free slot (create); that slot's leaf counter (init = 0) | Generates a new XMSS key in a free slot (up to 4 keys; existing keys untouched) from SE TRNG. **Not derived from the BIP-39 seed** — deliberately unrecoverable from the 24 words (a restore would reset leaf state and enable reuse-forgery). Runs a pairwise consistency test; zeroizes on failure. |
-| `GET_XMSS_ROOT` | Any | none (public) | Returns `xmssRoot`, `treeHeight`, `parameterSet`. |
-| `ATTEST_KEY` | Administrator | attestation key (read) | Clear-signs EIP-712 `QuantumKeyAttestation{safe, xmssRoot, xmssSeed, treeHeight, parameterSet, registryNonce}` (signed with the admin key, so `quantumAdmin` is bound as the signer) on-device for the registration ceremony. |
-| `SIGN_PREAPPROVAL` | Administrator | SK_SEED, SK_PRF, admin key (read); leaf counter (increment) | Renders token/recipient/amount/window/Safe nonce/leaf index on the trusted screen; one physical confirmation releases **both hybrid halves** (ECDSA EIP-712 + XMSS) over the same digest. |
-| `GET_STATUS` | Any | none (public) | App version, `xmssRoot`, current leaf index, leaves remaining ($2^h - idx$), key status. |
+| `LIST_KEYS` | Any | none (public) | For each slot: free or in use; for keys in use, root, tree height, parameter set, and leaves used / total. |
+| `GET_XMSS_ROOT` | Any | none (public) | For the selected slot: `xmssRoot`, public SEED (`xmssSeed`), `treeHeight`, `parameterSet`. |
+| `GET_LEAF_INDEX` | Any | none (public) | The selected key's next unused leaf index. |
+| `GET_ADMIN_ADDRESS` | Any | none (public) | The `quantumAdmin` address; optionally shown in full on the device for comparison. |
+| `GET_APP_CONFIG` | Any | none (public) | App version, parameter set, `MAX_KEYS`, free slots. |
+| `SIGN_KEY_ATTESTATION` | Administrator | admin key (read) | Clear-signs EIP-712 `QuantumKeyAttestation{safe, xmssRoot, xmssSeed, treeHeight, parameterSet, registryNonce}` with the admin key (so `quantumAdmin` is bound as the signer) for the registration or rotation ceremony. The key fields come from the device's own slot, never from the host. No leaf consumed. |
+| `SIGN_PREAPPROVAL` | Administrator | SK_SEED, SK_PRF, admin key (read); leaf counter (increment) | Renders token/amount/recipient/validity window/Safe address, chain and binding (`txHash` pin or "not pinned")/`policyHash`/leaf index on the trusted screen — only fields of the signed EIP-712 payload, so no Safe nonce; one physical confirmation releases **both hybrid halves** (ECDSA EIP-712 + XMSS) over the same digest. |
+| `SIGN_ROTATION` | Administrator | SK_SEED, SK_PRF of the **old** slot (read); its leaf counter (increment) | Renders the full EIP-712 `RotateQuantumKey` payload and returns the old key's XMSS possession proof over that digest. |
+| `SIGN_DENIAL` | Administrator | admin key (read) | Plain ECDSA signature over a denial record; no leaf consumed. |
 | `RETIRE_KEY` | Administrator | SK_SEED, SK_PRF, counter of one slot (zeroize) | Erases one key after a double-confirmed on-device flow; other slots unaffected. Used after a rotation is confirmed on-chain. |
 | Device wipe / app delete | Administrator (PIN) or automatic (3 PIN failures) | all CSPs | Zeroization — see §5. |
 

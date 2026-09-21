@@ -111,11 +111,11 @@ The second authorization is produced by a designated **Quantum Administrator** h
 | Layer | Choice |
 |---|---|
 | PQ signature scheme | **XMSS** (e.g., `XMSS-SHA2_20_256` or a keccak-instantiated variant), one long-lived key per Quantum Administrator, good for 2^20 (~1M) pre-approvals |
-| On-chain verification | Solidity XMSS verifier: WOTS+ chain recomputation + L-tree + Merkle auth path to the registered root. Pure `keccak256`/`sha256` — estimated 0.4–1M gas per `createPreApproval`, benchmarked in Foundry as an acceptance criterion |
-| State management (critical) | Each signature consumes one leaf index. **Index reuse is catastrophic** (forgery becomes possible), so the contract tracks used indices in an OpenZeppelin `BitMaps` bitmap keyed by `(quantumKeyId, leafIndex)` and reverts on reuse. The add-on service must persist its index counter atomically before releasing any signature |
+| On-chain verification | Solidity XMSS verifier: WOTS+ chain recomputation + L-tree + Merkle auth path to the registered root. Pure SHA-256 hashing through the precompile (`XMSS-SHA2_*_256`) — 736,700 gas measured per verification at h = 20, benchmarked in Foundry as an acceptance criterion |
+| State management (critical) | Each signature consumes one leaf index. **Index reuse is catastrophic** (forgery becomes possible), so the contract tracks used indices in an OpenZeppelin `BitMaps` bitmap keyed by `(quantumKeyId, leafIndex)` and reverts on reuse. The Ledger app commits its leaf counter before releasing any signature |
 | Classical hybrid half (on-chain) | OpenZeppelin `SignatureChecker` + `EIP712` — the pre-approval is valid only if **both** the XMSS and the classical signature verify |
-| Key lifecycle | Registered as a single XMSS root (`xmssRoot`) in the registry via the co-signed one-shot `registerQuantumKey`. When leaf indices near exhaustion, the Administrator rotates to a new root via `rotateQuantumKey` (old-key + new-key signature proofs, per the access-control rules) |
-| Off-chain signing | `@noble/post-quantum` / liboqs XMSS implementation in the add-on service; never `crypto.createHmac` labeled as quantum-safe |
+| Key lifecycle | Registered as a single XMSS root (`xmssRoot`) in the registry via the co-signed one-shot `registerQuantumKey`. When leaf indices near exhaustion, the Administrator rotates to a new root via `rotateQuantumKey` (owner co-signatures, the Ledger's attestation of the new key, and an XMSS possession proof by the old key, per the access-control rules) |
+| Off-chain signing | The FermionWallet XMSS Ledger app — the only signer; the add-on service holds no keys (the demo simulates the device with the RFC 8391 reference code in `contracts/py/`). Never `crypto.createHmac` labeled as quantum-safe |
 
 ### Existing open-source Solidity code for XMSS
 
@@ -128,7 +128,7 @@ Surveyed (2026-09); use as reference/baseline, not drop-in:
 
 Nothing else exists: ZKNox (ETHFALCON/ETHDILITHIUM) covers only lattice schemes; no LMS or other XMSS Solidity implementations were found.
 
-**Plan of record — implemented:** FermionWallet's XMSS verifier is implemented in-house as a clean-room, **MIT-licensed** Solidity library at [`contracts/src/XMSS.sol`](./contracts/src/XMSS.sol) (no code taken from the unlicensed or AGPL repos above; written directly from RFC 8391), with leaf consumption enforced by the registry's used-leaf bitmap in [`contracts/src/QuantumKeyRegistry.sol`](./contracts/src/QuantumKeyRegistry.sol). It is validated against an independent Python RFC 8391 reference (`contracts/py/xmss_ref.py`) with positive vectors at h = 4, 10, and **20 (the production parameter set)** plus tamper and fuzz tests, and benchmarked in Foundry: **999,247 gas measured** per verification at h=20 — within the 0.4–1M target. Remaining before mainnet: cross-check against poqeth's published numbers and the same external audit as the Guard.
+**Plan of record — implemented:** FermionWallet's XMSS verifier is implemented in-house as a clean-room, **MIT-licensed** Solidity library at [`contracts/src/XMSS.sol`](./contracts/src/XMSS.sol) (no code taken from the unlicensed or AGPL repos above; written directly from RFC 8391), with leaf consumption enforced by the registry's used-leaf bitmap in [`contracts/src/QuantumKeyRegistry.sol`](./contracts/src/QuantumKeyRegistry.sol). It is validated against an independent Python RFC 8391 reference (`contracts/py/xmss_ref.py`) with positive vectors at h = 4, 10, and **20 (the production parameter set)** plus tamper and fuzz tests, and benchmarked in Foundry: **736,700 gas measured** per verification at h=20 — within the 0.4–1M target. Remaining before mainnet: cross-check against poqeth's published numbers and the same external audit as the Guard.
 
 Why XMSS over the alternatives:
 - **ML-DSA / Falcon**: lattice math costs tens of millions of gas on the EVM — no audited gas-viable verifier exists.
@@ -176,7 +176,7 @@ The following, if written by hand in this repo, is a spec violation:
 
 - A local `ITransactionGuard` / `BaseTransactionGuard` / `Enum` / `IERC165`
 - A local `ecrecover` wrapper, HMAC, or “quantum signature” function
-- A global pause flag or any role mapping (the per-Safe pause and per-Safe transient depth flag are the only exceptions — see "No global powers")
+- A global pause flag or any role mapping (the per-Safe pause and per-Safe transient depth counter are the only exceptions — see "No global powers")
 - A local EIP-712 domain separator or Safe tx hasher (call `ISafe.getTransactionHash`)
 - A local nonce counter or used-bit mapping when `Nonces` / `BitMaps` will do
 - Upgradeable-proxy scaffolding
@@ -363,14 +363,16 @@ interface IFermionWalletGuard is ITransactionGuard, IModuleGuard {
     //
     // Lookup at execution time — two tiers, both bounded:
     //   Tier 1 (pinned): approvalByTxHash[safe][safeTxHash]. A pin may be replaced
-    //     only once its approval is expired or revoked (never while live or used).
+    //     only once its approval is expired, revoked, or under a revoked key (never
+    //     while live or used; TxHashAlreadyPinned otherwise).
     //   Tier 2 (field-matched, txHash == 0): a FIFO queue (OpenZeppelin
     //     DoubleEndedQueue) per commitment
     //       keccak256(abi.encode(safe, class, token, recipient, amount))       // TRANSFER
     //       keccak256(abi.encode(safe, class, target, value, dataHash))        // PAYLOAD / ADMIN
     //     Identical recurring payouts queue. Permanently dead entries (used,
     //     revoked, expired, revoked key) are popped from the front on every create
-    //     and consume, so they never count toward the MAX_COMMITMENT_QUEUE cap;
+    //     and consume, and a create that hits the cap first compacts dead entries
+    //     out of the whole queue, so they never count toward the MAX_COMMITMENT_QUEUE cap;
     //     not-yet-valid entries stay queued. Consumption takes the first
     //     currently-valid entry. Tier 1 is tried first; a dead pin falls through.
     // Approvals of a Rotated key stay consumable; a Revoked key's do not.
@@ -558,7 +560,7 @@ Neither path may depend on any component that the Guard can render unusable (in 
 
 The fallback (path 2) is implemented **in the Guard itself**, so it requires no external contract and survives every Guard state:
 
-1. `requestEmergencyDeGuard()` — callable only by the enrolled Safe (`msg.sender == safe`), i.e., via a normal owner-threshold Safe transaction. **`checkTransaction` hardcodes an allow** (zero-value `CALL` only), bypassing pause, enrollment and all pre-approval requirements, for this family of calls — the one family the Guard may never block, checked first in `checkTransaction`:
+1. `requestEmergencyDeGuard()` — callable only by the enrolled Safe (`msg.sender == safe`), i.e., via a normal owner-threshold Safe transaction. **`checkTransaction` hardcodes an allow** (zero-value `CALL` only, and — like every Safe transaction under this Guard — `gasPrice == 0`), bypassing pause, enrollment and all pre-approval requirements, for this family of calls — the one family the Guard may never block, checked first in `checkTransaction` (only the gas-refund ban comes before it):
    - Safe → Guard, the owner safety calls: `requestEmergencyDeGuard()`, `cancelEmergencyDeGuard(safe)`, `pauseSafe(safe)`, `requestUnpauseSafe()`, `unpauseSafe()`, `revokePreApproval(id)`, `cancelKeyRevocation(safe)`. Each re-checks its own authority; none can move funds or weaken enforcement.
    - Safe → Safe: `setGuard(address(0))` once the emergency timelock has matured, or at any time for a never-enrolled Safe.
 
@@ -566,7 +568,12 @@ The fallback (path 2) is implemented **in the Guard itself**, so it requires no 
 
    ```solidity
    function checkTransaction(address to, uint256 value, bytes calldata data, Enum.Operation operation, ...) external {
-       // 1. FIRST — before pause, before enrollment, before everything:
+       // 0. The gas-refund ban. It is a parameter of the signed transaction, not Safe
+       //    state, so it never blocks an escape call (re-sign with gasPrice = 0); checked
+       //    any later, an escape call could pay the Safe's balance out as a "refund".
+       if (gasPrice != 0) revert GasRefundForbidden();
+
+       // 1. Then — before pause, before enrollment, before everything else:
        //    the emergency escape hatch may never be blocked by any other state.
        if (_isEmergencyEscapeCall(to, value, data, operation)) return;
        //    (matches requestEmergencyDeGuard / cancelEmergencyDeGuard self-calls,
@@ -598,10 +605,7 @@ Threat trade-off, stated plainly: during an emergency de-guard the classical own
 
 ## Gas refund constraints
 
-Safe's refund mechanism (`gasPrice`, `gasToken`, `refundReceiver`) pays out after execution and can drain the Safe if unconstrained. The Guard must enforce for the MVP:
-
-- `gasPrice == 0` (no refunds), or
-- an explicit policy cap on refund parameters with `refundReceiver` restricted to an allowlist and `gasToken` restricted to approved tokens.
+Safe's refund mechanism (`gasPrice`, `gasToken`, `refundReceiver`) pays out after execution and can drain the Safe if unconstrained. The Guard enforces `gasPrice == 0` (no refunds at all) and reverts with `GasRefundForbidden` otherwise. A future version could instead allow refunds under an explicit policy cap, with `refundReceiver` restricted to an allowlist and `gasToken` restricted to approved tokens; this is not implemented.
 
 ## Safe nonce recomputation quirk
 
@@ -647,10 +651,10 @@ This uses the Safe's own hashing (correct domain separator, correct typehash, co
 
 The target call executed by the Safe can re-enter `Safe.execTransaction`, causing the Guard's `checkTransaction` to run again before the outer `checkAfterExecution` completes. Requirements:
 
-- The Guard tracks execution depth per Safe with a transient flag (`TransientSlot` at a `SlotDerivation` slot keyed by the Safe), set in `checkTransaction` and cleared in `checkAfterExecution`.
-- Nested Safe executions of the same Safe are rejected (`NestedSafeTransaction`). Escape-hatch calls return before the flag is set.
-- The module path (`checkModuleTransaction`) does not set the depth flag.
-- All state writes (approval consumption, counters) follow checks-effects-interactions. The Guard's only external calls are read-only calls to the calling Safe (`nonce`, `getTransactionHash`, `getModulesPaginated`, `getStorageAt`, `isOwner`) and the SHA-256 precompile.
+- The Guard tracks execution depth per Safe with a transient counter (`TransientSlot` at a `SlotDerivation` slot keyed by the Safe), incremented in `checkTransaction` and decremented in `checkAfterExecution`.
+- Nested Safe executions of the same Safe are rejected (`NestedSafeTransaction`) when the counter is non-zero. Escape-hatch calls are never rejected, but they also increment the counter, so a nested escape call cannot reset an enclosing transaction's depth.
+- The module path (`checkModuleTransaction`) does not touch the depth counter.
+- All state writes (approval consumption, counters) follow checks-effects-interactions. The Guard's only external calls are read-only: calls to a Safe (`nonce`, `getTransactionHash`, `getModulesPaginated`, `getStorageAt`, `isOwner`, and the legacy `checkSignatures` during registry ceremonies), the ERC-1271 `isValidSignature` staticcall that `SignatureChecker` makes when `quantumAdmin` is a contract, and the SHA-256 precompile.
 
 ### Emergency pause (circuit breaker)
 
@@ -686,9 +690,9 @@ An outright MultiSend ban is unusable for the target audience — a 50-recipient
 
 - **Only `MultiSendCallOnly`, only the pinned address.** The Guard stores one `MultiSendCallOnly` address as an immutable (the deploy script defaults to the v1.4.1 deployment). Safes whose Safe{Wallet} batches through another MultiSendCallOnly version cannot batch through this Guard. It is the sole permitted delegatecall target; `MultiSend` (which allows inner delegatecalls) stays banned forever.
 - **One `PAYLOAD` pre-approval per batch.** `dataHash = keccak256(multiSendCalldata)` binds every leg — order, targets, values, calldata — with a single XMSS signature and a single leaf. Any post-signature mutation changes the hash and the Guard reverts.
-- **On-chain per-leg structural checks.** Even though the hash already binds the batch, `checkTransaction` must decode the `MultiSendCallOnly` payload and enforce, per leg: `operation == CALL` (redundant with `MultiSendCallOnly` but checked anyway), leg target is not the Safe, the Guard (which contains the registry), or `MultiSendCallOnly` itself (no admin ops smuggled inside batches — those go through `ADMIN` alone), a leg with calldata carries a selector that is not deny-listed and is `transfer` or on the Safe's permit-list, and 1–3-byte leg calldata is malformed. Legs with empty calldata (native value) are allowed; the batch hash binds them. Per-token amount caps are not yet implemented. Decoding N legs is a few hundred gas per leg — noise next to the XMSS verification.
+- **On-chain per-leg structural checks.** Even though the hash already binds the batch, `checkTransaction` must decode the `MultiSendCallOnly` payload and enforce, per leg: `operation == CALL` (redundant with `MultiSendCallOnly` but checked anyway), leg target is not the Safe, `address(0)` (which `MultiSendCallOnly` rewrites to the Safe itself), the Guard (which contains the registry), or `MultiSendCallOnly` itself (no admin ops smuggled inside batches — those go through `ADMIN` alone), a leg with calldata carries a selector that is not deny-listed and is `transfer` or on the Safe's permit-list, and 1–3-byte leg calldata is malformed. Legs with empty calldata (native value) are allowed; the batch hash binds them. Per-token amount caps are not yet implemented. Decoding N legs is a few hundred gas per leg — noise next to the XMSS verification.
 - **Bounded size.** The immutable `MAX_BATCH_LEGS` (deploy-script default 100) caps decoding so it cannot be gas-griefed.
-- **Strict decoding — malformed batches revert immediately.** `MultiSendCallOnly` legs are packed as `(uint8 operation, address to, uint256 value, uint256 dataLength, bytes data)`. The outer `multiSend(bytes)` argument is decoded with `abi.decode` (the same decoding `MultiSendCallOnly` performs). The Guard's leg decoder must, before touching any leg contents: (1) revert if the remaining bytes are shorter than the 85-byte fixed leg header, (2) revert if `dataLength` overruns the remaining calldata (truncation), (3) revert if, after the last leg, any trailing bytes remain (`offset != data.length` — no smuggled suffix), and (4) revert the moment the leg counter exceeds `maxBatchLegs`, *before* decoding further legs. Each check is O(1) per leg, so the worst-case adversarial input costs at most `maxBatchLegs` header reads before the revert — no unbounded traversal to EOF is possible.
+- **Strict decoding — malformed batches revert immediately.** `MultiSendCallOnly` legs are packed as `(uint8 operation, address to, uint256 value, uint256 dataLength, bytes data)`. The outer `multiSend(bytes)` argument is decoded with `abi.decode` (the same decoding `MultiSendCallOnly` performs). The Guard's leg decoder must, before touching any leg contents: (1) revert if the remaining bytes are shorter than the 85-byte fixed leg header, (2) revert if `dataLength` overruns the remaining calldata (truncation), (3) revert if, after the last leg, any trailing bytes remain (`offset != data.length` — no smuggled suffix), and (4) revert the moment the leg counter exceeds `MAX_BATCH_LEGS` (`BatchTooLarge`), *before* decoding further legs. Each check is O(1) per leg, so the worst-case adversarial input costs at most `MAX_BATCH_LEGS` header reads before the revert — no unbounded traversal to EOF is possible.
 - **Ledger UX.** The device binds the batch `dataHash` and displays: leg count, per-token totals, and the hash — it cannot render 50 legs. The leg-by-leg review happens in the add-on UI with two-source verification; the on-chain per-leg checks above are the backstop that holds even if the host lies about the legs. One press-sequence, one leaf, whole payroll.
 
 ### Timestamp handling
@@ -788,11 +792,11 @@ When an owner or relayer calls `execTransaction(to, value, data, operation, safe
    `ITransactionGuard(guard).checkTransaction(to, value, data, operation, safeTxGas, baseGas, gasPrice, gasToken, refundReceiver, signatures, msg.sender)`
    - Inside the Guard, `msg.sender` **is the Safe proxy address**. This is the property our access-control check relies on (the Safe must have an Active key: `_requireEnrolledActive(msg.sender)`).
    - The final `msgSender` *parameter* is the EOA/relayer that called `execTransaction` — informational only, never a trust anchor.
-   - Because it is a `CALL`, the Guard runs with its **own** storage and may write state (consume the pre-approval, set the reentrancy depth marker).
+   - Because it is a `CALL`, the Guard runs with its **own** storage and may write state (consume the pre-approval, update the reentrancy depth counter).
 7. Any revert in the Guard bubbles up and aborts `execTransaction` — the target call never executes.
 8. If the Guard returns, the Safe executes the target call (`CALL` or `DELEGATECALL` per `operation`).
-9. The Safe then calls `checkAfterExecution(txHash, success)` on the same guard — again a plain `CALL` from the proxy address.
-10. Refund logic (if `gasPrice != 0`) runs last.
+9. Refund logic runs (only if `gasPrice != 0`, which this Guard never allows).
+10. The Safe then calls `checkAfterExecution(txHash, success)` on the same guard — again a plain `CALL` from the proxy address.
 
 ### Consequences the implementation must honor
 
@@ -817,9 +821,9 @@ The major problems fixed here are:
 - Module bypass closed: enabled modules bypass the tx guard; the spec now requires no modules or a paired `IModuleGuard`, rejects `enableModule` until the module guard is wired, and exempts remediation calls.
 - `checkTransaction` caller restriction added: prevents attackers from burning single-use approvals.
 - Self-call/guard-removal bypass closed: `setGuard`, `enableModule`, and owner changes require explicit admin authorization.
-- Refund-drain attack closed: `gasPrice`/`gasToken`/`refundReceiver` constrained by policy.
+- Refund-drain attack closed: `gasPrice` must be zero, so no refund is ever paid.
 - Safe nonce quirk documented: hash recomputation must use `nonce - 1` inside `checkTransaction`.
-- Key rotation now requires old-key + new-key signature proofs instead of an unauthenticated call.
+- Key rotation now requires owner co-signatures, the Ledger's attestation of the new key, and an old-key XMSS possession proof instead of an unauthenticated call.
 - Bricking risk addressed: time-locked emergency path to remove the Guard so funds cannot be permanently frozen.
 - Reentrancy via nested Safe transactions closed with depth tracking.
 - Emergency deny-all pause added (fast pause, time-locked unpause) to beat revocation front-running, with anti-veto cooldown so one owner or the Administrator cannot freeze the Safe forever.
@@ -844,7 +848,7 @@ Before production deployment, FermionWallet must ensure:
 - the Guard rejects unknown selectors and unsupported call patterns,
 - the Safe policy allowlist and amount caps are enforced in the Guard (selector permit-list: done; amount caps, token/recipient allowlists, maximum window: not yet),
 - an integration test exists that deploys a real Safe + Guard, pins a pre-approval to the `safeTxHash` of nonce `N`, executes at nonce `N`, and asserts the Guard's `getTransactionHash(..., nonce() - 1)` recomputation matches (catches the nonce off-by-one and Safe-version hash drift),
-- fuzz/negative tests cover malformed MultiSend batches (truncated leg header, overrunning `dataLength`, trailing bytes, > `maxBatchLegs`) — all must revert cheaply,
+- fuzz/negative tests cover malformed MultiSend batches (truncated leg header, overrunning `dataLength`, trailing bytes, > `MAX_BATCH_LEGS`) — all must revert cheaply,
 - tests assert fallback-handler posture enforcement and the remediation exemptions (`setFallbackHandler(address(0))` and quantum-approved Guard removal),
 - tests assert `enableModule` rejects until the Guard is wired as module guard, while `disableModule`/`setModuleGuard` remediation is not deadlocked,
 - tests assert re-pause does not cancel a pending unpause and the post-unpause cooldown blocks single-key pausers,
