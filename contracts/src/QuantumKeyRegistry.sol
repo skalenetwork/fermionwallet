@@ -226,9 +226,12 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
 
         _verifyAttestation(safe, quantumAdmin, xmssRoot, xmssSeed, treeHeight, parameterSet, nonce, ledgerAttestation);
 
+        // Re-registration after an emergency revocation is not a first enrollment:
+        // per-Safe policy the owners set since must survive the key replacement.
+        bool firstEnrollment = !enrolledSafe[safe];
         quantumKeyId = _storeKey(safe, quantumAdmin, xmssRoot, xmssSeed, treeHeight, parameterSet, nonce);
         emit QuantumKeyRegistered(quantumKeyId, safe, xmssRoot, treeHeight);
-        _afterEnrollment(safe);
+        _afterEnrollment(safe, firstEnrollment);
     }
 
     // ── Rotation (registration + old-key possession proof) ──────────────────
@@ -466,6 +469,8 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
         _useCheckedNonce(safe, nonce);
     }
 
-    /// Hook for the Guard: initialize per-Safe policy defaults at first enrollment.
-    function _afterEnrollment(address safe) internal virtual;
+    /// Hook for the Guard, run on every registration (first enrollment and
+    /// re-registration after revocation). `firstEnrollment` is true only the first
+    /// time this Safe ever registers a key: policy defaults are initialized then only.
+    function _afterEnrollment(address safe, bool firstEnrollment) internal virtual;
 }

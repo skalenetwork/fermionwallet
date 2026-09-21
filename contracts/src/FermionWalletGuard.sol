@@ -480,15 +480,19 @@ contract FermionWalletGuard is
         emit SelectorPolicyChanged(safe, selector, allowed);
     }
 
-    /// Enrollment hook: permit-list initialized to {transfer} only. Enrollment is
-    /// refused while the Safe has any fallback handler — the onboarding flow must
-    /// remove it (and revoke pre-existing token and
-    /// Permit2 allowances) BEFORE the quantum key ceremony.
-    function _afterEnrollment(address safe) internal override {
+    /// Enrollment hook: permit-list initialized to {transfer} only, at the Safe's
+    /// FIRST enrollment only — a re-registration after an emergency key revocation
+    /// keeps whatever permit-list the owners governed into place (it must not
+    /// silently re-enable a selector they removed). Every registration is refused
+    /// while the Safe has any fallback handler — the onboarding flow must remove it
+    /// (and revoke pre-existing token and Permit2 allowances) BEFORE the quantum key
+    /// ceremony.
+    function _afterEnrollment(address safe, bool firstEnrollment) internal override {
         _checkFallbackPosture(safe);
         // A Safe enrolling with modules already enabled (and unguarded) would be
         // locked out from its first protected transaction — reject at the door.
         _checkModulePosture(safe);
+        if (!firstEnrollment) return;
         allowedSelectors[safe][SEL_TRANSFER] = true;
         emit SelectorPolicyChanged(safe, SEL_TRANSFER, true);
     }
