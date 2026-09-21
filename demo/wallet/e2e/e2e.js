@@ -87,6 +87,9 @@ async function proposeInWallet(page, app, button) {
   const vendorBefore = BigInt(s0.vendorBalance);
   step(`Safe ${safe}, guard active: ${s0.guardActive}, vendor balance ${vendorBefore}`);
   if (!s0.guardActive) fail('Guard is not set on the demo Safe');
+  if (s0.leavesUsed >= s0.leavesTotal) {
+    fail(`all ${s0.leavesTotal} XMSS leaves are used; reset the stack (docker compose down -v, then up -d --wait)`);
+  }
 
   const browser = await chromium.launch({
     executablePath: process.env.CHROME || '/usr/bin/google-chrome',
