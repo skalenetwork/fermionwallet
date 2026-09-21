@@ -1254,6 +1254,54 @@ contract GuardIntegrationTest is Test {
         );
         assertEq(token.balanceOf(recipient), 0);
     }
+
+    // ═══ Regression: re-registration must not reset the owners' permit-list ═══
+
+    /// Emergency-revoke the current key and register a fresh h = H_NEW key.
+    function _revokeAndReregister() internal {
+        uint256 validUntil = block.timestamp + 1 days;
+        bytes32 revokeDigest = _guardDigest(
+            keccak256(
+                abi.encode(REVOKE_KEY_TYPEHASH, address(safe), keyId, guard.registryNonce(address(safe)), validUntil)
+            )
+        );
+        vm.prank(relayer);
+        guard.requestKeyRevocation(address(safe), validUntil, _ownerSigs(revokeDigest));
+        vm.warp(guard.keyRevocationExecutableAt(address(safe)) + 1);
+        guard.executeKeyRevocation(address(safe));
+
+        (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
+        uint256 nonce = guard.registryNonce(address(safe));
+        validUntil = vm.getBlockTimestamp() + 1 days;
+        bytes32 regDigest = _guardDigest(
+            keccak256(
+                abi.encode(APPROVE_KEY_TYPEHASH, address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, nonce, validUntil)
+            )
+        );
+        vm.prank(relayer);
+        keyId = guard.registerQuantumKey(
+            address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil,
+            _ledgerAttestation(newRoot, newSeed, H_NEW, nonce), _ownerSigs(regDigest)
+        );
+    }
+
+    function _disableTransferSelector() internal {
+        bytes memory policy =
+            abi.encodeCall(FermionWalletGuard.setSelectorPolicy, (address(safe), IERC20.transfer.selector, false));
+        _createAdmin(address(guard), keccak256(policy), 1);
+        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
+        _safeExec(address(guard), 0, policy, Enum.Operation.Call);
+        assertFalse(guard.allowedSelectors(address(safe), IERC20.transfer.selector));
+    }
+
+    /// The permit-list is initialised at FIRST enrollment only. Registering a new key
+    /// after an emergency revocation (no owner vote on the permit-list) used to rerun
+    /// the initialisation and silently re-enable `transfer` the owners had disabled.
+    function test_Reregistration_DoesNotReenableDisabledTransfer() public {
+        _disableTransferSelector();
+        _revokeAndReregister();
+        assertFalse(guard.allowedSelectors(address(safe), IERC20.transfer.selector));
+    }
 }
 
 /// Re-enters Safe.execTransaction twice from inside an approved outer transaction:
