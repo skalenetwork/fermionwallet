@@ -66,6 +66,7 @@ contract FermionWalletGuard is
     error FallbackHandlerForbidden(address safe, address handler);
     error PauseCooldown(address safe, uint64 until);
     error ModuleGuardNotWired(address safe);
+    error NativeValueOnTransfer(uint256 value);
 
     // ── Events ──────────────────────────────────────────────────────────────
 
@@ -524,6 +525,10 @@ contract FermionWalletGuard is
         if (_isDeniedSelector(selector)) revert DeniedSelector(selector);
 
         if (selector == SEL_TRANSFER) {
+            // A TRANSFER approval binds token/recipient/amount only; it never
+            // authorises native ETH riding along to the token contract (Tier-2
+            // matching does not see `value`). ETH moves only via PAYLOAD.
+            if (value != 0) revert NativeValueOnTransfer(value);
             (address recipient, uint256 amount) = _decodeTransfer(data);
             expected.class_ = ApprovalClass.TRANSFER;
             expected.token = to;
