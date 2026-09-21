@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="510" viewBox="0 0 860 510" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="510" fill="#0c1626"/>
+  <rect width="860" height="56" fill="#16263f"/>
+  <circle cx="34" cy="28" r="14" fill="#57d6c0"/>
+  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONWALLET</text>
+  <text x="250" y="34" fill="#8fa3bf" font-size="14">Approvals</text>
+  <text x="340" y="34" fill="#57d6c0" font-size="14" font-weight="600">Quantum key</text>
+  <text x="700" y="34" fill="#8fa3bf" font-size="13">Safe: 0x9aF3…C21e</text>
+  <text x="30" y="92" fill="#e8eef7" font-size="20" font-weight="700">Key health</text>
+  <!-- key card -->
+  <rect x="30" y="110" width="800" height="130" rx="10" fill="#16263f"/>
+  <circle cx="70" cy="156" r="20" fill="#13301f"/>
+  <text x="61" y="163" fill="#4bd18a" font-size="16">✓</text>
+  <text x="104" y="148" fill="#e8eef7" font-size="15" font-weight="700">Active quantum key · orbit · velvet · canyon · lemon · tiger · frost</text>
+  <text x="104" y="172" fill="#8fa3bf" font-size="12.5">XMSS-SHA2_20_256 · root 0x8c41…0d6e · registered 12 Mar 2026 · ceremony record #7</text>
+  <text x="104" y="196" fill="#8fa3bf" font-size="12.5">Ledger device S/N …4411 · attestation verified · registry nonce 7</text>
+  <rect x="660" y="136" width="148" height="32" rx="16" fill="none" stroke="#57d6c0" stroke-width="1.5"/>
+  <text x="686" y="157" fill="#57d6c0" font-size="13" font-weight="600">Rotate key</text>
+  <!-- usage -->
+  <rect x="30" y="256" width="800" height="110" rx="10" fill="#16263f"/>
+  <text x="52" y="286" fill="#e8eef7" font-size="15" font-weight="700">Leaf usage — 184,204 of 1,048,576 (17%)</text>
+  <rect x="52" y="302" width="756" height="14" rx="7" fill="#22354f"/>
+  <rect x="52" y="302" width="129" height="14" rx="7" fill="#57d6c0"/>
+  <line x1="656" y1="296" x2="656" y2="322" stroke="#f2b84b" stroke-width="2" stroke-dasharray="3,3"/>
+  <line x1="770" y1="296" x2="770" y2="322" stroke="#e05555" stroke-width="2" stroke-dasharray="3,3"/>
+  <text x="52" y="344" fill="#5b7292" font-size="11.5">Read live from the on-chain bitmap · rotation warning at 80% (amber) · signing interstitial at 95% (red) · hard refusal at 100%</text>
+  <!-- footer stats -->
+  <g font-size="12.5">
+    <text x="30" y="404" fill="#8fa3bf">This month: <tspan fill="#e8eef7" font-weight="600">31 approvals</tspan> · <tspan fill="#e8eef7" font-weight="600">2 denials</tspan> · <tspan fill="#4bd18a" font-weight="700">✓ 0 desync alarms</tspan> · avg time to authorize <tspan fill="#e8eef7" font-weight="600">11 min</tspan></text>
+  </g>
+  <!-- desync alarm example (shown only when count > 0, pinned to top of every screen) -->
+  <text x="30" y="432" fill="#5b7292" font-size="11">If the desync counter is ever non-zero, this banner pins to the top of every screen and the Administrator is paged automatically:</text>
+  <rect x="30" y="444" width="800" height="46" rx="10" fill="#33202a" stroke="#e05555" stroke-width="1.5"/>
+  <text x="52" y="466" fill="#e05555" font-size="13.5" font-weight="700">⚠ 1 desync alarm — a leaf was consumed outside this app. Treat as possible key compromise.</text>
+  <text x="52" y="483" fill="#c9a0a8" font-size="11.5">Signing is disabled (fail closed) → Review consumption event · Start emergency rotation</text>
+</svg>

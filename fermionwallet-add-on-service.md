@@ -47,9 +47,17 @@ A Safe App — an iframe dApp running inside the Safe{Wallet} interface, built w
 
 - 🟡 **Quantum authorization required** — Safe owners have signed, but no matching pre-approval exists yet. The row shows an **"Authorize with quantum key"** action that opens the add-on flow and creates the signed, time-bound pre-approval.
 - 🟢 **Ready to execute** — a valid, unexpired, unused pre-approval matches the exact transaction payload (token, recipient, amount, nonce, policyHash, chain).
+- ⛓️ **Blocked by earlier nonce** — quantum-approved, but a lower-nonce Safe transaction is still pending; the Safe executes strictly in nonce order, so this row cannot execute yet no matter how green it is.
 - 🔴 **Blocked** — pre-approval expired, revoked, consumed, or policy-mismatched, with the specific reason displayed.
 
 Status is computed by comparing the queued Safe transaction hash and decoded calldata against the pre-approval registry — the same matching rules the Guard enforces on-chain, so the UI never shows green for a transaction the Guard would revert.
+
+**Nonce-order discipline (mandatory UI behavior).** Safe transactions execute in strict nonce order, so quantum approvals must be granted in nonce order too — otherwise approvals sit un-executable behind earlier nonces and expire, burning one XMSS leaf and ~1M gas of on-chain verification each. The UI must therefore:
+
+- sort the queue **primarily by Safe nonce**, with expiry urgency as a secondary per-row indicator, never as the sort key;
+- put the "Authorize with quantum key" action only on the **lowest unapproved nonce**; approving a higher nonce first requires an explicit override ("N earlier transactions must execute before this one can — its validity window starts burning now") and is recorded in the audit log;
+- default the validity-window suggestion to *estimated time for all earlier queued nonces to clear + policy margin*, not a flat minimum;
+- when an earlier nonce is rejected/replaced, immediately re-evaluate every later approved row and warn if its remaining window is now unrealistic.
 
 ### 2. Simulation as a safety net
 
@@ -75,26 +83,25 @@ A dedicated **"Quantum key" tab** in the FermionWallet Safe App runs the key cer
 The ceremony replaces a two-transaction propose/approve state machine with a **single-shot registration co-signed off-chain by the Safe owners over the root itself** — structurally eliminating the UI-swap attack (a malicious frontend cannot substitute a root without invalidating every owner signature).
 
 **Stage A — Preflight (Administrator).**
-The app checks everything that could fail later, before anything is generated: Ledger connected over WebHID (`@ledgerhq/hw-transport-webhid`), correct app open (Ethereum app in Phase 1; the [Ledger XMSS app](./ledger-xmss-app.md) in Phase 2), device address == registered `quantumAdmin`, registry contract reachable, current `registryNonce` fetched, owner list and threshold read from the Safe. A green checklist is shown; the "Generate key" button stays disabled until all checks pass.
+The app checks everything that could fail later, before anything is generated: Ledger connected over WebHID (`@ledgerhq/hw-transport-webhid`), the [FermionWallet Ledger XMSS app](./ledger-xmss-app.md) open on the device, device address == registered `quantumAdmin`, registry contract reachable, current `registryNonce` fetched, owner list and threshold read from the Safe. A green checklist is shown; the "Generate key" button stays disabled until all checks pass.
 
 **Stage B — Generate (Administrator).**
-- *Phase 2 (target):* `GET_XMSS_ROOT` — seed generated inside the secure element; only root, tree height, parameter set returned.
-- *Phase 1 (MVP):* the add-on service generates the XMSS keypair in the HSM; the Ledger clear-signs an EIP-712 `QuantumKeyAttestation { xmssRoot, treeHeight, parameterSet, safe, chainId, registryNonce }` on-device. Never derived from the Ledger seed (restore would reset XMSS state → leaf reuse).
+The Administrator connects their Ledger running the [FermionWallet XMSS app](./ledger-xmss-app.md). `GEN_XMSS_KEY` derives the XMSS key entirely inside the Ledger's ST33 secure element — the seed and monotonic leaf counter never leave secure-element NVRAM — and `GET_XMSS_ROOT` returns the public root. The device then clear-signs an on-device EIP-712 `QuantumKeyAttestation { safe, quantumAdmin, xmssRoot, treeHeight, parameterSet, registryNonce }`, making the Administrator's physical device the definitive — and only — hardware anchor for this Safe.
 
-The app derives a **ceremony code** from the root: 6 BIP-39 words (e.g. `orbit-velvet-canyon-lemon-tiger-frost`) plus the first/last 4 hex bytes. The Administrator confirms the code matches the device/HSM display before continuing. Words beat hex: they are readable over a phone call and mis-verification is an order of magnitude less likely than hex skimming.
+The app derives a **ceremony code** from the root: 6 BIP-39 words (e.g. `orbit-velvet-canyon-lemon-tiger-frost`) plus the first/last 4 hex bytes. The Administrator confirms the code matches the Ledger's display before continuing. Words beat hex: they are readable over a phone call and mis-verification is an order of magnitude less likely than hex skimming.
 
 **Stage C — Collect owner signatures (owners, parallel).**
 The app opens a **ceremony session** (add-on service, expiring `validUntil`, default 72 h) and notifies every Safe owner (email/Slack/push, links into the Safe App). Each owner sees one screen:
 
 - the ceremony code in large type, with the instruction to verify it **out-of-band with the Administrator** (call, video, in person — not the same channel as the notification),
 - full root hex, tree height (≈ lifetime pre-approvals), parameter set, Safe address, expiry,
-- one action: **"Sign quantum key"** — a clear-signed EIP-712 `ApproveQuantumKey { safe, xmssRoot, treeHeight, parameterSet, registryNonce, validUntil }` on the owner's own hardware wallet. **The owner's device screen shows the root itself** — the second independent verification surface; the ceremony is exactly as trustworthy as this comparison, so the UI never abbreviates the root on this screen.
+- one action: **"Sign quantum key"** — a clear-signed EIP-712 `ApproveQuantumKey { safe, quantumAdmin, xmssRoot, treeHeight, parameterSet, registryNonce, validUntil }` on the owner's own hardware wallet. **The owner's device screen shows the root itself** — the second independent verification surface; the ceremony is exactly as trustworthy as this comparison, so the UI never abbreviates the root on this screen.
 
 A live quorum tracker (`2 of 3 signed · expires in 41 h`) is visible to all participants and the Administrator. Signatures are EIP-712-bound to the registry contract, chain, Safe, and `registryNonce` — unusable on any other chain, Safe, ceremony, or after expiry. Any participant can **abort**; abort bumps a session flag, and completing any ceremony bumps `registryNonce` on-chain, so stale signatures can never activate.
 
 **Stage D — Activate (Administrator, the only on-chain transaction).**
 When the threshold is reached, the app **simulates first** (`eth_call`), showing the decoded result; then the Administrator submits
-`registerQuantumKey(root, treeHeight, parameterSet, ledgerAttestation, ownerSigs[])`.
+`registerQuantumKey(quantumAdmin, root, treeHeight, parameterSet, ledgerAttestation, ownerSigs[])`.
 The contract verifies the owner threshold via the Safe's own `checkSignatures`, verifies the attestation, bumps `registryNonce`, and atomically sets the key **`Active`** (prior key → `Rotated`). Neither side can act alone: no owner quorum → no activation; no hardware-attested root → owner signatures verify nothing.
 
 **Stage E — Proof of life.**
@@ -129,12 +136,11 @@ The "Approvals" tab lists every Safe transaction in 🟡 state across the enroll
 Opening a row shows the transaction reconstructed from **two independent sources**: the Safe Transaction Service record and a local decode of the on-chain queue data fetched via the app's own RPC. If they disagree, the flow hard-stops with a tamper warning. The screen shows: token (symbol + contract address), amount (decimals-adjusted + raw), recipient (checksummed, address-book label if known, 🆕 badge if not), Safe address and nonce, computed `safeTxHash`, and the validity window the Administrator is about to grant (picker, ≥15-minute granularity, policy-bounded maximum). For 🆕 recipients the UI requires an explicit "recipient verified out-of-band" checkbox before the sign button enables.
 
 **Stage C — Hardware review and sign.**
-The leaf index is **reserved atomically** in the add-on service before signing (crash between reserve and sign wastes one leaf; the reverse order would risk reuse — same invariant as the [Ledger XMSS app](./ledger-xmss-app.md)).
+The device's leaf counter is the reservation: the secure element reserves the leaf index and commits the increment to NVRAM **before** releasing the signature (a crash between commit and release wastes one leaf; the reverse order would risk reuse — see [Ledger XMSS app](./ledger-xmss-app.md)). The add-on service mirrors the index only as an advisory cache.
 
-- *Phase 2 (target):* `SIGN_PREAPPROVAL` — the Ledger screen renders token, recipient, amount, window, Safe nonce, and leaf index; physical confirmation releases the XMSS signature from the secure element.
-- *Phase 1 (MVP):* the Ledger clear-signs the EIP-712 `PreApproval` struct (same fields) on-device; the HSM releases the matching XMSS half only against that fresh signature.
+`SIGN_PREAPPROVAL` — the Ledger screen renders token, recipient, amount, window, Safe nonce, and leaf index; physical confirmation releases **both** hybrid halves from the device: the EIP-712 ECDSA signature and the XMSS signature, computed inside the secure element.
 
-The device screen is the second verification surface: what the Administrator confirms on hardware is exactly what the Guard will enforce. There is no raw-hash path in either phase.
+The device screen is the second verification surface: what the Administrator confirms on hardware is exactly what the Guard will enforce. There is no raw-hash path.
 
 **Stage D — Submit, simulate, confirm.**
 The app simulates `createPreApproval` via `eth_call` (surfacing decoded custom errors — `LeafAlreadyUsed`, `PolicyViolation`, `WindowTooLong` — before gas is spent), submits, and waits for confirmation. On inclusion the queue row flips 🟡→🟢, Safe{Wallet} simulation starts passing, and operators are notified: *"Tx #42 quantum-authorized — executable until 18:40 UTC."* If the Safe transaction is edited or replaced after approval, its hash changes, the pre-approval no longer matches, and the row drops back to 🟡 with an explanation — approvals bind to exact payloads, never to intents.

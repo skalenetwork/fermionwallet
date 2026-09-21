@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="400" viewBox="0 0 860 400" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="400" fill="#0c1626"/>
+  <text x="30" y="44" fill="#e8eef7" font-size="18" font-weight="700">Denial flow — ECDSA denial receipt, zero leaf cost</text>
+  <!-- screen 1: deny header -->
+  <g>
+    <rect x="30" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#e05555" stroke-width="2"/>
+    <rect x="48" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <rect x="48" y="94" width="149" height="30" rx="6" fill="#3a1a1a"/>
+    <text x="60" y="114" fill="#e05555" font-size="11" font-weight="700">DENY APPROVAL</text>
+    <text x="60" y="150" fill="#e8eef7" font-size="11">500,000.00 USDC</text>
+    <text x="60" y="168" fill="#e8eef7" font-size="11">→ 0x7bE1 … 9A04</text>
+    <text x="60" y="198" fill="#4bd18a" font-size="10">No leaf will be</text>
+    <text x="60" y="212" fill="#4bd18a" font-size="10">consumed</text>
+    <text x="60" y="262" fill="#5b7292" font-size="9.5">Deny 1 · payload</text>
+    <circle cx="122" cy="312" r="12" fill="#22354f"/>
+  </g>
+  <!-- screen 2: reason -->
+  <g>
+    <rect x="235" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#e05555" stroke-width="2"/>
+    <rect x="253" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <rect x="253" y="94" width="149" height="30" rx="6" fill="#3a1a1a"/>
+    <text x="265" y="114" fill="#e05555" font-size="11" font-weight="700">DENY APPROVAL</text>
+    <text x="265" y="150" fill="#8fa3bf" font-size="10">Reason (from app)</text>
+    <text x="265" y="172" fill="#e8eef7" font-size="11">"unverified</text>
+    <text x="265" y="188" fill="#e8eef7" font-size="11">recipient"</text>
+    <text x="265" y="218" fill="#8fa3bf" font-size="9.5">reason hash is part of</text>
+    <text x="265" y="232" fill="#8fa3bf" font-size="9.5">the signed record</text>
+    <text x="265" y="262" fill="#5b7292" font-size="9.5">Deny 2 · reason</text>
+    <circle cx="327" cy="312" r="12" fill="#22354f"/>
+  </g>
+  <!-- screen 3: confirm -->
+  <g>
+    <rect x="440" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#e05555" stroke-width="2"/>
+    <rect x="458" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <rect x="458" y="94" width="149" height="30" rx="6" fill="#3a1a1a"/>
+    <text x="470" y="114" fill="#e05555" font-size="11" font-weight="700">SIGN DENIAL?</text>
+    <text x="470" y="152" fill="#e8eef7" font-size="11.5">Hold to deny</text>
+    <text x="470" y="178" fill="#8fa3bf" font-size="11.5">Tap to go back</text>
+    <text x="470" y="210" fill="#8fa3bf" font-size="9.5">ECDSA signature only —</text>
+    <text x="470" y="224" fill="#8fa3bf" font-size="9.5">XMSS counter untouched</text>
+    <text x="470" y="262" fill="#5b7292" font-size="9.5">Deny 3 · decision</text>
+    <circle cx="532" cy="312" r="12" fill="#e05555"/>
+  </g>
+  <!-- screen 4: done -->
+  <g>
+    <rect x="645" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#22354f" stroke-width="2"/>
+    <rect x="663" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="675" y="122" fill="#4bd18a" font-size="11" font-weight="700">DENIAL SIGNED</text>
+    <text x="675" y="150" fill="#e8eef7" font-size="11">Recorded off-chain</text>
+    <text x="675" y="168" fill="#e8eef7" font-size="11">as audit event</text>
+    <text x="675" y="198" fill="#8fa3bf" font-size="9.5">leaf counter unchanged:</text>
+    <text x="675" y="212" fill="#8fa3bf" font-size="9.5">184,204 / 1,048,576</text>
+    <text x="675" y="262" fill="#5b7292" font-size="9.5">Deny 4 · confirmation</text>
+    <circle cx="737" cy="312" r="12" fill="#22354f"/>
+  </g>
+  <text x="30" y="374" fill="#5b7292" font-size="11.5">The red-framed DENY screens are visually impossible to mistake for the teal approval flow. The denial is as non-repudiable as an approval — but free: no XMSS leaf is spent.</text>
+</svg>

@@ -114,7 +114,7 @@ Surveyed (2026-09); use as reference/baseline, not drop-in:
 
 Nothing else exists: ZKNox (ETHFALCON/ETHDILITHIUM) covers only lattice schemes; no LMS or other XMSS Solidity implementations were found.
 
-**Plan of record — implemented:** FermionWallet's XMSS verifier is implemented in-house as a clean-room, **MIT-licensed** Solidity library at [`contracts/src/XMSS.sol`](./contracts/src/XMSS.sol) (no code taken from the unlicensed or AGPL repos above; written directly from RFC 8391). It is validated against an independent Python RFC 8391 reference (`contracts/py/xmss_ref.py`) with positive vectors at multiple tree heights plus tamper tests, and benchmarked in Foundry: **942,783 gas** per verification at h=10 (~973k extrapolated at h=20) — within the 0.4–1M target. Remaining before mainnet: cross-check against poqeth's published numbers and the same external audit as the Guard.
+**Plan of record — implemented:** FermionWallet's XMSS verifier is implemented in-house as a clean-room, **MIT-licensed** Solidity library at [`contracts/src/XMSS.sol`](./contracts/src/XMSS.sol) (no code taken from the unlicensed or AGPL repos above; written directly from RFC 8391), with leaf consumption enforced by [`contracts/src/XMSSStateful.sol`](./contracts/src/XMSSStateful.sol). It is validated against an independent Python RFC 8391 reference (`contracts/py/xmss_ref.py`) with positive vectors at h = 4, 10, and **20 (the production parameter set)** plus tamper and fuzz tests, and benchmarked in Foundry: **999,247 gas measured** per verification at h=20 — within the 0.4–1M target. Remaining before mainnet: cross-check against poqeth's published numbers and the same external audit as the Guard.
 
 Why XMSS over the alternatives:
 - **ML-DSA / Falcon**: lattice math costs tens of millions of gas on the EVM — no audited gas-viable verifier exists.
@@ -212,6 +212,9 @@ interface IFermionWalletGuard is ITransactionGuard {
 
     struct KeyRegistration {
         bytes32 quantumKeyId;   // keccak256(safe, xmssRoot, registryNonce)
+        address quantumAdmin;   // Administrator's classical EOA (the Ledger address) —
+                                // the address the ECDSA half of every hybrid pre-approval
+                                // signature is verified against
         bytes32 xmssRoot;       // the XMSS public root itself — one key per Safe, all tokens
         uint32 treeHeight;
         bytes32 parameterSet;   // e.g. XMSS-SHA2_20_256
@@ -260,10 +263,20 @@ interface IFermionWalletGuard is ITransactionGuard {
     event PreApprovalRevoked(bytes32 indexed id, address indexed safe);
 
     // Co-signed one-shot registration (see quantum-key-registry.md). Not bound to
-    // any token: one Active key per Safe covers all assets. ownerSignatures are
-    // EIP-712 clear-signatures over the root itself, verified via Safe.checkSignatures;
-    // registryNonce (included in the signed struct) prevents replay.
+    // any token: one Active key per Safe covers all assets. This contract is a
+    // shared singleton and the caller is the Administrator's relayer EOA — NOT the
+    // Safe — so `safe` must be explicit: it tells the contract which Safe's
+    // checkSignatures to call and which enrollment record to write
+    // (safeToQuantumKey[safe] = quantumKeyId). ownerSignatures are EIP-712
+    // clear-signatures over ApproveQuantumKey{safe, quantumAdmin, xmssRoot, ...,
+    // registryNonce, validUntil} — the digest binds `safe` and block.chainid, so a
+    // front-runner cannot replay or redirect a ceremony to another Safe; the
+    // per-safe registryNonce prevents replay. quantumAdmin is the Administrator's
+    // Ledger EOA: it must match the signer of ledgerAttestation, and it is the
+    // address every subsequent hybrid pre-approval's ECDSA half is verified against.
     function registerQuantumKey(
+        address safe,
+        address quantumAdmin,
         bytes32 xmssRoot,
         uint32 treeHeight,
         bytes32 parameterSet,
@@ -274,6 +287,8 @@ interface IFermionWalletGuard is ITransactionGuard {
     // Rotation = registration + old-key XMSS possession proof over the new root.
     // Emergency rotation without the old key goes through Safe governance with a time lock.
     function rotateQuantumKey(
+        address safe,
+        address newQuantumAdmin,   // may equal the current one (rotating only the XMSS tree)
         bytes32 newXmssRoot,
         uint32 treeHeight,
         bytes32 parameterSet,
@@ -285,18 +300,45 @@ interface IFermionWalletGuard is ITransactionGuard {
     // ── Pre-approval creation ───────────────────────────────────────────────
     // One Guard instance serves many Safes, and the creator is the Administrator's
     // relayer EOA — NOT the Safe. Every create function therefore takes the target
-    // `safe` explicitly. The XMSS-signed payload binds (safe, chainid, class, all
-    // class fields, validity, nonce, leafIndex, policyHash) — the EIP-712 domain
-    // separator uses the Guard address + chainid, and `safe` is a struct field —
-    // so a signature can never be replayed against another Safe or chain.
+    // `safe` explicitly.
     //
-    // Lookup at execution time: checkTransaction recomputes
-    //   commitment = keccak256(safe, class, token, recipient, amount)          // TRANSFER
-    //   commitment = keccak256(safe, class, target, value, keccak256(data))    // PAYLOAD / ADMIN
-    // and consults `activeApproval[commitment] → preApprovalId`. At most one
-    // unconsumed approval may exist per commitment (creation reverts otherwise),
-    // so no txHash is needed for PAYLOAD/ADMIN; TRANSFER may optionally pin an
-    // exact safeTxHash via `txHash` (bytes32(0) = match by fields).
+    // HYBRID signature verification (both halves mandatory, same EIP-712 digest):
+    //   * ecdsaSignature (65 bytes): the Ledger's classical half, verified via
+    //     SignatureChecker.isValidSignatureNow against the registered quantumAdmin.
+    //     This is the hardware human-in-the-loop anchor — without it, a compromised
+    //     backend keystore holding the XMSS seed could mint approvals autonomously.
+    //   * xmssSignature (ABI-encoded RFC 8391 tuple: leafIdx, r, wotsSig[67],
+    //     authPath[h] — ~2.8 KB at h=20): the post-quantum half, verified against
+    //     the registered xmssRoot with leaf consumption in the on-chain bitmap.
+    // Both sign the same payload digest binding (safe, chainid, class, all class
+    // fields, validity, nonce, leafIndex, policyHash) — the EIP-712 domain uses
+    // the Guard address + chainid — so neither half can be replayed against
+    // another Safe, chain, or payload. Creation reverts if either half fails.
+    //
+    // Lookup at execution time — two tiers, both O(1)-bounded:
+    //
+    //   Tier 1 (pinned, preferred): if the Safe transaction was proposed before
+    //   authorization (the normal flow), the Administrator signs the exact
+    //   safeTxHash and the approval is stored in
+    //       approvalByTxHash[safe][safeTxHash] → preApprovalId
+    //   checkTransaction receives no preApprovalId from the Safe, but it can
+    //   recompute safeTxHash from its arguments + the Safe's nonce, giving an
+    //   unambiguous O(1) hit. Pinned approvals never collide: any number of
+    //   otherwise-identical transfers can coexist because their nonces differ.
+    //
+    //   Tier 2 (field-matched, txHash == bytes32(0)): checkTransaction recomputes
+    //       commitment = keccak256(safe, class, token, recipient, amount)        // TRANSFER
+    //       commitment = keccak256(safe, class, target, value, keccak256(data))  // PAYLOAD / ADMIN
+    //   and consults a per-commitment FIFO queue:
+    //       approvalQueue[commitment] → bytes32[] ids  (+ uint32 head pointer)
+    //   Creation APPENDS (it does not revert on an existing entry), so identical
+    //   recurring payouts — two 5,000 USDC transfers to the same vendor — queue
+    //   naturally. Consumption pops from head, skipping expired/revoked entries
+    //   (lazily advancing head, so stale approvals cannot block live ones).
+    //   The queue is bounded (MAX_COMMITMENT_QUEUE, default 16; creation reverts
+    //   beyond it) to cap traversal gas. checkTransaction tries Tier 1 first,
+    //   then Tier 2; ADMIN-class approvals additionally require the timelock
+    //   to have elapsed regardless of tier.
 
     // TRANSFER class (fast path, no timelock)
     function createPreApproval(
@@ -310,8 +352,9 @@ interface IFermionWalletGuard is ITransactionGuard {
         bytes32 quantumKeyId,
         uint32 xmssLeafIndex,
         bytes32 policyHash,
-        bytes32 txHash,
-        bytes calldata signature
+        bytes32 txHash,     // exact safeTxHash pin (Tier 1); bytes32(0) = field-matched queue (Tier 2)
+        bytes calldata ecdsaSignature,
+        bytes calldata xmssSignature
     ) external returns (bytes32 preApprovalId);
 
     // PAYLOAD class: native ETH sends and policy-allowlisted non-transfer calls.
@@ -327,7 +370,9 @@ interface IFermionWalletGuard is ITransactionGuard {
         bytes32 quantumKeyId,
         uint32 xmssLeafIndex,
         bytes32 policyHash,
-        bytes calldata signature
+        bytes32 txHash,     // exact safeTxHash pin (Tier 1); bytes32(0) = field-matched queue (Tier 2)
+        bytes calldata ecdsaSignature,
+        bytes calldata xmssSignature
     ) external returns (bytes32 preApprovalId);
 
     // ADMIN class: self-calls only (setGuard incl. address(0), setModuleGuard,
@@ -344,10 +389,13 @@ interface IFermionWalletGuard is ITransactionGuard {
         bytes32 quantumKeyId,
         uint32 xmssLeafIndex,
         bytes32 policyHash,
-        bytes calldata signature
+        bytes32 txHash,     // exact safeTxHash pin (Tier 1); bytes32(0) = field-matched queue (Tier 2)
+        bytes calldata ecdsaSignature,
+        bytes calldata xmssSignature
     ) external returns (bytes32 preApprovalId);
 
     function ADMIN_TIMELOCK() external view returns (uint64); // immutable, set at deployment
+    function MAX_COMMITMENT_QUEUE() external view returns (uint32); // Tier-2 queue bound, default 16
 
     function validatePreApproval(bytes32 preApprovalId) external view returns (bool valid, string memory reason);
     function revokePreApproval(bytes32 preApprovalId) external returns (bool revoked);
@@ -377,10 +425,10 @@ interface IFermionWalletGuard is ITransactionGuard {
 ## Access control rules
 
 - `checkTransaction(...)` must require that `msg.sender` is an enrolled Safe. Without this, anyone can call it directly and consume single-use pre-approvals, creating a denial-of-service on legitimate transfers.
-- `registerQuantumKey(...)` must verify the owner co-signatures (Safe threshold, via `checkSignatures`) over an EIP-712 struct that binds the XMSS root itself, the Safe address, chain ID, `registryNonce`, and a validity deadline. It must reject if the Safe already has an Active key, and bump `registryNonce` on success.
+- `registerQuantumKey(...)` runs on a **shared singleton** whose caller is the Administrator's relayer EOA, so the target `safe` is an explicit parameter — it determines which Safe's `checkSignatures` is consulted and which `safeToQuantumKey[safe]` slot is written; `msg.sender` must never be used to infer the Safe. It must verify the owner co-signatures (Safe threshold, via `ISafe(safe).checkSignatures`) over an EIP-712 struct that binds the XMSS root itself, the `quantumAdmin` address, the `safe` address, chain ID, `registryNonce`, and a validity deadline — so a mempool front-runner cannot redirect a ceremony to a different Safe. It must verify that `ledgerAttestation` is signed by `quantumAdmin`, reject if the Safe already has an Active key, and bump the per-safe `registryNonce` on success.
 - `rotateQuantumKey(...)` must additionally verify an XMSS possession proof by the **old** key over the new root (consuming one leaf), plus owner co-signatures as above. Emergency rotation without the old key must go through Safe governance with a time lock.
 - `revokePreApproval(...)` must only be callable by the enrolled Safe or the key holder that created the approval.
-- `createPreApproval(...)` must verify the quantum signature on-chain before storing the approval; it must not accept unverified records.
+- `createPreApproval(...)` (all classes) must verify **both hybrid halves** on-chain before storing the approval: the ECDSA half via `SignatureChecker.isValidSignatureNow` against the registered `quantumAdmin`, and the XMSS half against the registered `xmssRoot` with leaf-bitmap consumption. It must not accept unverified records, and a valid XMSS half with a missing/invalid ECDSA half must revert (the Ledger anchor is not optional).
 
 ## Module bypass — mandatory mitigation
 
@@ -390,6 +438,8 @@ Required mitigations:
 
 - The Safe must have **no enabled modules**, verified at enrollment and re-checked in `checkTransaction`, or
 - On Safe v1.5.0+, a FermionWallet `IModuleGuard` must also be installed via `setModuleGuard(...)`, implementing `checkModuleTransaction(...)` and `checkAfterModuleExecution(...)` with the same policy checks.
+
+**Module-guard architecture (resolved):** the tx guard and the module guard are **one contract**. `FermionWalletGuard` inherits `BaseTransactionGuard` *and* `BaseModuleGuard`, overrides `supportsInterface` to report both `type(ITransactionGuard).interfaceId` and `type(IModuleGuard).interfaceId` (per the note in "Contract header" above), and routes `checkModuleTransaction(to, value, data, operation, module)` through the same class-dispatch pipeline as `checkTransaction` — with two module-specific rules: `operation == DELEGATECALL` from a module is always rejected (no MultiSend exception), and the module address is logged in the consumption event. On Safe < 1.5.0 the same contract is deployed; the module-guard entry points are simply never wired, and enrollment enforces the "no enabled modules" rule instead. The Safe is enrolled with two calls in one ADMIN batch: `setGuard(guard)` and, on 1.5+, `setModuleGuard(guard)` — same address for both.
 - The Guard must reject any Safe transaction that calls `enableModule(...)` on the Safe itself unless it carries an explicit quantum authorization for a module change.
 
 ## Guard-removal and self-call protection
@@ -450,7 +500,33 @@ Safe's refund mechanism (`gasPrice`, `gasToken`, `refundReceiver`) pays out afte
 
 ## Safe nonce recomputation quirk
 
+**Caller identity.** `checkTransaction`/`checkAfterExecution` have no dedicated caller parameter — the calling Safe *is* `msg.sender`. The Guard must treat `msg.sender` as the Safe identity and verify it is an **enrolled** Safe (`safeToQuantumKey[msg.sender]` exists with an `Active` key); calls from unenrolled addresses revert. This is safe precisely because `setGuard` can only be set by the Safe itself, so only a Safe that governance-installed this Guard ever calls these hooks; but the enrollment check still matters — it stops a *different, attacker-controlled* contract from calling `checkTransaction` directly to consume another Safe's field-matched pre-approvals (the commitment includes `safe`, and `safe` is taken from `msg.sender`, never from calldata, in the consumption path). Note the asymmetry with the create/register functions, where `msg.sender` is the relayer and `safe` is explicit calldata: consumption trusts `msg.sender`, creation never does.
+
 In `Safe.execTransaction`, the transaction hash is computed with the current `nonce`, then `nonce` is incremented, and only afterwards is the guard's `checkTransaction(...)` called. If the Guard recomputes the safeTxHash to match it against a pre-approval `txHash`, it must use `safe.nonce() - 1`, not the current nonce. Getting this wrong makes every hash comparison fail (or worse, validates the wrong transaction).
+
+**How the Guard recomputes the hash — no forked hasher needed.** This has been raised repeatedly in reviews as a "blocker" on the claim that `getTransactionHash` reads the nonce from storage. That claim is **false**: verified against the deployed source, `safe-global/safe-smart-account` **v1.4.1 `Safe.sol` lines 427–440** (and v1.3.0 `GnosisSafe.sol` equivalently) declare the function with an explicit `uint256 _nonce` as the last parameter — it exists precisely so off-chain signers can compute future hashes. Safe v1.3.0 and v1.4.1 expose exactly the interface required:
+
+```solidity
+// Safe v1.3.0 / v1.4.1 — GnosisSafe.sol / Safe.sol (public view)
+function getTransactionHash(
+    address to, uint256 value, bytes calldata data, Enum.Operation operation,
+    uint256 safeTxGas, uint256 baseGas, uint256 gasPrice,
+    address gasToken, address refundReceiver,
+    uint256 _nonce                    // ← explicit nonce parameter, NOT read from storage
+) public view returns (bytes32);
+```
+
+The last parameter is an **explicit `_nonce`** (it exists precisely so off-chain signers can compute future hashes), so inside `checkTransaction` the Guard calls:
+
+```solidity
+bytes32 safeTxHash = ISafe(msg.sender).getTransactionHash(
+    to, value, data, operation, safeTxGas, baseGas, gasPrice,
+    gasToken, refundReceiver,
+    ISafe(msg.sender).nonce() - 1     // nonce was already incremented by execTransaction
+);
+```
+
+This uses the Safe's own hashing (correct domain separator, correct typehash, correct version quirks) with zero local reimplementation. The `nonce() - 1` subtraction cannot underflow in this call path: `checkTransaction` only runs from inside `execTransaction`, after the increment, so `nonce ≥ 1`. A mandatory integration test (see production checklist) deploys a real Safe + Guard, creates a pinned pre-approval for the known future `safeTxHash` at nonce `N`, executes at nonce `N`, and asserts the Guard's recomputed hash matches — this single test catches both the off-by-one and any Safe-version hashing drift.
 
 ## Pre-approval consumption semantics
 
@@ -491,6 +567,8 @@ The Guard must maintain an explicit selector allowlist and deny everything else.
 
 Allowed selectors for the MVP: `transfer(address,uint256)` only, matched against a pre-approval. No wrap/unwrap or other custom token actions — every additional selector is attack surface and must go through a spec change plus re-audit.
 
+**Allowlist storage and governance (resolved):** the deny-list above is **hardcoded** (immutable constants checked first — `approve`, `increaseAllowance`, `permit`, `transferFrom` can never be re-enabled by any governance action, only by a new Guard deployment). The permit-list is per-Safe policy state: `mapping(address safe => mapping(bytes4 selector => bool)) allowedSelectors`, initialized at enrollment to `{transfer}` only. Adding or removing a selector is a **policy change**, executed exactly like other policy mutations: an `ADMIN`-class pre-approval (hybrid dual signature + owner threshold + the mandatory `ADMIN_TIMELOCK`) targeting the Guard's `setSelectorPolicy(safe, selector, allowed)`. No EOA, guardian, or Guard deployer can modify any Safe's allowlist. Token and recipient allowlists follow the identical pattern (`EnumerableSet` per Safe, ADMIN-class mutation only).
+
 ### Batching (MultiSend)
 
 An outright MultiSend ban is unusable for the target audience — a 50-recipient payroll would cost 50 Safe transactions, 50 pre-approvals (~1M gas of XMSS verification each), ~400 Ledger button presses, and 50 leaves, which predictably pushes teams to remove the Guard for batch days. Batching is therefore supported, narrowly:
@@ -499,6 +577,7 @@ An outright MultiSend ban is unusable for the target audience — a 50-recipient
 - **One `PAYLOAD` pre-approval per batch.** `dataHash = keccak256(multiSendCalldata)` binds every leg — order, targets, values, calldata — with a single XMSS signature and a single leaf. Any post-signature mutation changes the hash and the Guard reverts.
 - **On-chain per-leg structural checks.** Even though the hash already binds the batch, `checkTransaction` must decode the `MultiSendCallOnly` payload and enforce, per leg: `operation == CALL` (redundant with `MultiSendCallOnly` but checked anyway), leg target is not the Safe, the Guard, or the registry (no admin ops smuggled inside batches — those go through `ADMIN` alone), leg selector is `transfer` or on the policy allowlist, and per-token summed amounts respect the policy caps. Decoding N legs is a few hundred gas per leg — noise next to the XMSS verification.
 - **Bounded size.** Policy sets `maxBatchLegs` (default 100) so decoding cannot be gas-griefed.
+- **Strict decoding — malformed batches revert immediately.** `MultiSendCallOnly` legs are packed as `(uint8 operation, address to, uint256 value, uint256 dataLength, bytes data)`. The Guard's decoder must, before touching any leg contents: (1) revert if the remaining bytes are shorter than the 85-byte fixed leg header, (2) revert if `dataLength` overruns the remaining calldata (truncation), (3) revert if, after the last leg, any trailing bytes remain (`offset != data.length` — no smuggled suffix), and (4) revert the moment the leg counter exceeds `maxBatchLegs`, *before* decoding further legs. Each check is O(1) per leg, so the worst-case adversarial input costs at most `maxBatchLegs` header reads before the revert — no unbounded traversal to EOF is possible.
 - **Ledger UX.** The device binds the batch `dataHash` and displays: leg count, per-token totals, and the hash — it cannot render 50 legs. The leg-by-leg review happens in the add-on UI with two-source verification; the on-chain per-leg checks above are the backstop that holds even if the host lies about the legs. One press-sequence, one leaf, whole payroll.
 
 ### Timestamp handling
@@ -652,6 +731,9 @@ Before production deployment, FermionWallet must ensure:
 - key revocation, rotation, and incident-response flows are in place,
 - the Guard rejects unknown selectors and unsupported call patterns,
 - the Safe policy allowlist and amount caps are enforced in the Guard,
+- an integration test exists that deploys a real Safe + Guard, pins a pre-approval to the `safeTxHash` of nonce `N`, executes at nonce `N`, and asserts the Guard's `getTransactionHash(..., nonce() - 1)` recomputation matches (catches the nonce off-by-one and Safe-version hash drift),
+- fuzz/negative tests cover malformed MultiSend batches (truncated leg header, overrunning `dataLength`, trailing bytes, > `maxBatchLegs`) — all must revert cheaply,
+- a test asserts the emergency de-guard selector allow executes **before** the pause check (`requestEmergencyDeGuard` succeeds while the Guard is paused),
 - the contract is audited and reviewed under the actual Safe execution semantics before mainnet use.
 
 ## Summary

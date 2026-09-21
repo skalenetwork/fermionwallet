@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="400" viewBox="0 0 860 400" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="400" fill="#0c1626"/>
+  <text x="30" y="44" fill="#e8eef7" font-size="18" font-weight="700">Rotation flow (SIGN_ROTATION) — old device signs the possession proof</text>
+  <!-- screen 1: rotate header -->
+  <g>
+    <rect x="30" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#f2b84b" stroke-width="2"/>
+    <rect x="48" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <rect x="48" y="94" width="149" height="30" rx="6" fill="#3a2f14"/>
+    <text x="56" y="114" fill="#f2b84b" font-size="10" font-weight="700">ROTATE QUANTUM KEY</text>
+    <text x="60" y="150" fill="#e8eef7" font-size="11">Replace this key</text>
+    <text x="60" y="166" fill="#e8eef7" font-size="11">with a new one?</text>
+    <text x="60" y="196" fill="#8fa3bf" font-size="9.5">registry nonce 8</text>
+    <text x="60" y="262" fill="#5b7292" font-size="9.5">Rotate 1 · intent</text>
+    <circle cx="122" cy="312" r="12" fill="#22354f"/>
+  </g>
+  <!-- screen 2: old vs new words -->
+  <g>
+    <rect x="235" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#f2b84b" stroke-width="2"/>
+    <rect x="253" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="265" y="118" fill="#8fa3bf" font-size="9.5">OLD key (this device)</text>
+    <text x="265" y="136" fill="#e8eef7" font-size="10">orbit velvet canyon</text>
+    <text x="265" y="150" fill="#e8eef7" font-size="10">lemon tiger frost</text>
+    <text x="265" y="176" fill="#8fa3bf" font-size="9.5">NEW key (new device)</text>
+    <text x="265" y="194" fill="#57d6c0" font-size="10" font-weight="700">maple sonar brick</text>
+    <text x="265" y="208" fill="#57d6c0" font-size="10" font-weight="700">delta ivory plume</text>
+    <text x="265" y="234" fill="#8fa3bf" font-size="9.5">verify BOTH out-of-band</text>
+    <text x="265" y="262" fill="#5b7292" font-size="9.5">Rotate 2 · old vs new</text>
+    <circle cx="327" cy="312" r="12" fill="#22354f"/>
+  </g>
+  <!-- screen 3: abandoned leaves -->
+  <g>
+    <rect x="440" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#f2b84b" stroke-width="2"/>
+    <rect x="458" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="470" y="122" fill="#f2b84b" font-size="11" font-weight="700">ABANDONING</text>
+    <text x="470" y="152" fill="#e8eef7" font-size="12" font-weight="700">864,372 unused</text>
+    <text x="470" y="170" fill="#e8eef7" font-size="12" font-weight="700">approvals</text>
+    <text x="470" y="200" fill="#8fa3bf" font-size="9.5">shown so a pointless</text>
+    <text x="470" y="214" fill="#8fa3bf" font-size="9.5">rotation cannot be</text>
+    <text x="470" y="228" fill="#8fa3bf" font-size="9.5">socially engineered</text>
+    <text x="470" y="262" fill="#5b7292" font-size="9.5">Rotate 3 · leaf budget</text>
+    <circle cx="532" cy="312" r="12" fill="#22354f"/>
+  </g>
+  <!-- screen 4: decision -->
+  <g>
+    <rect x="645" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#f2b84b" stroke-width="2"/>
+    <rect x="663" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="675" y="122" fill="#f2b84b" font-size="11" font-weight="700">SIGN ROTATION?</text>
+    <text x="675" y="150" fill="#e8eef7" font-size="11.5">Hold to sign</text>
+    <text x="675" y="176" fill="#e05555" font-size="11.5">Tap to reject</text>
+    <text x="675" y="206" fill="#8fa3bf" font-size="9.5">consumes ONE old leaf</text>
+    <text x="675" y="220" fill="#8fa3bf" font-size="9.5">as the possession proof</text>
+    <text x="675" y="262" fill="#5b7292" font-size="9.5">Rotate 4 · decision</text>
+    <circle cx="737" cy="312" r="12" fill="#f2b84b"/>
+  </g>
+  <text x="30" y="374" fill="#5b7292" font-size="11.5">Amber framing + the ROTATE header make this flow impossible to mistake for routine signing. The full procedure lives in quantum-key-registry.md.</text>
+</svg>

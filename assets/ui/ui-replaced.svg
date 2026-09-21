@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="400" viewBox="0 0 860 400" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="400" fill="#0c1626"/>
+  <rect width="860" height="56" fill="#16263f"/>
+  <circle cx="34" cy="28" r="14" fill="#57d6c0"/>
+  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONWALLET</text>
+  <text x="250" y="34" fill="#57d6c0" font-size="14" font-weight="600">Approvals</text>
+  <text x="700" y="34" fill="#8fa3bf" font-size="13">Safe: 0x9aF3…C21e</text>
+  <!-- warning banner -->
+  <rect x="30" y="76" width="800" height="64" rx="10" fill="#33202a" stroke="#e05555" stroke-width="1.5"/>
+  <text x="52" y="104" fill="#e05555" font-size="15" font-weight="700">⚠ Transaction #42 was replaced after you approved it</text>
+  <text x="52" y="126" fill="#c9a0a8" font-size="12.5">Your pre-approval no longer matches and can never execute against the new payload. Review the diff before re-approving.</text>
+  <!-- diff card -->
+  <rect x="30" y="156" width="800" height="170" rx="10" fill="#16263f"/>
+  <text x="52" y="186" fill="#e8eef7" font-size="15" font-weight="700">What changed</text>
+  <g font-size="13">
+    <text x="52" y="216" fill="#8fa3bf">Field</text>
+    <text x="240" y="216" fill="#8fa3bf">You approved (12:41 UTC)</text>
+    <text x="540" y="216" fill="#8fa3bf">Now in queue (14:07 UTC)</text>
+    <line x1="52" y1="226" x2="808" y2="226" stroke="#22354f" stroke-width="1"/>
+    <text x="52" y="250" fill="#8fa3bf">Token</text>
+    <text x="240" y="250" fill="#e8eef7">USDC 0xA0b8…eB48</text>
+    <text x="540" y="250" fill="#e8eef7">USDC 0xA0b8…eB48 (unchanged)</text>
+    <text x="52" y="276" fill="#8fa3bf">Amount</text>
+    <text x="240" y="276" fill="#e8eef7">500,000.00</text>
+    <rect x="534" y="262" width="170" height="20" rx="4" fill="#3a1a1a"/>
+    <text x="540" y="276" fill="#e05555" font-weight="700">750,000.00 ▲ +50%</text>
+    <text x="52" y="302" fill="#8fa3bf">Recipient</text>
+    <text x="240" y="302" fill="#e8eef7">0x7bE1…9A04</text>
+    <rect x="534" y="288" width="170" height="20" rx="4" fill="#3a1a1a"/>
+    <text x="540" y="302" fill="#e05555" font-weight="700">0xD2c9…11fA ≠ previous</text>
+  </g>
+  <!-- actions -->
+  <rect x="30" y="344" width="190" height="36" rx="18" fill="#57d6c0"/>
+  <text x="58" y="367" fill="#0c1626" font-size="13.5" font-weight="700">Review new payload</text>
+  <rect x="238" y="344" width="180" height="36" rx="18" fill="none" stroke="#e05555" stroke-width="1.5"/>
+  <text x="264" y="367" fill="#e05555" font-size="13.5" font-weight="600">Report tampering</text>
+  <text x="440" y="367" fill="#5b7292" font-size="12">The stale pre-approval was auto-revoked · logged as audit event #1841</text>
+</svg>

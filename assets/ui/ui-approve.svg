@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="600" viewBox="0 0 860 600" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="600" fill="#0c1626"/>
+  <rect width="860" height="56" fill="#16263f"/>
+  <circle cx="34" cy="28" r="14" fill="#57d6c0"/>
+  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONWALLET</text>
+  <text x="700" y="34" fill="#8fa3bf" font-size="13">Safe: 0x9aF3…C21e</text>
+  <text x="30" y="92" fill="#e8eef7" font-size="20" font-weight="700">Review transaction #42</text>
+  <!-- two-source check -->
+  <rect x="30" y="110" width="800" height="42" rx="10" fill="#13301f"/>
+  <text x="48" y="136" fill="#4bd18a" font-size="13" font-weight="600">✓ Payload verified from two independent sources — Safe Transaction Service and on-chain queue decode match</text>
+  <!-- payload card -->
+  <rect x="30" y="166" width="800" height="216" rx="10" fill="#16263f"/>
+  <text x="52" y="196" fill="#8fa3bf" font-size="12">TOKEN</text>
+  <text x="52" y="216" fill="#e8eef7" font-size="14" font-weight="600">USDC · 0xA0b8…6eB48</text>
+  <text x="450" y="196" fill="#8fa3bf" font-size="12">AMOUNT</text>
+  <text x="450" y="216" fill="#e8eef7" font-size="14" font-weight="600">500,000.00 USDC <tspan fill="#5b7292" font-size="11">(raw 500000000000)</tspan></text>
+  <text x="52" y="252" fill="#8fa3bf" font-size="12">RECIPIENT</text>
+  <text x="52" y="272" fill="#e8eef7" font-size="14" font-weight="600">0x7bE1 4C09 aa31 08D2 55f1 9E77 21bC D004 41c9 9A04</text>
+  <rect x="52" y="282" width="122" height="22" rx="11" fill="#3a2f14"/>
+  <text x="62" y="298" fill="#f2b84b" font-size="12">🆕 first payment</text>
+  <text x="52" y="336" fill="#8fa3bf" font-size="12">SAFE / NONCE</text>
+  <text x="52" y="356" fill="#e8eef7" font-size="14">0x9aF3…C21e · nonce 42 · Ethereum mainnet</text>
+  <text x="450" y="336" fill="#8fa3bf" font-size="12">SAFE TX HASH</text>
+  <text x="450" y="356" fill="#e8eef7" font-size="14">0x5e1f…88ab</text>
+  <!-- window picker -->
+  <rect x="30" y="396" width="390" height="76" rx="10" fill="#16263f"/>
+  <text x="52" y="424" fill="#8fa3bf" font-size="12">VALIDITY WINDOW (min 15 minutes)</text>
+  <rect x="52" y="436" width="150" height="26" rx="6" fill="#22354f"/>
+  <text x="66" y="454" fill="#e8eef7" font-size="13">6 hours ▾</text>
+  <text x="216" y="454" fill="#5b7292" font-size="12">15:40 → 21:40 UTC</text>
+  <!-- OOB check -->
+  <rect x="440" y="396" width="390" height="76" rx="10" fill="#16263f"/>
+  <rect x="460" y="420" width="18" height="18" rx="4" fill="none" stroke="#f2b84b" stroke-width="2"/>
+  <path d="M463 429 l5 5 l8 -10" stroke="#f2b84b" stroke-width="2.5" fill="none"/>
+  <text x="490" y="428" fill="#e8eef7" font-size="13" font-weight="600">Recipient verified out-of-band</text>
+  <text x="490" y="448" fill="#8fa3bf" font-size="11.5">Required for first-time recipients before signing enables</text>
+  <!-- actions -->
+  <rect x="30" y="492" width="240" height="44" rx="22" fill="#57d6c0"/>
+  <text x="72" y="520" fill="#0c1626" font-size="15" font-weight="700">Sign on Ledger →</text>
+  <rect x="290" y="492" width="120" height="44" rx="22" fill="none" stroke="#e05555" stroke-width="1.5"/>
+  <text x="326" y="520" fill="#e05555" font-size="15" font-weight="600">Deny</text>
+  <text x="30" y="568" fill="#5b7292" font-size="11.5">Signing reserves XMSS leaf #184,204 atomically before the signature is released. Confirm all fields on the device screen — the device is the final authority.</text>
+</svg>
