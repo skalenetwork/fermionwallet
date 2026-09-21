@@ -107,7 +107,7 @@ Total compromise: both layers cooperate, funds move immediately and "legitimatel
 
 ### 2.10 Malicious ERC-20 / callback reentrancy
 
-A token with hostile transfer hooks executes *after* the Guard's checks with the approval already consumed. The Guard uses transient reentrancy locks; `checkAfterExecution` closes the frame; approvals are exact-payload bound so nothing new can be smuggled mid-call. Policy allowlisting of tokens is the first-line control.
+A token with hostile transfer hooks executes *after* the Guard's checks with the approval already consumed. The Guard keeps a transient per-Safe depth counter, so a hook that re-enters the same Safe's `execTransaction` reverts (`NestedSafeTransaction`); `checkAfterExecution` closes the frame; approvals are exact-payload bound so nothing new can be smuggled mid-call. Token allowlisting (off-chain in the add-on service today; not enforced by the Guard yet) is the first-line control.
 
 ---
 

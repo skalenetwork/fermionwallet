@@ -136,7 +136,7 @@ A genuine batch (payroll, vendor run) is **one transaction, one pre-approval, on
 - **The Ledger does not page through legs.** The device shows `BATCH — 42 legs`, the per-token totals (informational), and the **batch dataHash** (binding). The division of labor is explicit on both screens: *verify legs in the app, verify the hash on the device* — the hash commits to every leg byte-for-byte, and the app displays the same hash so you can compare.
 
   ![Ledger batch screens](./assets/ui/ledger/ledger-batch.svg)
-- The Guard independently re-decodes all legs on-chain (plain calls only; no Safe, `address(0)`, Guard or `MultiSendCallOnly` targets; each leg's selector must be `transfer` or on your Safe's permit-list, and `approve`/`permit`/`transferFrom`/`increaseAllowance` are always refused), so even a lying host cannot smuggle an admin call or allowance grant into a batch. Per-token amount caps are not enforced on-chain yet.
+- The Guard independently re-decodes all legs on-chain (plain calls only; no Safe, `address(0)`, Guard or `MultiSendCallOnly` targets; each leg's selector must be on your Safe's permit-list — `transfer` is on it from enrollment unless your owners removed it — and `approve`/`permit`/`transferFrom`/`increaseAllowance` are always refused), so even a lying host cannot smuggle an admin call or allowance grant into a batch. Per-token amount caps are not enforced on-chain yet.
 
 If any leg would be rejected on-chain, the app blocks signing with the failing leg highlighted — never waste a leaf on a doomed batch.
 
