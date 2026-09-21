@@ -9,6 +9,9 @@ import {Safe} from "@safe-global/safe-contracts/contracts/Safe.sol";
 import {SafeProxyFactory} from "@safe-global/safe-contracts/contracts/proxies/SafeProxyFactory.sol";
 import {MultiSendCallOnly} from "@safe-global/safe-contracts/contracts/libraries/MultiSendCallOnly.sol";
 import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
+import {ITransactionGuard} from "@safe-global/safe-contracts/contracts/base/GuardManager.sol";
+import {IModuleGuard} from "@safe-global/safe-contracts/contracts/base/ModuleManager.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
 import {PreApprovalEngine} from "../src/PreApprovalEngine.sol";
@@ -1490,6 +1493,380 @@ contract GuardIntegrationTest is Test {
         _createTransfer(recipient, 1 ether, 3, bytes32(0));
         _safeExec(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)), Enum.Operation.Call);
         assertEq(token.balanceOf(recipient), 1 ether);
+    }
+
+    // ═══════════════ Threat model (threat-model.md) — claim by claim ═════════════
+
+    /// §2.1: "neither pausing nor key rotation stops the de-guard clock", and the
+    /// matured owners-only removal works while paused. The Administrator pauses (its
+    /// fast-pause right) and a routine rotation happens mid-window; the clock runs on.
+    function test_TM_DeGuardClockSurvivesPauseAndRotation() public {
+        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
+        uint64 executableAt = guard.emergencyDeGuardExecutableAt(address(safe));
+        assertEq(executableAt, uint64(block.timestamp) + EMERGENCY_TIMELOCK);
+
+        vm.prank(ledger);
+        guard.pauseSafe(address(safe));
+        _rotateToNewKey(6);
+        assertEq(guard.emergencyDeGuardExecutableAt(address(safe)), executableAt);
+
+        vm.warp(executableAt);
+        _safeExec(address(safe), 0, abi.encodeWithSignature("setGuard(address)", address(0)), Enum.Operation.Call);
+        assertEq(address(uint160(uint256(vm.load(address(safe), GUARD_SLOT)))), address(0));
+        assertEq(guard.emergencyDeGuardExecutableAt(address(safe)), 0);
+    }
+
+    /// §2.3: owners clear-sign ApproveQuantumKey{safe, quantumAdmin, xmssRoot, ...,
+    /// registryNonce, validUntil}: a swapped root, a swapped Administrator, or a stale
+    /// (aborted-session) nonce invalidates every owner signature.
+    function test_TM_CeremonySubstitutionAndStaleNonceRejected() public {
+        _revokeKey();
+        (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
+        uint256 nonce = guard.registryNonce(address(safe));
+        uint256 validUntil = vm.getBlockTimestamp() + 1 days;
+        bytes memory sigs = _ownerSigs(_approveKeyDigest(ledger, newRoot, newSeed, nonce, validUntil));
+
+        // Frontend swaps in the attacker's root (attested by the Ledger, even).
+        (bytes32 evilRoot, bytes32 evilSeed,) = _xmssSign(3, 0, bytes32(uint256(1))); // a never-registered key
+        bytes memory evilAttest = _ledgerAttestation(evilRoot, evilSeed, H_NEW, nonce);
+        vm.expectRevert(bytes("GS026")); // Safe checkSignatures: the owners never signed this root
+        guard.registerQuantumKey(address(safe), ledger, evilRoot, evilSeed, H_NEW, PARAM_SET, validUntil, evilAttest, sigs);
+
+        // Frontend swaps in the attacker's Administrator address (with its attestation).
+        uint256 attackerPk = 0xBAD;
+        address attacker = vm.addr(attackerPk);
+        bytes32 attestDigest = _guardDigest(
+            keccak256(abi.encode(ATTEST_KEY_TYPEHASH, address(safe), newRoot, newSeed, H_NEW, PARAM_SET, nonce))
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(attackerPk, attestDigest);
+        vm.expectRevert(bytes("GS026"));
+        guard.registerQuantumKey(
+            address(safe), attacker, newRoot, newSeed, H_NEW, PARAM_SET, validUntil, abi.encodePacked(r, s, v), sigs
+        );
+
+        // A ceremony signed before the nonce advanced (aborted session) is dead.
+        bytes memory staleSigs = _ownerSigs(_approveKeyDigest(ledger, newRoot, newSeed, nonce - 1, validUntil));
+        bytes memory attest = _ledgerAttestation(newRoot, newSeed, H_NEW, nonce);
+        vm.expectRevert(bytes("GS026"));
+        guard.registerQuantumKey(address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil, attest, staleSigs);
+
+        // Past its deadline, even the genuine ceremony is refused.
+        uint256 deadline = vm.getBlockTimestamp() + 1 days;
+        vm.warp(deadline + 1);
+        vm.expectRevert(abi.encodeWithSelector(QuantumKeyRegistry.SignatureExpired.selector, validUntil));
+        guard.registerQuantumKey(address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil, attest, sigs);
+    }
+
+    /// §2.9: a mempool copy of registerQuantumKey executes identically (the relayer
+    /// has no authority; nothing is redirectable) and a second submission reverts.
+    function test_TM_FrontRunRegistration_ExecutesIdentically() public {
+        _revokeKey();
+        (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
+        uint256 nonce = guard.registryNonce(address(safe));
+        uint256 validUntil = vm.getBlockTimestamp() + 1 days;
+        bytes memory sigs = _ownerSigs(_approveKeyDigest(ledger, newRoot, newSeed, nonce, validUntil));
+        bytes memory attest = _ledgerAttestation(newRoot, newSeed, H_NEW, nonce);
+
+        vm.prank(makeAddr("frontRunner"));
+        bytes32 id =
+            guard.registerQuantumKey(address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil, attest, sigs);
+        QuantumKeyRegistry.KeyRegistration memory k = guard.getKey(id);
+        assertEq(k.safe, address(safe));
+        assertEq(k.quantumAdmin, ledger);
+        assertEq(k.xmssRoot, newRoot);
+        assertEq(guard.safeToQuantumKey(address(safe)), id);
+
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(QuantumKeyRegistry.SafeAlreadyEnrolled.selector, address(safe)));
+        guard.registerQuantumKey(address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil, attest, sigs);
+    }
+
+    /// §2.9: a front-runner submitting the same createPreApproval calldata creates
+    /// exactly the approval the Administrator signed; the relayer's copy reverts.
+    function test_TM_FrontRunCreatePreApproval_SecondSubmissionReverts() public {
+        PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
+        (bytes memory ecdsaSig, bytes memory xmssSig) = _hybridSign(req, 0);
+
+        vm.prank(makeAddr("frontRunner"));
+        bytes32 id = guard.createPreApproval(req, ecdsaSig, xmssSig);
+        PreApprovalEngine.PreApproval memory a = guard.getPreApproval(id);
+        assertEq(a.safe, address(safe));
+        assertEq(a.recipient, recipient);
+        assertEq(a.amount, 1 ether);
+
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(PreApprovalEngine.ApprovalExists.selector, id));
+        guard.createPreApproval(req, ecdsaSig, xmssSig);
+    }
+
+    /// Guard spec, "Cross-chain replay": the EIP-712 domain binds block.chainid, so an
+    /// approval signed for this chain verifies nowhere else — including on a fork.
+    function test_TM_CrossChainReplayRejected() public {
+        PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
+        (bytes memory ecdsaSig, bytes memory xmssSig) = _hybridSign(req, 0);
+        assertEq(block.chainid, 31337);
+        vm.chainId(10); // (literals: via-IR may re-read block.chainid for a local copy)
+        vm.prank(relayer);
+        vm.expectRevert(PreApprovalEngine.InvalidEcdsaSignature.selector);
+        guard.createPreApproval(req, ecdsaSig, xmssSig);
+        vm.chainId(31337);
+        vm.prank(relayer);
+        guard.createPreApproval(req, ecdsaSig, xmssSig);
+    }
+
+    /// Registry invariants: after rotation the old key "can create nothing new", while
+    /// every registration, rotation, revocation request and revocation consumes the
+    /// registry nonce.
+    function test_TM_RotatedKeyCreatesNothing_NonceConsumedByEveryStep() public {
+        uint256 n0 = guard.registryNonce(address(safe));
+        bytes32 oldKeyId = keyId;
+        bytes32 newKeyId = _rotateToNewKey(6);
+        assertEq(guard.registryNonce(address(safe)), n0 + 1);
+
+        PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
+        req.quantumKeyId = oldKeyId;
+        (bytes memory ecdsaSig, bytes memory xmssSig) = _hybridSign(req, 0);
+        vm.prank(relayer);
+        vm.expectRevert(abi.encodeWithSelector(PreApprovalEngine.WrongQuantumKey.selector, newKeyId, oldKeyId));
+        guard.createPreApproval(req, ecdsaSig, xmssSig);
+
+        keyId = newKeyId;
+        uint256 n1 = guard.registryNonce(address(safe));
+        _revokeKey(); // request + execute
+        assertEq(guard.registryNonce(address(safe)), n1 + 2);
+    }
+
+    /// pre-approval-engine.md, "At execution": a Revoked key's approvals are dead —
+    /// also after a fresh key is registered for the same Safe.
+    function test_TM_RevokedKeyApprovalsStayDeadAfterReregistration() public {
+        PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
+        req.validTo = uint64(block.timestamp) + 60 days; // outlives the revocation timelock
+        (bytes memory ecdsaSig, bytes memory xmssSig) = _hybridSign(req, 0);
+        vm.prank(relayer);
+        bytes32 id = guard.createPreApproval(req, ecdsaSig, xmssSig);
+        _revokeAndReregister();
+        (bool valid, string memory reason) = guard.validatePreApproval(id);
+        assertFalse(valid);
+        assertEq(reason, "key revoked");
+        bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
+        bytes32 commitment =
+            keccak256(abi.encode(address(safe), PreApprovalEngine.ApprovalClass.TRANSFER, address(token), recipient, 1 ether));
+        bytes32 safeTxHash = safe.getTransactionHash(
+            address(token), 0, data, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
+        );
+        _expectExecRevertWith(
+            address(token),
+            0,
+            data,
+            abi.encodeWithSelector(PreApprovalEngine.NoMatchingPreApproval.selector, address(safe), commitment, safeTxHash)
+        );
+    }
+
+    /// quantum-key-registry.md: registration is refused while the Safe has a fallback
+    /// handler or an unguarded enabled module (the enrollment posture check).
+    function test_TM_RegistrationRefusedWithBadPosture() public {
+        _revokeKey();
+        (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
+        uint256 nonce = guard.registryNonce(address(safe));
+        uint256 validUntil = vm.getBlockTimestamp() + 1 days;
+        bytes memory sigs = _ownerSigs(_approveKeyDigest(ledger, newRoot, newSeed, nonce, validUntil));
+        bytes memory attest = _ledgerAttestation(newRoot, newSeed, H_NEW, nonce);
+
+        address handler = makeAddr("handler");
+        vm.store(address(safe), FALLBACK_SLOT, bytes32(uint256(uint160(handler))));
+        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), handler));
+        guard.registerQuantumKey(address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil, attest, sigs);
+        vm.store(address(safe), FALLBACK_SLOT, bytes32(0));
+
+        address module = makeAddr("module");
+        vm.store(address(safe), keccak256(abi.encode(address(1), uint256(1))), bytes32(uint256(uint160(module))));
+        vm.store(address(safe), keccak256(abi.encode(module, uint256(1))), bytes32(uint256(1)));
+        vm.expectRevert(
+            abi.encodeWithSelector(FermionWalletGuard.ModulesEnabledWithoutModuleGuard.selector, address(safe))
+        );
+        guard.registerQuantumKey(address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil, attest, sigs);
+    }
+
+    /// pre-approval-engine.md, "Validation rules" at creation: class-irrelevant fields
+    /// must be zero, ADMIN targets only the Safe or this Guard, and TRANSFER/PAYLOAD
+    /// reject zero addresses — all before any signature work.
+    function test_TM_CreationShapeRules() public {
+        PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
+        req.value = 1;
+        vm.expectRevert(PreApprovalEngine.NonZeroClassFields.selector);
+        guard.createPreApproval(req, "", "");
+        req.value = 0;
+        req.recipient = address(0);
+        vm.expectRevert(QuantumKeyRegistry.ZeroAddress.selector);
+        guard.createPreApproval(req, "", "");
+
+        req = _payloadReq(recipient, 1 ether, bytes32(0), 1);
+        req.amount = 1;
+        vm.expectRevert(PreApprovalEngine.NonZeroClassFields.selector);
+        guard.createPayloadPreApproval(req, "", "");
+        req.amount = 0;
+        req.target = address(0);
+        vm.expectRevert(QuantumKeyRegistry.ZeroAddress.selector);
+        guard.createPayloadPreApproval(req, "", "");
+
+        req = _adminReq(address(token), bytes32(0), 1);
+        vm.expectRevert(abi.encodeWithSelector(PreApprovalEngine.InvalidAdminTarget.selector, address(token)));
+        guard.createAdminPreApproval(req, "", "");
+        req = _adminReq(address(safe), bytes32(0), 1);
+        req.token = address(token);
+        vm.expectRevert(PreApprovalEngine.NonZeroClassFields.selector);
+        guard.createAdminPreApproval(req, "", "");
+    }
+
+    /// Guard spec, "Required inheritance" + "Immutability and deployment hygiene":
+    /// supportsInterface reports exactly Safe's ITransactionGuard / IModuleGuard IDs
+    /// plus ERC-165, and the constructor validates its deployment parameters.
+    function test_TM_InterfaceIdsAndConstructorValidation() public {
+        assertTrue(guard.supportsInterface(type(ITransactionGuard).interfaceId));
+        assertTrue(guard.supportsInterface(type(IModuleGuard).interfaceId));
+        assertTrue(guard.supportsInterface(type(IERC165).interfaceId));
+        assertFalse(guard.supportsInterface(0xffffffff));
+        assertFalse(guard.supportsInterface(type(IERC20).interfaceId));
+
+        vm.expectRevert(QuantumKeyRegistry.ZeroAddress.selector);
+        new FermionWalletGuard(address(0), 2 days, 14 days, 4, 8);
+        vm.expectRevert(QuantumKeyRegistry.InvalidKeyParams.selector);
+        new FermionWalletGuard(makeAddr("noCode"), 2 days, 14 days, 4, 8);
+        vm.expectRevert(bytes("EMERGENCY_TIMELOCK must exceed ADMIN_TIMELOCK"));
+        new FermionWalletGuard(address(msco), 2 days, 2 days, 4, 8);
+    }
+
+    // ── Module path (Safe >= 1.5, "Module bypass — mandatory mitigation") ────
+
+    /// Wires the Guard as module guard, then enables `module` (leaves 1..3).
+    function _enableModule() internal returns (address module) {
+        module = makeAddr("module");
+        bytes memory wire = abi.encodeWithSignature("setModuleGuard(address)", address(guard));
+        _createAdmin(address(safe), keccak256(wire), 1);
+        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
+        _safeExec(address(safe), 0, wire, Enum.Operation.Call);
+        bytes memory enable = abi.encodeWithSignature("enableModule(address)", module);
+        _createAdmin(address(safe), keccak256(enable), 2);
+        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
+        _safeExec(address(safe), 0, enable, Enum.Operation.Call);
+        assertTrue(safe.isModuleEnabled(module));
+    }
+
+    /// A module transaction needs a Tier-2 approval like any owner transaction; a
+    /// pinned (Tier-1) approval never matches it (no safeTxHash); the module address
+    /// is logged.
+    function test_TM_ModulePath_NeedsTier2Approval() public {
+        address module = _enableModule();
+        bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
+
+        vm.prank(module);
+        vm.expectPartialRevert(PreApprovalEngine.NoMatchingPreApproval.selector);
+        safe.execTransactionFromModule(address(token), 0, data, Enum.Operation.Call);
+
+        _createTransfer(recipient, 1 ether, 3, keccak256("some pinned safeTxHash"));
+        vm.prank(module);
+        vm.expectPartialRevert(PreApprovalEngine.NoMatchingPreApproval.selector);
+        safe.execTransactionFromModule(address(token), 0, data, Enum.Operation.Call);
+
+        bytes32 id = _createTransfer(recipient, 1 ether, 4, bytes32(0));
+        vm.expectEmit(true, true, true, false, address(guard));
+        emit FermionWalletGuard.ModuleTransactionChecked(address(safe), module, id);
+        vm.prank(module);
+        assertTrue(safe.execTransactionFromModule(address(token), 0, data, Enum.Operation.Call));
+        assertEq(token.balanceOf(recipient), 1 ether);
+        assertTrue(guard.getPreApproval(id).used);
+    }
+
+    /// Module-specific rules: DELEGATECALL is always rejected (no MultiSend exception),
+    /// the Safe's pause applies, and a module can never install a fallback handler.
+    function test_TM_ModulePath_DelegatecallPauseAndHandlerRules() public {
+        address module = _enableModule();
+
+        bytes memory batch = abi.encodeWithSignature(
+            "multiSend(bytes)", _leg(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)))
+        );
+        vm.prank(module);
+        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.ModuleDelegateCallForbidden.selector, module));
+        safe.execTransactionFromModule(address(msco), 0, batch, Enum.Operation.DelegateCall);
+
+        address handler = makeAddr("handler");
+        vm.prank(module);
+        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), handler));
+        safe.execTransactionFromModule(
+            address(safe), 0, abi.encodeWithSignature("setFallbackHandler(address)", handler), Enum.Operation.Call
+        );
+
+        _createTransfer(recipient, 1 ether, 3, bytes32(0));
+        vm.prank(owner1);
+        guard.pauseSafe(address(safe));
+        vm.prank(module);
+        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.SafePausedError.selector, address(safe)));
+        safe.execTransactionFromModule(
+            address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)), Enum.Operation.Call
+        );
+    }
+
+    /// Emergency de-guard, step 4: a module-executed (ADMIN-approved) setGuard also
+    /// ends the Guard's tenure and clears the pending emergency request.
+    function test_TM_ModuleExecutedSetGuardClearsEmergencyRequest() public {
+        address module = _enableModule();
+        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
+        assertGt(guard.emergencyDeGuardExecutableAt(address(safe)), 0);
+
+        bytes memory remove = abi.encodeWithSignature("setGuard(address)", address(0));
+        _createAdmin(address(safe), keccak256(remove), 3);
+        vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
+        vm.prank(module);
+        assertTrue(safe.execTransactionFromModule(address(safe), 0, remove, Enum.Operation.Call));
+        assertEq(address(uint160(uint256(vm.load(address(safe), GUARD_SLOT)))), address(0));
+        assertEq(guard.emergencyDeGuardExecutableAt(address(safe)), 0);
+    }
+
+    // ── Threat-model helpers ─────────────────────────────────────────────────
+
+    function _approveKeyDigest(address admin, bytes32 root, bytes32 seed, uint256 nonce, uint256 validUntil)
+        internal
+        view
+        returns (bytes32)
+    {
+        return _guardDigest(
+            keccak256(abi.encode(APPROVE_KEY_TYPEHASH, address(safe), admin, root, seed, H_NEW, PARAM_SET, nonce, validUntil))
+        );
+    }
+
+    /// Emergency revocation of the current key (request + timelock + execute).
+    function _revokeKey() internal {
+        uint256 validUntil = vm.getBlockTimestamp() + 1 days;
+        bytes32 revokeDigest = _guardDigest(
+            keccak256(
+                abi.encode(REVOKE_KEY_TYPEHASH, address(safe), keyId, guard.registryNonce(address(safe)), validUntil)
+            )
+        );
+        vm.prank(relayer);
+        guard.requestKeyRevocation(address(safe), validUntil, _ownerSigs(revokeDigest));
+        vm.warp(guard.keyRevocationExecutableAt(address(safe)) + 1);
+        guard.executeKeyRevocation(address(safe));
+        assertEq(guard.safeToQuantumKey(address(safe)), bytes32(0));
+    }
+
+    /// Routine rotation to a fresh h = H_NEW key, old-key proof at `oldLeaf`.
+    function _rotateToNewKey(uint32 oldLeaf) internal returns (bytes32 newKeyId) {
+        (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
+        uint256 nonce = guard.registryNonce(address(safe));
+        uint256 validUntil = vm.getBlockTimestamp() + 1 days;
+        bytes32 digest = _guardDigest(
+            keccak256(
+                abi.encode(
+                    ROTATE_KEY_TYPEHASH, address(safe), keyId, ledger, newRoot, newSeed, H_NEW, PARAM_SET, nonce, validUntil
+                )
+            )
+        );
+        (,, bytes memory oldKeyProof) = _xmssSign(H, oldLeaf, digest);
+        vm.prank(relayer);
+        newKeyId = guard.rotateQuantumKey(
+            address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil, oldKeyProof,
+            _ledgerAttestation(newRoot, newSeed, H_NEW, nonce), _ownerSigs(digest)
+        );
     }
 }
 
