@@ -1736,6 +1736,44 @@ contract GuardIntegrationTest is Test {
         new FermionWalletGuard(address(msco), 2 days, 2 days, 4, 8);
     }
 
+    /// Residual risk documented in threat-model.md §2.1: once an emergency revocation
+    /// executes, the next registration needs only classical signatures (owner
+    /// threshold + an attestation by whatever quantumAdmin the owners signed). A
+    /// quantum attacker holding the owner keys can therefore register ITS key in the
+    /// same block the revocation matures and win the race against the honest owners'
+    /// ceremony. The 14-day public countdown is the only on-chain protection.
+    function test_TM_ResidualRisk_PostRevocationRegistrationIsClassicalOnly() public {
+        _revokeKey();
+        uint256 nonce = guard.registryNonce(address(safe));
+        uint256 validUntil = vm.getBlockTimestamp() + 1 days;
+
+        // Attacker: forged owner signatures (here: the real keys) over its own
+        // Administrator address and XMSS root.
+        uint256 attackerPk = 0xBAD;
+        address attacker = vm.addr(attackerPk);
+        (bytes32 evilRoot, bytes32 evilSeed,) = _xmssSign(3, 0, bytes32(uint256(1)));
+        bytes32 attestDigest = _guardDigest(
+            keccak256(abi.encode(ATTEST_KEY_TYPEHASH, address(safe), evilRoot, evilSeed, H_NEW, PARAM_SET, nonce))
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(attackerPk, attestDigest);
+        vm.prank(attacker);
+        bytes32 evilKey = guard.registerQuantumKey(
+            address(safe), attacker, evilRoot, evilSeed, H_NEW, PARAM_SET, validUntil, abi.encodePacked(r, s, v),
+            _ownerSigs(_approveKeyDigest(attacker, evilRoot, evilSeed, nonce, validUntil))
+        );
+        assertEq(guard.safeToQuantumKey(address(safe)), evilKey);
+        assertEq(guard.getKey(evilKey).quantumAdmin, attacker);
+
+        // The honest ceremony, signed for the same nonce, now reverts.
+        (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
+        bytes memory sigs = _ownerSigs(_approveKeyDigest(ledger, newRoot, newSeed, nonce, validUntil));
+        vm.expectRevert(abi.encodeWithSelector(QuantumKeyRegistry.SafeAlreadyEnrolled.selector, address(safe)));
+        guard.registerQuantumKey(
+            address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil,
+            _ledgerAttestation(newRoot, newSeed, H_NEW, nonce), sigs
+        );
+    }
+
     // ── Module path (Safe >= 1.5, "Module bypass — mandatory mitigation") ────
 
     /// Wires the Guard as module guard, then enables `module` (leaves 1..3).

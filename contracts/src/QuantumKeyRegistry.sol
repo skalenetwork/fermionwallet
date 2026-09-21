@@ -302,7 +302,7 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
     /// @notice Owner-governed revocation without the old key, behind a time lock.
     ///         After execution the Safe has NO active key (fresh `registerQuantumKey`
     ///         follows); the time lock is what stops a Ledger thief from racing the
-    ///         owners to a quiet swap. Watchers can cancel throughout the delay.
+    ///         owners to a quiet swap. Only the Safe (owner threshold) can cancel during the delay.
     function requestKeyRevocation(address safe, uint256 validUntil, bytes calldata ownerSignatures) external {
         KeyRegistration storage k = _activeKey(safe);
         if (block.timestamp > validUntil) revert SignatureExpired(validUntil);
