@@ -48,6 +48,7 @@ A FermionWallet release is a set of versioned artifacts published together under
 | A7 | Add-on service image | service source | `ghcr.io/skalenetwork/fermionwallet-service`, pinned by digest | [Service deployment §3](./fermionwallet-gnosis-service-deployment.md#3-add-on-service-infrastructure-specification) |
 | A8 | Documentation and product site | `*.md`, `site/` | GitHub, GitHub Pages | this repository |
 | A9 | Release notes | GitHub Release | GitHub Releases | §6.7 |
+| A10 | Demo container: local anvil chain, real Safe v1.5.0, this release's Guard, web UI | `demo/Dockerfile` | `ghcr.io/skalenetwork/fermionwallet-demo:<tag>` (and `:latest` for non-prerelease tags), smoke-tested before push; digest in the release notes | `.github/workflows/release.yml` |
 
 Leaf consumption is enforced by the registry's used-leaf bitmap inside the Guard; there is no separate stateful XMSS wrapper.
 
