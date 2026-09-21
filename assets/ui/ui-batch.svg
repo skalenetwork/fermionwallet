@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="520" viewBox="0 0 860 520" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="520" fill="#0c1626"/>
+  <rect width="860" height="56" fill="#16263f"/>
+  <circle cx="34" cy="28" r="14" fill="#57d6c0"/>
+  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONWALLET</text>
+  <text x="250" y="34" fill="#57d6c0" font-size="14" font-weight="600">Approvals</text>
+  <text x="700" y="34" fill="#8fa3bf" font-size="13">Safe: 0x9aF3…C21e</text>
+  <text x="30" y="92" fill="#e8eef7" font-size="20" font-weight="700">Batch approval — payroll run</text>
+  <rect x="330" y="76" width="120" height="22" rx="11" fill="#1c2f4a"/>
+  <text x="341" y="92" fill="#57d6c0" font-size="12" font-weight="600">BATCH · 42 legs</text>
+  <text x="30" y="114" fill="#8fa3bf" font-size="13">MultiSendCallOnly · one pre-approval, one XMSS leaf, one Ledger confirmation for the whole batch</text>
+  <!-- totals card -->
+  <rect x="30" y="130" width="800" height="66" rx="10" fill="#16263f"/>
+  <text x="52" y="158" fill="#e8eef7" font-size="14" font-weight="700">Totals: 1,240,500.00 USDC across 42 recipients · 0 ETH · every leg is an ERC-20 transfer</text>
+  <text x="52" y="182" fill="#8fa3bf" font-size="12.5">Batch dataHash 0x5e21…aa93 — this exact hash appears on the Ledger; it binds all 42 legs, byte for byte</text>
+  <!-- legs table -->
+  <rect x="30" y="210" width="800" height="196" rx="10" fill="#16263f"/>
+  <g font-size="12.5">
+    <text x="52" y="238" fill="#8fa3bf">Leg</text>
+    <text x="110" y="238" fill="#8fa3bf">Recipient</text>
+    <text x="420" y="238" fill="#8fa3bf">Amount</text>
+    <text x="580" y="238" fill="#8fa3bf">Flags</text>
+    <line x1="52" y1="248" x2="808" y2="248" stroke="#22354f" stroke-width="1"/>
+    <text x="52" y="272" fill="#e8eef7">1</text>
+    <text x="110" y="272" fill="#e8eef7">0x7bE1…9A04 · alice.eth</text>
+    <text x="420" y="272" fill="#e8eef7">28,400.00 USDC</text>
+    <text x="580" y="272" fill="#4bd18a">known recipient</text>
+    <text x="52" y="298" fill="#e8eef7">2</text>
+    <text x="110" y="298" fill="#e8eef7">0x91cC…3F77 · bob.eth</text>
+    <text x="420" y="298" fill="#e8eef7">31,150.00 USDC</text>
+    <text x="580" y="298" fill="#4bd18a">known recipient</text>
+    <text x="52" y="324" fill="#e8eef7">3</text>
+    <text x="110" y="324" fill="#e8eef7">0xD2c9…11fA</text>
+    <text x="420" y="324" fill="#e8eef7">29,900.00 USDC</text>
+    <text x="580" y="324" fill="#f2b84b">🆕 first-time — verify out-of-band</text>
+    <text x="52" y="352" fill="#5b7292">…</text>
+    <text x="110" y="352" fill="#5b7292">39 more legs — expand all or export CSV for line-by-line review</text>
+    <rect x="510" y="336" width="120" height="26" rx="13" fill="none" stroke="#8fa3bf" stroke-width="1.2"/>
+    <text x="534" y="354" fill="#8fa3bf" font-size="12" font-weight="600">Export CSV</text>
+    <rect x="640" y="336" width="168" height="26" rx="13" fill="none" stroke="#57d6c0" stroke-width="1.2"/>
+    <text x="662" y="354" fill="#57d6c0" font-size="12" font-weight="600">Expand all 42 legs</text>
+    <line x1="52" y1="370" x2="808" y2="370" stroke="#22354f" stroke-width="1"/>
+    <text x="52" y="394" fill="#8fa3bf">Guard re-checks on-chain: no Safe/Guard/registry targets · transfer selectors only · per-token caps · max 100 legs</text>
+  </g>
+  <!-- ledger preview -->
+  <rect x="30" y="420" width="800" height="52" rx="10" fill="#101c30"/>
+  <text x="52" y="442" fill="#8fa3bf" font-size="12.5">On the Ledger you will see: <tspan fill="#e8eef7" font-weight="600">BATCH — 42 legs · 1,240,500.00 USDC total (informational) · dataHash 0x5e21…aa93 (binding)</tspan></text>
+  <text x="52" y="462" fill="#5b7292" font-size="11.5">The device does not page through legs — verify legs here, verify the hash there. 1 leaf will be consumed for the entire batch.</text>
+  <!-- actions -->
+  <rect x="30" y="486" width="170" height="26" rx="13" fill="#57d6c0"/>
+  <text x="63" y="504" fill="#0c1626" font-size="12.5" font-weight="700">Sign on Ledger</text>
+  <rect x="216" y="486" width="90" height="26" rx="13" fill="none" stroke="#e05555" stroke-width="1.2"/>
+  <text x="243" y="504" fill="#e05555" font-size="12.5" font-weight="600">Deny</text>
+  <text x="330" y="504" fill="#5b7292" font-size="11.5">Sign enables after every 🆕 leg is verified out-of-band</text>
+</svg>

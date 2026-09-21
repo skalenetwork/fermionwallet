@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="420" viewBox="0 0 860 420" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="420" fill="#1a0c10"/>
+  <rect width="860" height="56" fill="#2a1218"/>
+  <circle cx="34" cy="28" r="14" fill="#e05555"/>
+  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONWALLET</text>
+  <text x="640" y="34" fill="#e05555" font-size="13" font-weight="700">SIGNING DISABLED</text>
+  <!-- tamper card -->
+  <rect x="30" y="80" width="800" height="120" rx="10" fill="#33202a" stroke="#e05555" stroke-width="2"/>
+  <text x="52" y="114" fill="#e05555" font-size="18" font-weight="800">⛔ TAMPER WARNING — the two payload sources disagree</text>
+  <text x="52" y="142" fill="#e8eef7" font-size="13">The Safe Transaction Service and the on-chain queue returned different payloads for transaction #42.</text>
+  <text x="52" y="164" fill="#e8eef7" font-size="13" font-weight="700">Do not sign. All owners have been notified automatically.</text>
+  <text x="52" y="186" fill="#c9a0a8" font-size="12">This screen cannot be dismissed and has no retry — resolve the discrepancy out-of-band before any further approvals.</text>
+  <!-- side by side -->
+  <rect x="30" y="216" width="392" height="130" rx="10" fill="#16263f"/>
+  <text x="52" y="242" fill="#8fa3bf" font-size="12" font-weight="700">SAFE TRANSACTION SERVICE</text>
+  <text x="52" y="268" fill="#e8eef7" font-size="12.5">recipient 0x7bE1…9A04</text>
+  <text x="52" y="290" fill="#e8eef7" font-size="12.5">amount 500,000.00 USDC</text>
+  <text x="52" y="312" fill="#e8eef7" font-size="12.5">dataHash 0x91cc…07d4</text>
+  <rect x="438" y="216" width="392" height="130" rx="10" fill="#16263f" stroke="#e05555" stroke-width="1"/>
+  <text x="460" y="242" fill="#8fa3bf" font-size="12" font-weight="700">ON-CHAIN QUEUE (local decode)</text>
+  <rect x="454" y="252" width="220" height="20" rx="4" fill="#3a1a1a"/>
+  <text x="460" y="268" fill="#e05555" font-size="12.5" font-weight="700">recipient 0xD2c9…11fA ≠</text>
+  <text x="460" y="290" fill="#e8eef7" font-size="12.5">amount 500,000.00 USDC</text>
+  <rect x="454" y="296" width="220" height="20" rx="4" fill="#3a1a1a"/>
+  <text x="460" y="312" fill="#e05555" font-size="12.5" font-weight="700">dataHash 0x5a02…c1e9 ≠</text>
+  <!-- actions -->
+  <rect x="30" y="362" width="190" height="32" rx="16" fill="#e05555"/>
+  <text x="58" y="383" fill="#ffffff" font-size="13" font-weight="700">Notify owners again</text>
+  <rect x="238" y="362" width="160" height="32" rx="16" fill="none" stroke="#e05555" stroke-width="1.5"/>
+  <text x="266" y="383" fill="#e05555" font-size="13" font-weight="600">Export evidence</text>
+  <text x="420" y="383" fill="#c9a0a8" font-size="11.5">If the transaction service is merely unreachable (timeout), a different screen says so — one source is never enough.</text>
+</svg>

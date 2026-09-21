@@ -1,0 +1,10 @@
+# jmunch-mcp config for 'codegraph' upstream.
+# Registered in Claude Code
+
+threshold_tokens = 2000
+log_level = "INFO"
+report = false
+
+[upstream]
+command = "codegraph"
+args = ["serve", "--mcp"]

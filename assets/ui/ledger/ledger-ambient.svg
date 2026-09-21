@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="400" viewBox="0 0 860 400" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="400" fill="#0c1626"/>
+  <text x="30" y="44" fill="#e8eef7" font-size="18" font-weight="700">Ambient and error screens</text>
+  <!-- dashboard -->
+  <g>
+    <rect x="30" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#22354f" stroke-width="2"/>
+    <rect x="48" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="60" y="122" fill="#57d6c0" font-size="11" font-weight="700">FERMIONWALLET</text>
+    <text x="60" y="146" fill="#8fa3bf" font-size="9.5">XMSS-SHA2_20_256</text>
+    <text x="60" y="172" fill="#e8eef7" font-size="10.5">184,204 / 1,048,576</text>
+    <rect x="60" y="182" width="125" height="8" rx="4" fill="#22354f"/>
+    <rect x="60" y="182" width="21" height="8" rx="4" fill="#57d6c0"/>
+    <text x="60" y="210" fill="#8fa3bf" font-size="9.5">17% used · healthy</text>
+    <text x="60" y="262" fill="#5b7292" font-size="9.5">Dashboard · idle</text>
+    <circle cx="122" cy="312" r="12" fill="#22354f"/>
+  </g>
+  <!-- exhaustion warning -->
+  <g>
+    <rect x="235" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#e05555" stroke-width="2"/>
+    <rect x="253" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="265" y="122" fill="#e05555" font-size="11" font-weight="700">ROTATION OVERDUE</text>
+    <text x="265" y="150" fill="#e8eef7" font-size="10.5">996,148 / 1,048,576</text>
+    <rect x="265" y="160" width="125" height="8" rx="4" fill="#22354f"/>
+    <rect x="265" y="160" width="119" height="8" rx="4" fill="#e05555"/>
+    <text x="265" y="190" fill="#e8eef7" font-size="10">95% of leaves used.</text>
+    <text x="265" y="205" fill="#e8eef7" font-size="10">Rotate this key now.</text>
+    <text x="265" y="230" fill="#8fa3bf" font-size="9.5">shown before every</text>
+    <text x="265" y="244" fill="#8fa3bf" font-size="9.5">signature past 95%</text>
+    <text x="265" y="262" fill="#5b7292" font-size="9.5">Interstitial · ≥95%</text>
+    <circle cx="327" cy="312" r="12" fill="#e05555"/>
+  </g>
+  <!-- exhausted -->
+  <g>
+    <rect x="440" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#e05555" stroke-width="2"/>
+    <rect x="458" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="470" y="122" fill="#e05555" font-size="11" font-weight="700">KEY EXHAUSTED</text>
+    <text x="470" y="150" fill="#e8eef7" font-size="10.5">All 1,048,576 leaves</text>
+    <text x="470" y="165" fill="#e8eef7" font-size="10.5">consumed.</text>
+    <text x="470" y="192" fill="#e8eef7" font-size="10.5">This key can no longer</text>
+    <text x="470" y="207" fill="#e8eef7" font-size="10.5">sign. Rotate to a new</text>
+    <text x="470" y="222" fill="#e8eef7" font-size="10.5">key to continue.</text>
+    <text x="470" y="262" fill="#5b7292" font-size="9.5">Hard refusal · 100%</text>
+    <circle cx="532" cy="312" r="12" fill="#22354f"/>
+  </g>
+  <!-- error -->
+  <g>
+    <rect x="645" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#22354f" stroke-width="2"/>
+    <rect x="663" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="675" y="122" fill="#f2b84b" font-size="11" font-weight="700">PAYLOAD REJECTED</text>
+    <text x="675" y="150" fill="#e8eef7" font-size="10.5">Field out of range.</text>
+    <text x="675" y="172" fill="#e8eef7" font-size="10.5">Nothing was signed.</text>
+    <text x="675" y="198" fill="#8fa3bf" font-size="9.5">plain language only —</text>
+    <text x="675" y="212" fill="#8fa3bf" font-size="9.5">numeric codes stay in</text>
+    <text x="675" y="226" fill="#8fa3bf" font-size="9.5">the APDU layer</text>
+    <text x="675" y="262" fill="#5b7292" font-size="9.5">Error · example</text>
+    <circle cx="737" cy="312" r="12" fill="#22354f"/>
+  </g>
+  <text x="30" y="374" fill="#5b7292" font-size="11.5">The leaf-usage bar is the app's odometer: amber at 80%, red interstitial at 95%, hard refusal at 100%. Errors are plain language — never numeric-only codes.</text>
+</svg>

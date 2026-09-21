@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="440" viewBox="0 0 860 440" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="440" fill="#0c1626"/>
+  <rect width="860" height="56" fill="#16263f"/>
+  <circle cx="34" cy="28" r="14" fill="#57d6c0"/>
+  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONWALLET</text>
+  <text x="250" y="34" fill="#57d6c0" font-size="14" font-weight="600">Approvals</text>
+  <text x="700" y="34" fill="#8fa3bf" font-size="13">Safe: 0x9aF3…C21e</text>
+  <text x="30" y="90" fill="#e8eef7" font-size="18" font-weight="700">After the Ledger confirmation — submission tracking</text>
+  <!-- state 1: submitting -->
+  <rect x="30" y="108" width="800" height="88" rx="10" fill="#16263f"/>
+  <circle cx="58" cy="152" r="9" fill="#8fa3bf"/>
+  <text x="82" y="140" fill="#e8eef7" font-size="15" font-weight="600">#42 · 500,000.00 USDC → 0x7bE1…9A04</text>
+  <text x="82" y="164" fill="#8fa3bf" font-size="12.5">⏳ Submitting pre-approval · simulated ✓ · tx 0x91cc…07d4 · waiting for confirmation (block 20,148,112)</text>
+  <text x="82" y="184" fill="#5b7292" font-size="11.5">Leaf #184,204 already committed on the device — this submission will be retried automatically, never re-signed</text>
+  <rect x="688" y="124" width="122" height="30" rx="15" fill="#22354f"/>
+  <text x="706" y="144" fill="#8fa3bf" font-size="13" font-weight="700">Submitting…</text>
+  <!-- state 2: confirmed -->
+  <rect x="30" y="208" width="800" height="72" rx="10" fill="#16263f"/>
+  <circle cx="58" cy="244" r="9" fill="#4bd18a"/>
+  <text x="82" y="236" fill="#e8eef7" font-size="15" font-weight="600">#42 · 500,000.00 USDC → 0x7bE1…9A04</text>
+  <text x="82" y="260" fill="#8fa3bf" font-size="12.5">🟢 Confirmed in block 20,148,114 · executable until 21:40 UTC · operators notified</text>
+  <rect x="688" y="228" width="122" height="30" rx="15" fill="#22354f"/>
+  <text x="713" y="248" fill="#4bd18a" font-size="13" font-weight="700">Ready ✓</text>
+  <!-- state 3: revert -->
+  <rect x="30" y="292" width="800" height="96" rx="10" fill="#16263f" stroke="#e05555" stroke-width="1.5"/>
+  <circle cx="58" cy="332" r="9" fill="#e05555"/>
+  <text x="82" y="322" fill="#e8eef7" font-size="15" font-weight="600">#42 · 500,000.00 USDC → 0x7bE1…9A04</text>
+  <text x="82" y="346" fill="#e05555" font-size="12.5">🔴 Submission reverted: LeafAlreadyUsed(184204) — the leaf is burned; the payload needs a fresh approval</text>
+  <text x="82" y="368" fill="#5b7292" font-size="11.5">Transient failures (nonce race, gas) show Retry submission instead — same signature, no new Ledger interaction</text>
+  <rect x="670" y="316" width="140" height="30" rx="15" fill="#e05555"/>
+  <text x="694" y="336" fill="#ffffff" font-size="13" font-weight="700">Re-approve</text>
+  <text x="30" y="424" fill="#5b7292" font-size="11.5">A Ledger-signed approval that never confirmed is flagged loudly, never dropped: the device counter has already advanced, so the audit log records the leaf either way.</text>
+</svg>

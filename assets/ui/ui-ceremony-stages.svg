@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="560" viewBox="0 0 860 560" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="860" height="560" fill="#0c1626"/>
+  <rect width="860" height="56" fill="#16263f"/>
+  <circle cx="34" cy="28" r="14" fill="#57d6c0"/>
+  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONWALLET</text>
+  <text x="250" y="34" fill="#57d6c0" font-size="14" font-weight="600">Key ceremony</text>
+  <text x="700" y="34" fill="#8fa3bf" font-size="13">Safe: 0x9aF3…C21e</text>
+  <text x="30" y="90" fill="#e8eef7" font-size="18" font-weight="700">Ceremony stages A, B, D, E (Stage C — collect signatures — in ui-ceremony.svg)</text>
+  <!-- Stage A: preflight -->
+  <rect x="30" y="108" width="392" height="196" rx="10" fill="#16263f"/>
+  <text x="52" y="136" fill="#57d6c0" font-size="13" font-weight="700">STAGE A — PREFLIGHT</text>
+  <g font-size="12.5">
+    <text x="52" y="164" fill="#4bd18a">✓</text><text x="72" y="164" fill="#e8eef7">FermionWallet XMSS app open · v1.0.2 · genuine device</text>
+    <text x="52" y="188" fill="#4bd18a">✓</text><text x="72" y="188" fill="#e8eef7">Administrator address matches Ledger: 0x4c11…88Fe</text>
+    <text x="52" y="212" fill="#4bd18a">✓</text><text x="72" y="212" fill="#e8eef7">Registry reachable · registryNonce 7 · no Active key</text>
+    <text x="52" y="236" fill="#f2b84b">…</text><text x="72" y="236" fill="#f2b84b">Waiting: 3 owners notified, session expires in 72 h</text>
+  </g>
+  <rect x="52" y="256" width="150" height="30" rx="15" fill="#57d6c0"/>
+  <text x="80" y="276" fill="#0c1626" font-size="13" font-weight="700">Begin Stage B</text>
+  <text x="220" y="276" fill="#5b7292" font-size="11.5">disabled until every check is green</text>
+  <!-- Stage B: generate -->
+  <rect x="438" y="108" width="392" height="196" rx="10" fill="#16263f"/>
+  <text x="460" y="136" fill="#57d6c0" font-size="13" font-weight="700">STAGE B — GENERATE ON DEVICE</text>
+  <text x="460" y="164" fill="#e8eef7" font-size="12.5">Key generated inside the secure element. Confirm the</text>
+  <text x="460" y="182" fill="#e8eef7" font-size="12.5">ceremony code below matches your Ledger's screen:</text>
+  <rect x="460" y="196" width="348" height="40" rx="8" fill="#0c1626" stroke="#57d6c0" stroke-width="1"/>
+  <text x="478" y="222" fill="#57d6c0" font-size="15" font-weight="700">orbit · velvet · canyon · lemon · tiger · frost</text>
+  <rect x="460" y="252" width="170" height="30" rx="15" fill="#57d6c0"/>
+  <text x="474" y="272" fill="#0c1626" font-size="12.5" font-weight="700">Words match — continue</text>
+  <rect x="644" y="252" width="120" height="30" rx="15" fill="none" stroke="#e05555" stroke-width="1.5"/>
+  <text x="662" y="272" fill="#e05555" font-size="12.5" font-weight="600">They differ ⚠</text>
+  <!-- Stage D: activate -->
+  <rect x="30" y="324" width="392" height="196" rx="10" fill="#16263f"/>
+  <text x="52" y="352" fill="#57d6c0" font-size="13" font-weight="700">STAGE D — ACTIVATE</text>
+  <g font-size="12.5">
+    <text x="52" y="380" fill="#4bd18a">✓</text><text x="72" y="380" fill="#e8eef7">Simulation passed (eth_call) — registerQuantumKey ok</text>
+    <text x="52" y="404" fill="#f2b84b">⏳</text><text x="72" y="404" fill="#e8eef7">Submitting… tx 0x5e1f…88ab · 1 of 2 confirmations</text>
+    <text x="72" y="428" fill="#8fa3bf">binds safe + chainid + quantumAdmin + xmssRoot · nonce 7</text>
+  </g>
+  <rect x="52" y="448" width="130" height="30" rx="15" fill="#22354f"/>
+  <text x="76" y="468" fill="#8fa3bf" font-size="12.5">View on explorer</text>
+  <text x="200" y="468" fill="#5b7292" font-size="11.5">reverts are decoded and shown here — retry-safe</text>
+  <!-- Stage E: proof of life -->
+  <rect x="438" y="324" width="392" height="196" rx="10" fill="#16263f"/>
+  <text x="460" y="352" fill="#4bd18a" font-size="13" font-weight="700">STAGE E — PROOF OF LIFE ✓</text>
+  <g font-size="12.5">
+    <text x="460" y="380" fill="#e8eef7">Key read back from chain · status Active · leaves 1,048,576</text>
+    <text x="460" y="404" fill="#8fa3bf">ceremony code orbit…frost · activation tx 0x5e1f…88ab</text>
+    <text x="460" y="428" fill="#8fa3bf">quantumKeyId 0x77a2…0c19 · registered 21 Sep 2026 15:58 UTC</text>
+  </g>
+  <rect x="460" y="448" width="210" height="30" rx="15" fill="#57d6c0"/>
+  <text x="478" y="468" fill="#0c1626" font-size="12.5" font-weight="700">Print ceremony record (PDF)</text>
+  <text x="684" y="468" fill="#5b7292" font-size="11.5">for the compliance file</text>
+  <text x="30" y="546" fill="#5b7292" font-size="11.5">Every stage is resumable: closing the browser returns you to the last completed stage. Abort at any stage before D costs nothing on-chain.</text>
+</svg>

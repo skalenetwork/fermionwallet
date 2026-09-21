@@ -76,7 +76,7 @@ FermionWallet adds a second approval path that is tied to a quantum-safe signing
 
 Build an MVP add-on that:
 - integrates with normal Gnosis Safe wallets,
-- generates and manages the Quantum Administrator's XMSS key in hardware (Ledger / HSM — never in browser or Node.js process memory),
+- generates and manages the Quantum Administrator's XMSS key anchored to Ledger hardware — never in browser or Node.js process memory unencrypted,
 - creates a pre-approval for a transfer,
 - requires the quantum key as second authorization before execution,
 - supports standard ERC-20 token transfer flows.
@@ -96,7 +96,7 @@ Build an MVP add-on that:
 
 3. FermionWallet add-on service
    - runs as a policy and validation layer
-   - orchestrates quantum key generation in hardware (Ledger / HSM)
+   - orchestrates quantum key generation anchored to the Ledger (the sole hardware trust anchor)
    - creates and validates pre-approvals
    - confirms whether a transfer meets policy and key requirements
 
@@ -266,7 +266,7 @@ The initial draft of the MVP had several major security gaps. The following requ
 
 11. Secret material must never be exposed to untrusted infrastructure
     - Private quantum key material must never be stored in plaintext in a generic Node process, browser localStorage, or app database.
-    - The MVP must require secure key storage in an HSM, secure enclave, or an equivalent hardware-backed keystore.
+    - **The Ledger is the sole hardware — and the sole home of key material.** The classical (ECDSA) key and the XMSS key both live inside the Ledger's ST33 secure element, managed by the [FermionWallet Ledger XMSS app](./ledger-xmss-app.md). The monotonic leaf counter is in secure-element NVRAM. There is no server HSM, no cloud enclave, and no host-side seed or software keystore of any kind — the backend only relays signatures it can never produce.
     - If a browser or backend is used, the private key must be wrapped in a secure key store and never transmitted to the backend without encryption and strict access control.
 
 12. Transaction validation must use exact calldata matching, not loose semantic matching
@@ -451,29 +451,32 @@ This is the minimal protocol for integrating FermionWallet as a Safe Guard. This
 
 > **No custom execution entrypoints.** This contract has **no function that moves tokens**. All transfers flow exclusively through `Safe.execTransaction` → Guard `checkTransaction` → target ERC-20 `transfer`. Any function that could execute, wrap, or forward a transfer outside that path would bypass both the Safe multisig and the Guard, and is forbidden (see security rule 5 and the Guard spec's "Forbidden original code").
 
-#### 1. `registerQuantumKey(bytes32 xmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata ledgerAttestation, bytes calldata ownerSignatures)`
+#### 1. `registerQuantumKey(address safe, address quantumAdmin, bytes32 xmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata ledgerAttestation, bytes calldata ownerSignatures)`
 
-- Purpose: register the Quantum Administrator's hardware-generated XMSS root as the Safe's quantum approval key, in one co-signed transaction.
-- Signature: `function registerQuantumKey(bytes32 xmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata ledgerAttestation, bytes calldata ownerSignatures) external returns (bytes32 quantumKeyId);`
+- Purpose: register the Quantum Administrator's hardware-generated XMSS root — together with the Administrator's classical Ledger address — as the Safe's quantum approval key, in one co-signed transaction.
+- Signature: `function registerQuantumKey(address safe, address quantumAdmin, bytes32 xmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata ledgerAttestation, bytes calldata ownerSignatures) external returns (bytes32 quantumKeyId);`
 - Inputs:
-  - `xmssRoot`: public XMSS root exported from the Ledger secure element / HSM
+  - `safe`: the Safe being enrolled — the registry is a shared singleton called by the Administrator's relayer EOA, so the Safe can never be inferred from `msg.sender`; this address selects whose `checkSignatures` verifies the owner threshold and where the key binding (`safeToQuantumKey[safe]`) is stored
+  - `quantumAdmin`: the Administrator's Ledger EOA — stored on-chain as the address every hybrid pre-approval's ECDSA half is verified against; must match the signer of `ledgerAttestation`
+  - `xmssRoot`: public XMSS root exported from the Ledger-anchored key generation
   - `treeHeight`, `parameterSet`: key parameters, fixed for the key's lifetime
-  - `ledgerAttestation`: the Administrator's EIP-712 hardware attestation over the root
-  - `ownerSignatures`: Safe-owner-threshold EIP-712 signatures over `ApproveQuantumKey { safe, xmssRoot, treeHeight, parameterSet, registryNonce, validUntil }` — owners sign the root itself, never an opaque ID
+  - `ledgerAttestation`: the Administrator's EIP-712 hardware attestation over the root, signed by `quantumAdmin`
+  - `ownerSignatures`: Safe-owner-threshold EIP-712 signatures over `ApproveQuantumKey { safe, quantumAdmin, xmssRoot, treeHeight, parameterSet, registryNonce, validUntil }` — owners sign the root and the admin address themselves, never an opaque ID
 - Returns: `quantumKeyId`
 - Emits: `QuantumKeyRegistered`
 - Validation rules:
-  - owner threshold verified via the Safe's own `checkSignatures`
-  - attestation must verify against the registered `quantumAdmin` address
+  - owner threshold verified via the supplied Safe's own `checkSignatures` — the EIP-712 digest binds `safe` and `block.chainid`, so signatures cannot be replayed against another Safe or chain
+  - attestation must verify against the supplied `quantumAdmin` address, which is stored in the registration
   - `registryNonce` must be current (bumped on success — stale ceremonies unusable)
   - duplicate root registration must reject
   - see [quantum-key-registry.md](./quantum-key-registry.md) for the full lifecycle
 
-#### 2. `rotateQuantumKey(bytes32 newXmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata oldKeyXmssProof, bytes calldata ledgerAttestation, bytes calldata ownerSignatures)`
+#### 2. `rotateQuantumKey(address safe, address newQuantumAdmin, bytes32 newXmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata oldKeyXmssProof, bytes calldata ledgerAttestation, bytes calldata ownerSignatures)`
 
-- Purpose: rotate to a new XMSS root. **Authentication is mandatory**: proof of the old key, hardware attestation of the new key, and owner-threshold co-signatures.
-- Signature: `function rotateQuantumKey(bytes32 newXmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata oldKeyXmssProof, bytes calldata ledgerAttestation, bytes calldata ownerSignatures) external returns (bytes32 newQuantumKeyId);`
+- Purpose: rotate to a new XMSS root (and optionally a new Administrator device). **Authentication is mandatory**: proof of the old key, hardware attestation of the new key, and owner-threshold co-signatures.
+- Signature: `function rotateQuantumKey(address safe, address newQuantumAdmin, bytes32 newXmssRoot, uint32 treeHeight, bytes32 parameterSet, bytes calldata oldKeyXmssProof, bytes calldata ledgerAttestation, bytes calldata ownerSignatures) external returns (bytes32 newQuantumKeyId);`
 - Inputs:
+  - `safe`: the enrolled Safe whose key is being rotated (explicit for the shared singleton, as in `registerQuantumKey`)
   - `oldKeyXmssProof`: XMSS signature by the current active key over the rotation payload (consumes one leaf)
   - remaining inputs as in `registerQuantumKey`, bound to the rotation payload
 - Returns: `newQuantumKeyId`
@@ -482,6 +485,7 @@ This is the minimal protocol for integrating FermionWallet as a Safe Guard. This
   - old key must be `Active`; it transitions to `Rotated` atomically
   - emergency rotation without the old key requires Safe governance plus the Guard's time-locked path
   - unauthenticated rotation must be impossible: missing any of the three proofs reverts
+  - full operator procedure (routine and emergency) in [quantum-key-registry.md → Key rotation procedure](./quantum-key-registry.md#key-rotation-procedure-quantum-administrator)
 
 #### 3. `getQuantumKeyStatus(bytes32 quantumKeyId)`
 
@@ -497,8 +501,8 @@ This is the minimal protocol for integrating FermionWallet as a Safe Guard. This
 ```solidity
 function createPreApproval(
     address safe,       // the enrolled Safe this approval is for — the creator is the
-                        // Administrator's relayer, so the Safe must be explicit; the
-                        // XMSS-signed payload binds (safe, chainid, ...) against replay
+                        // Administrator's relayer, so the Safe must be explicit; both
+                        // signed halves bind (safe, chainid, ...) against replay
     address token,
     address recipient,
     uint256 amount,
@@ -508,8 +512,11 @@ function createPreApproval(
     bytes32 quantumKeyId,
     uint32 xmssLeafIndex,
     bytes32 policyHash,
-    bytes32 txHash,     // optional exact safeTxHash pin; bytes32(0) = match by fields
-    bytes calldata signature
+    bytes32 txHash,     // exact safeTxHash pin (Tier 1, preferred — proposed-then-authorized flow);
+                        // bytes32(0) = field-matched FIFO queue (Tier 2); identical recurring
+                        // transfers queue instead of reverting; stale entries are skipped lazily
+    bytes calldata ecdsaSignature, // Ledger EIP-712 half (65 B) — verified against quantumAdmin
+    bytes calldata xmssSignature   // XMSS half (RFC 8391 tuple, ~2.8 KB at h=20) — verified against xmssRoot
 ) external returns (bytes32 preApprovalId);
 ```
 
@@ -524,14 +531,17 @@ function createPreApproval(
   - quantumKeyId
   - xmssLeafIndex
   - policyHash
-  - txHash (optional)
-  - signature
+  - txHash (optional Tier-1 pin)
+  - ecdsaSignature (classical hybrid half — the Ledger human-in-the-loop anchor)
+  - xmssSignature (post-quantum hybrid half)
 - Returns: `preApprovalId`
 - Emits: `PreApprovalCreated`
+- Storage/lookup: pinned approvals live in `approvalByTxHash[safe][safeTxHash]` (collision-free — Safe nonces differentiate identical transfers); field-matched approvals (`txHash == bytes32(0)`) append to a bounded FIFO queue per commitment `keccak256(safe, class, token, recipient, amount)` (max `MAX_COMMITMENT_QUEUE = 16`), so identical recurring payouts can be queued concurrently and a stale unexecuted approval never blocks new ones — `checkTransaction` skips expired/revoked entries lazily.
+- Validation rules: **both halves must verify over the same EIP-712 digest** — ECDSA via `SignatureChecker` against the registered `quantumAdmin`, XMSS against the registered `xmssRoot` with on-chain leaf consumption. Either half missing or invalid ⇒ revert. A backend holding only the XMSS seed cannot mint approvals without the Ledger, and a stolen Ledger cannot mint them without the XMSS key.
 
 #### 4b. `createPayloadPreApproval(...)` and `createAdminPreApproval(...)`
 
-- Purpose: authorize what the `TRANSFER` struct cannot represent — **native ETH transfers**, **administrative Safe self-calls**, and **`MultiSendCallOnly` batches** (one approval, one leaf per batch; `dataHash` binds the full batch calldata) — via exact-payload binding (`target`, `value`, `dataHash = keccak256(data)`). Both take `address safe` as the first parameter, like `createPreApproval`.
+- Purpose: authorize what the `TRANSFER` struct cannot represent — **native ETH transfers**, **administrative Safe self-calls**, and **`MultiSendCallOnly` batches** (one approval, one leaf per batch; `dataHash` binds the full batch calldata) — via exact-payload binding (`target`, `value`, `dataHash = keccak256(data)`). Both take `address safe` as the first parameter and a `txHash` Tier-1 pin, like `createPreApproval`.
 - `createAdminPreApproval` covers `setGuard` (including `address(0)` — the sanctioned Guard-removal path), `setModuleGuard`, `enableModule`/`disableModule`, and owner/threshold changes. It reverts unless `validFrom ≥ block.timestamp + ADMIN_TIMELOCK` and emits a loud `AdminPreApprovalCreated` event so watchers can revoke during the delay.
 - Together with the quantum-key-independent emergency de-guard path, this guarantees the **no-brick invariant**: the Safe can always, eventually, remove the Guard. Full signatures and dispatch rules in [fermionwallet-guard-module.md → Pre-approval classes](./fermionwallet-guard-module.md#pre-approval-classes).
 
@@ -555,7 +565,7 @@ function createPreApproval(
 
 #### 1. `generateQuantumKey()`
 
-- Purpose: orchestrate XMSS key generation on the Ledger secure element / HSM and return the public metadata.
+- Purpose: orchestrate Ledger-anchored XMSS key generation and return the public metadata.
 - Signature: `generateQuantumKey()`
 - Returns:
   - `xmssRoot`, `treeHeight`, `parameterSet`
@@ -593,7 +603,7 @@ async function createPreApproval({
 })
 ```
 
-- Returns: pre-approval object with signature and status
+- Returns: pre-approval object with both hybrid signature halves (`ecdsaSignature` from the Ledger, `xmssSignature` from the XMSS signer) and status; the relayer submits both to the on-chain `createPreApproval`
 
 #### 5. `validatePreApproval(preApprovalId)`
 
@@ -621,7 +631,7 @@ The MVP does not include:
 
 The MVP is complete when:
 - a normal Gnosis Safe wallet can integrate FermionWallet as a second authorization layer,
-- a hardware-generated (Ledger/HSM) XMSS key can be registered and rotated with full authentication (owner co-signatures + attestation + old-key proof),
+- a Ledger-anchored XMSS key can be registered and rotated with full authentication (owner co-signatures + attestation + old-key proof),
 - a transfer can only proceed when both Safe and quantum approvals are valid,
 - expired, revoked, or replayed pre-approvals are rejected,
 - no code path can move tokens outside `Safe.execTransaction` → Guard → ERC-20 `transfer`,
