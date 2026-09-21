@@ -1145,6 +1145,27 @@ contract GuardIntegrationTest is Test {
         vm.prank(relayer);
         id = guard.createAdminPreApproval(req, ecdsaSig, xmssSig);
     }
+
+    // ══════════ Regression: escape hatch must not carry a gas refund ══════════
+
+    /// The escape hatch returns before any other check — it must not also skip the
+    /// refund ban. Otherwise owner-threshold signatures alone (the exact thing the
+    /// quantum layer distrusts) drain any token as a "gas refund" of an escape call.
+    function test_EscapeHatch_GasRefund_CannotDrain() public {
+        address thief = makeAddr("thief");
+        bytes memory data = abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ());
+        uint256 baseGas = 100_000;
+        uint256 gasPrice = 1 ether; // token units per gas → ~1e5 ether refund
+        bytes32 txHash = safe.getTransactionHash(
+            address(guard), 0, data, Enum.Operation.Call, 0, baseGas, gasPrice, address(token), thief, safe.nonce()
+        );
+        bytes memory sigs = _ownerSigs(txHash);
+        vm.expectRevert(FermionWalletGuard.GasRefundForbidden.selector);
+        safe.execTransaction(
+            address(guard), 0, data, Enum.Operation.Call, 0, baseGas, gasPrice, address(token), payable(thief), sigs
+        );
+        assertEq(token.balanceOf(thief), 0);
+    }
 }
 
 /// Attacker-deployed "Safe" whose signature check accepts anything — used to prove

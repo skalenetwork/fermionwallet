@@ -29,6 +29,7 @@ import {QuantumKeyRegistry} from "./QuantumKeyRegistry.sol";
 ///         on-chain at execution time.
 ///
 ///         `checkTransaction` check order is NORMATIVE (spec, "Emergency de-guard path"):
+///           0. gas-refund ban (a signed tx parameter, not state — applies to all);
 ///           1. emergency escape hatch — may never be blocked by any other state;
 ///           2. the Safe's own pause (deny-all for that Safe only);
 ///           3. enrollment, reentrancy depth, refund policy, class dispatch, consumption.
@@ -191,6 +192,13 @@ contract FermionWalletGuard is
         address safe = msg.sender;
         (bool isSetGuard, address newGuard) = _selfCallWithAddress(safe, to, value, data, operation, SEL_SET_GUARD);
 
+        // 0. Gas-refund drain protection (MVP: no refunds at all) — BEFORE the escape
+        //    hatch. It is a property of the signed transaction, not Safe state, so it
+        //    never blocks an escape call (re-sign with gasPrice = 0). Checked later,
+        //    an escape call (owner signatures only, no quantum approval) could pay any
+        //    token balance out as its "gas refund" (gasToken/refundReceiver/baseGas).
+        if (gasPrice != 0) revert GasRefundForbidden();
+
         // 1. FIRST — before pause, before enrollment, before everything: the
         //    emergency escape hatch and the owner safety calls may never be blocked
         //    by any other state.
@@ -241,8 +249,7 @@ contract FermionWalletGuard is
             _checkFallbackPosture(safe);
         }
 
-        // 6. Gas-refund drain protection (MVP: no refunds at all).
-        if (gasPrice != 0) revert GasRefundForbidden();
+        // 6. (Gas-refund ban: step 0, above.)
 
         // 7. Tier-1 pin: recompute the safeTxHash with the Safe's own hasher.
         //    nonce() - 1 because execTransaction increments before calling us;
