@@ -110,9 +110,28 @@ services:
     environment:
       RUN_MIGRATIONS: 1  # migrate + setup_service (finds Safe 1.4.1 on the chain)
       WORKER_QUEUES: default,indexing,processing
-    volumes:
-      - ./wait_for_chain.py:/wait_for_chain.py:ro
-    command: ["sh", "-c", "python /wait_for_chain.py && exec docker/web/celery/worker/run.sh"]
+    # setup_service registers the Safe singletons only if their code is already on
+    # the chain; run too early it registers none and the demo Safe is never indexed.
+    # `up` orders this through depends_on, but `docker compose restart` starts every
+    # container at once, so first wait for the chain container's API, which answers
+    # only once the Safe contracts, the demo Safe and the Guard are deployed.
+    command:
+      - sh
+      - -c
+      - |
+        python - <<'EOF'
+        import time, urllib.request
+        for _ in range(300):
+            try:
+                urllib.request.urlopen("http://chain:8080/api/state", timeout=5)
+                break
+            except Exception:
+                time.sleep(2)
+        else:
+            raise SystemExit("the chain did not come up")
+        print("chain ready", flush=True)
+        EOF
+        exec docker/web/celery/worker/run.sh
     healthcheck:
       test: ["CMD", "celery", "-A", "config.celery_app", "inspect", "ping"]
       interval: 10s
