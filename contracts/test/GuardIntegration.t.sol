@@ -1121,6 +1121,24 @@ contract GuardIntegrationTest is Test {
         id = guard.createPayloadPreApproval(req, ecdsaSig, xmssSig);
     }
 
+    // ══════════════ Regression: single-owner veto over governance ═══════════
+
+    /// One owner must not be able to veto the threshold: the ADMIN approval that
+    /// removes that owner is revocable by the Safe (threshold) or the Administrator,
+    /// never by an individual owner.
+    function test_SingleOwnerCannotRevokeAdminApproval() public {
+        bytes memory removeOwner =
+            abi.encodeWithSignature("removeOwner(address,address,uint256)", owner1, owner2, uint256(2));
+        bytes32 id = _createAdmin(address(safe), keccak256(removeOwner), 1);
+
+        vm.prank(owner2);
+        vm.expectRevert(QuantumKeyRegistry.NotAuthorized.selector);
+        guard.revokePreApproval(id);
+
+        _safeExec(address(guard), 0, abi.encodeCall(PreApprovalEngine.revokePreApproval, (id)), Enum.Operation.Call);
+        assertTrue(guard.getPreApproval(id).revoked);
+    }
+
     function _createAdmin(address target, bytes32 dataHash, uint32 leaf) internal returns (bytes32 id) {
         PreApprovalEngine.PreApprovalRequest memory req = _adminReq(target, dataHash, leaf);
         (bytes memory ecdsaSig, bytes memory xmssSig) = _hybridSign(req, 2);
