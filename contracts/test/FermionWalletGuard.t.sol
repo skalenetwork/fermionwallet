@@ -394,6 +394,30 @@ contract FermionWalletGuardTest is Test {
         guard.createPreApproval(req, ecdsa, abi.encode(sig));
     }
 
+    // ── No-brick: Guard installed before enrollment ─────────────────────────
+
+    /// A Safe that set the Guard before enrolling must still be able to detach it;
+    /// otherwise a posture that blocks enrollment (fallback handler, enabled module)
+    /// would freeze it forever.
+    function test_neverEnrolledSafeCanDetachGuard() public {
+        MockSafe fresh = new MockSafe(owner);
+        fresh.setGuardDirect(address(guard));
+
+        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.NotEnrolledSafe.selector, address(fresh)));
+        fresh.exec(address(token), 0, _transferData(1));
+
+        fresh.exec(address(fresh), 0, abi.encodeWithSignature("setGuard(address)", address(0)));
+        assertEq(fresh.guard(), address(0));
+    }
+
+    /// The shortcut is only for never-enrolled Safes: an enrolled Safe still needs
+    /// an ADMIN approval or a matured emergency request to detach the Guard.
+    function test_enrolledSafeCannotDetachGuardWithoutApproval() public {
+        vm.expectRevert();
+        safe.exec(address(safe), 0, abi.encodeWithSignature("setGuard(address)", address(0)));
+        assertEq(safe.guard(), address(guard));
+    }
+
     // ── Non-upgradeable once deployed ───────────────────────────────────────
 
     /// The deployed Guard must contain no opcode that could change or replace its
