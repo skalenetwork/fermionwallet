@@ -42,7 +42,10 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
           submodules: recursive
 
+      # Same Foundry as demo/Dockerfile (FOUNDRY_VERSION): bump both together.
       - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.3
 
       - name: Build contracts
         working-directory: contracts
@@ -101,22 +104,36 @@ jobs:
           {
             echo "## ${TAG}"
             echo
-            git tag -l --format='%(contents)' "${TAG}"
+            # Subject and body only: %(contents) would also paste a signed tag's PGP signature.
+            git tag -l --format='%(contents:subject)%0a%0a%(contents:body)' "${TAG}"
           } > release-notes.md
 
+      # A manual dispatch may target a tag that already has a release (e.g. to publish
+      # the demo images for it): then only replace its contract assets.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          ASSETS=(
+            "contracts/dist/fermionwallet-contracts-${TAG}.tar.gz"
+            "contracts/dist/fermionwallet-contracts-${TAG}.zip"
+            "contracts/dist/SHA256SUMS"
+          )
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" --clobber "${ASSETS[@]}"
+            exit 0
+          fi
+          # Same rule as the images' :latest tag: a tag with a '-' (v1.0.0-rc.1) is a prerelease.
+          PRERELEASE=()
+          case "${TAG}" in *-*) PRERELEASE=(--prerelease) ;; esac
           gh release create "${TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "FermionWallet ${TAG}" \
             --notes-file release-notes.md \
             --generate-notes \
             --verify-tag \
-            "contracts/dist/fermionwallet-contracts-${TAG}.tar.gz" \
-            "contracts/dist/fermionwallet-contracts-${TAG}.zip" \
-            "contracts/dist/SHA256SUMS"
+            "${PRERELEASE[@]}" \
+            "${ASSETS[@]}"
 
   demo-image:
     needs: release
@@ -163,7 +180,8 @@ jobs:
           docker run -d --name demo -p 8080:8080 fermionwallet-demo:smoke
           timeout 300 sh -c 'until docker logs demo 2>&1 | grep -qE "ready —|FATAL"; do sleep 2; done'
           docker logs demo 2>&1 | tail -5
-          docker logs demo 2>&1 | grep -q "ready —"
+          # grep -c reads all input: grep -q could exit first and SIGPIPE docker logs under pipefail.
+          docker logs demo 2>&1 | grep -c "ready —" > /dev/null
           post() { curl -fsS -X POST "http://localhost:8080/api/$1" -H 'content-type: application/json' -d '{"amount": 1000}'; }
           dev() { curl -fsS -X POST http://localhost:8080/api/device/button -H 'content-type: application/json' -d "{\"button\": \"$1\"}"; }
           post blocked | tee /dev/stderr | grep -q '"outcome": "blocked"'
@@ -201,6 +219,8 @@ jobs:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json body -q .body > notes.md
+          # A re-run for the same tag must not append the section twice.
+          if grep -q "^## Demo container" notes.md; then exit 0; fi
           {
             echo
             echo "## Demo container"
@@ -333,6 +353,8 @@ jobs:
           B="fermionwallet-demo-wallet-${TAG}"
           gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" --clobber "dist/${B}.tar.gz" "dist/${B}.tar.gz.sha256"
           gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json body -q .body > notes.md
+          # A re-run for the same tag must not append the section twice.
+          if grep -q "^## Demo on the real Safe{Wallet}" notes.md; then exit 0; fi
           {
             echo
             echo "## Demo on the real Safe{Wallet}"
