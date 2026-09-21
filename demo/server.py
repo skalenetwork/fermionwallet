@@ -34,6 +34,8 @@ TREE_LEAVES = 16  # demo key h = 4
 SEL_BALANCE_OF = "0x70a08231"
 SEL_NONCE = "0xaffed0e0"
 SEL_THRESHOLD = "0xe75235b8"
+SEL_GET_OWNERS = "0xa0e67e2b"
+SEL_VERSION = "0xffa1ad74"
 SEL_IS_LEAF_USED = "0xc7ac11b8"
 SEL_SAFE_TO_KEY = "0xe056ccae"
 GUARD_SLOT = "0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8"
@@ -74,6 +76,12 @@ def as_int(hexstr):
     return int(hexstr, 16) if hexstr and hexstr != "0x" else 0
 
 
+def abi_string(hexdata):
+    raw = bytes.fromhex(hexdata[2:])
+    n = int.from_bytes(raw[32:64], "big")
+    return raw[64:64 + n].decode()
+
+
 def chain_state():
     d = deployment()
     safe, guard, token, vendor = d["safe"], d["guard"], d["token"], d["vendor"]
@@ -100,8 +108,11 @@ def chain_state():
         "xmssRoot": d["xmssRoot"],
         "safeNonce": as_int(eth_call(safe, SEL_NONCE)),
         "threshold": as_int(eth_call(safe, SEL_THRESHOLD)),
+        # getOwners() returns (offset, length, addresses...): word 1 is the count.
+        "ownerCount": as_int(eth_call(safe, SEL_GET_OWNERS)[2 + 64:2 + 128]),
         "safeBalance": str(as_int(eth_call(token, SEL_BALANCE_OF + pad_addr(safe))) // 10**18),
         "vendorBalance": str(as_int(eth_call(token, SEL_BALANCE_OF + pad_addr(vendor))) // 10**18),
+        "safeVersion": abi_string(eth_call(safe, SEL_VERSION)),
         "leavesUsed": sum(leaves),
         "leavesTotal": TREE_LEAVES,
         "leaves": leaves,
@@ -250,9 +261,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path in ("/", "/index.html"):
             path = "/index.html"
+        elif path in ("/safe-app", "/safe-app/"):
+            # The FermionWallet Safe App, loaded by Safe{Wallet} in an iframe.
+            path = "/safe-app/index.html"
         fs_path = os.path.normpath(os.path.join(UI_DIR, path.lstrip("/")))
         if fs_path.startswith(UI_DIR) and os.path.isfile(fs_path):
-            ctype = {"html": "text/html", "svg": "image/svg+xml",
+            ctype = {"html": "text/html", "svg": "image/svg+xml", "json": "application/json",
                      "css": "text/css", "js": "text/javascript"}.get(
                 fs_path.rsplit(".", 1)[-1], "application/octet-stream")
             with open(fs_path, "rb") as f:
@@ -260,6 +274,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
+            if path.startswith("/safe-app/") and not path.endswith(".html"):
+                # Safe{Wallet} fetches the app's manifest and icon cross-origin.
+                self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
         else:

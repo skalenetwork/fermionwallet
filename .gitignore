@@ -14,3 +14,5 @@ contracts/broadcast/
 
 # Demo runtime state
 demo-state/
+node_modules/
+demo/wallet/e2e/screenshots/
