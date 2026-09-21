@@ -8,9 +8,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Foundry (anvil testnet + forge script driver + cast)
+# Foundry (anvil testnet + forge script driver + cast), pinned so a release tag
+# always rebuilds the same demo. Bump deliberately, together with CI.
+ARG FOUNDRY_VERSION=v1.8.3
 RUN curl -fsSL https://foundry.paradigm.xyz | bash \
-    && /root/.foundry/bin/foundryup
+    && /root/.foundry/bin/foundryup --install "${FOUNDRY_VERSION}"
 ENV PATH="/root/.foundry/bin:${PATH}"
 
 WORKDIR /app

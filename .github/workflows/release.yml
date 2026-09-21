@@ -4,6 +4,11 @@ name: Release
 # dispatch for an existing tag). Gate: the full Foundry test suite must pass
 # before the release is created. Release notes come from the annotated tag
 # message plus auto-generated notes.
+#
+# The self-contained demo container (demo/Dockerfile) ships with every release:
+# built from the tag, smoke-tested end to end (blocked -> approve -> execute),
+# then pushed to ghcr.io/<owner>/fermionwallet-demo:<tag> (and :latest for
+# non-prerelease tags). Its digest and run command are added to the notes.
 
 on:
   push:
@@ -96,3 +101,93 @@ jobs:
             "contracts/dist/fermionwallet-contracts-${TAG}.tar.gz" \
             "contracts/dist/fermionwallet-contracts-${TAG}.zip" \
             "contracts/dist/SHA256SUMS"
+
+  demo-image:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # append the image to the release notes
+      packages: write # push to ghcr.io
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      IMAGE: ghcr.io/${{ github.repository_owner }}/fermionwallet-demo
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          submodules: recursive
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ env.TAG }}
+            type=raw,value=latest,enable=${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
+          labels: |
+            org.opencontainers.image.title=FermionWallet demo
+            org.opencontainers.image.description=Local anvil chain with a real Safe v1.5.0, the FermionWallet Guard and a web UI
+            org.opencontainers.image.version=${{ env.TAG }}
+
+      - name: Build demo image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: demo/Dockerfile
+          load: true
+          tags: fermionwallet-demo:smoke
+          cache-to: type=gha,mode=max
+          cache-from: type=gha
+
+      - name: Smoke-test the demo end to end
+        run: |
+          docker run -d --name demo -p 8080:8080 fermionwallet-demo:smoke
+          timeout 300 sh -c 'until docker logs demo 2>&1 | grep -qE "ready —|FATAL"; do sleep 2; done'
+          docker logs demo 2>&1 | tail -5
+          docker logs demo 2>&1 | grep -q "ready —"
+          post() { curl -fsS -X POST "http://localhost:8080/api/$1" -H 'content-type: application/json' -d '{"amount": 1000}'; }
+          post blocked | tee /dev/stderr | grep -q '"outcome": "blocked"'
+          post approve | tee /dev/stderr | grep -q '"outcome": "approved"'
+          post execute | tee /dev/stderr | grep -q '"outcome": "executed"'
+          docker rm -f demo
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push demo image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: demo/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+
+      - name: Add the demo image to the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json body -q .body > notes.md
+          {
+            echo
+            echo "## Demo container"
+            echo
+            echo "A local chain with a real Safe v1.5.0 and this release's Guard, plus a web UI:"
+            echo
+            echo '```sh'
+            echo "docker run --rm -p 8080:8080 -p 8545:8545 ${IMAGE}:${TAG}"
+            echo '```'
+            echo
+            echo "Then open http://localhost:8080. Image digest: \`${IMAGE}@${DIGEST}\`"
+          } >> notes.md
+          gh release edit "${TAG}" --repo "${GITHUB_REPOSITORY}" --notes-file notes.md

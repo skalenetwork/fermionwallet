@@ -11,6 +11,8 @@
 > **Official Safe App URL:** `https://skalenetwork.github.io/fermionwallet/app/`
 >
 > Add it in Safe{Wallet} under *Apps → My custom apps → Add custom Safe App*. Only ever copy this URL from this README — never from an email, chat message or search result. The app is a preview: it shows your Safe's FermionWallet readiness (Guard and fallback-handler status); approvals and the key ceremony are not live yet, and the contracts are not audited.
+>
+> **Try it locally:** each release ships a demo container — a local chain with a real Safe and the FermionWallet Guard, plus a web UI. Run `docker run --rm -p 8080:8080 -p 8545:8545 ghcr.io/skalenetwork/fermionwallet-demo:latest` and open http://localhost:8080 (available once the first release with the demo is tagged).
 
 Banks, qualified custodians, and enterprise treasuries already run the gold-standard stack: Gnosis Safe, policy engines, hardware keys, and regulated operations. FermionWallet does not replace that stack. It **hardens it** — adding a cryptographically independent second gate that sits in the execution path of every high-value transfer.
 
