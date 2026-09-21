@@ -19,8 +19,12 @@ ENV PATH="/root/.foundry/bin:${PATH}"
 WORKDIR /app
 
 # Contracts first (better layer caching), compiled at image build time.
+# Tests are skipped: the demo never runs them, and forge preprocesses test files
+# into a temporary foundry-pp/DeployHelper*.sol that is gone after the build, so
+# every later `forge script` would warn about "artifacts built from source files
+# that no longer exist".
 COPY contracts/ contracts/
-RUN cd contracts && forge build
+RUN cd contracts && forge build --skip test
 
 COPY demo/ demo/
 RUN chmod +x demo/entrypoint.sh
