@@ -5,7 +5,7 @@
 # chain that carries Safe v1.4.1 at its canonical addresses, a demo Safe protected
 # by the FermionWalletGuard, and the FermionWallet Safe App with a simulated Ledger.
 #
-#   docker compose up -d --wait   # about 30 s once the images are pulled
+#   docker compose up -d --wait   # about a minute once the images are pulled
 #   open http://localhost:8000    # Safe{Wallet}
 #   docker compose down -v        # stop and reset everything (chain + databases)
 #
@@ -78,6 +78,19 @@ services:
       cfg-web: { condition: service_started }
       cgw-web: { condition: service_started }
       chain: { condition: service_healthy }
+    # Healthy once Safe{Wallet} can actually load the demo Safe: the gateway knows it
+    # and its dUSD balance is indexed. Until then Safe{Wallet} shows "This Safe Account
+    # couldn't be loaded", so `up --wait` must not return before this passes.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          safe=$$(wget -qO- http://chain:8080/api/state | grep -o '"safe": "0x[0-9a-fA-F]*"' | grep -o '0x[0-9a-fA-F]*')
+          && wget -qO- http://127.0.0.1:8000/cgw/v1/chains/31337/safes/$$safe >/dev/null
+          && wget -qO- "http://127.0.0.1:8000/cgw/v1/chains/31337/safes/$$safe/balances/usd?trusted=false" | grep -q dUSD
+      interval: 3s
+      timeout: 10s
+      retries: 100
 
   # ── Safe Transaction Service ──
   txs-db:
