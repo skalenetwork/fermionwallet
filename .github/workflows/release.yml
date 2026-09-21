@@ -1,0 +1,63 @@
+name: Release
+
+# Publishes a GitHub Release when a version tag is pushed (or on manual
+# dispatch for an existing tag). Gate: the full Foundry test suite must pass
+# before the release is created. Release notes come from the annotated tag
+# message plus auto-generated notes.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build contracts
+        working-directory: contracts
+        run: forge build
+
+      - name: Run test suite
+        working-directory: contracts
+        run: forge test -vv
+
+      - name: Extract annotated tag message
+        run: |
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          {
+            echo "## ${TAG}"
+            echo
+            git tag -l --format='%(contents)' "${TAG}"
+          } > release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "FermionWallet ${TAG}" \
+            --notes-file release-notes.md \
+            --generate-notes \
+            --verify-tag
