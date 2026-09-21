@@ -41,6 +41,10 @@ x-redis: &redis
 x-txs: &txs
   image: ghcr.io/safe-global/safe-transaction-service:${TXS_VERSION:-v6.5.0}
   env_file: env/txs.env
+  # `docker compose restart` starts every container at once, ignoring depends_on.
+  # With the in-memory databases wiped, a worker can then query tables the indexer
+  # has not migrated yet and exit; retry until the migrations are in.
+  restart: on-failure
   depends_on:
     txs-db: { condition: service_healthy }
     txs-redis: { condition: service_healthy }
@@ -93,7 +97,9 @@ services:
     environment:
       RUN_MIGRATIONS: 1  # migrate + setup_service (finds Safe 1.4.1 on the chain)
       WORKER_QUEUES: default,indexing,processing
-    command: docker/web/celery/worker/run.sh
+    volumes:
+      - ./wait_for_chain.py:/wait_for_chain.py:ro
+    command: ["sh", "-c", "python /wait_for_chain.py && exec docker/web/celery/worker/run.sh"]
     healthcheck:
       test: ["CMD", "celery", "-A", "config.celery_app", "inspect", "ping"]
       interval: 10s
@@ -136,6 +142,7 @@ services:
   cfg-init:
     image: ghcr.io/safe-global/safe-config-service:${CFG_VERSION:-v2.96.1}
     env_file: env/cfg.env
+    restart: on-failure  # retry if cfg-db is not up yet (compose restart ignores depends_on)
     volumes:
       - ./bootstrap_cfg.py:/bootstrap_cfg.py:ro
     entrypoint: ["sh", "-c", "python src/manage.py migrate --noinput && python src/manage.py shell < /bootstrap_cfg.py"]
@@ -157,6 +164,7 @@ services:
     # v1.115.0 is the newest release published for linux/amd64 (later tags are arm64-only).
     image: ghcr.io/safe-global/safe-client-gateway:${CGW_VERSION:-v1.115.0}
     env_file: env/cgw.env
+    restart: on-failure
     depends_on:
       cgw-redis: { condition: service_healthy }
       cgw-db: { condition: service_healthy }
