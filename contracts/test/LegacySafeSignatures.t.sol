@@ -4,6 +4,9 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {MultiSendCallOnly} from "@safe-global/safe-contracts/contracts/libraries/MultiSendCallOnly.sol";
 
+import {Safe} from "@safe-global/safe-contracts/contracts/Safe.sol";
+import {SafeProxyFactory} from "@safe-global/safe-contracts/contracts/proxies/SafeProxyFactory.sol";
+
 import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
 
 /// The v1.4.1 surface this test needs (identical ABI in v1.4.1 and v1.5.0).
@@ -39,15 +42,16 @@ contract LegacyContractOwner {
     function isValidSignature(bytes memory data, bytes memory) external view returns (bytes4) {
         return approved[keccak256(data)] ? bytes4(0x20c13b0b) : bytes4(0);
     }
+
+    /// Current EIP-1271 (Safe v1.5.0 calls this with the digest itself).
+    function isValidSignature(bytes32 digest, bytes memory) external view returns (bytes4) {
+        return approved[digest] ? bytes4(0x1626ba7e) : bytes4(0);
+    }
 }
 
-/// Registry ceremonies against a REAL Safe v1.4.1, whose `checkSignatures(bytes32,
+/// Registry ceremonies against a REAL legacy Safe, whose `checkSignatures(bytes32,
 /// bytes data, bytes)` hands `data` — not the hash — to contract owners.
-/// test/vectors/safe-v1.4.1/*.bin: creation bytecode of Safe.sol and
-/// proxies/SafeProxyFactory.sol at github.com/safe-global/safe-smart-account tag v1.4.1
-/// (bf943f80), unmodified source, solc 0.8.37, optimizer 200 runs, no via-IR (the
-/// v1.4.1 sources hit stack-too-deep under this repo's via-IR profile).
-contract LegacySafe141Test is Test {
+abstract contract LegacySafeRegistryTest is Test {
     uint256 internal constant OWNER_PK = 0xB1;
     uint256 internal constant LEDGER_PK = 0x1ED6E4;
     address internal owner = vm.addr(OWNER_PK);
@@ -77,8 +81,8 @@ contract LegacySafe141Test is Test {
     function setUp() public {
         vm.warp(1_800_000_000);
         wallet = new LegacyContractOwner();
-        address singleton = _deploy("test/vectors/safe-v1.4.1/Safe.bin");
-        ISafeProxyFactory141 factory = ISafeProxyFactory141(_deploy("test/vectors/safe-v1.4.1/SafeProxyFactory.bin"));
+        (address singleton, address factoryAddr) = _singletonAndFactory();
+        ISafeProxyFactory141 factory = ISafeProxyFactory141(factoryAddr);
         address[] memory owners = new address[](2);
         owners[0] = owner;
         owners[1] = address(wallet);
@@ -88,11 +92,20 @@ contract LegacySafe141Test is Test {
         guard = new FermionWalletGuard(address(new MultiSendCallOnly()), 2 days, 7 days, 4, 8);
     }
 
-    /// A contract owner of a v1.4.1 Safe co-signs the key ceremony by approving the
+    /// Directory of the Safe/SafeProxyFactory creation bytecode for this version.
+    function _vectorDir() internal pure virtual returns (string memory);
+
+    function _singletonAndFactory() internal virtual returns (address singleton, address factory) {
+        singleton = _deploy(string.concat(_vectorDir(), "/Safe.bin"));
+        factory = _deploy(string.concat(_vectorDir(), "/SafeProxyFactory.bin"));
+    }
+
+    /// A contract owner of a legacy Safe co-signs the key ceremony by approving the
     /// EIP-712 message itself (0x1901 ‖ domain ‖ structHash). v1.4.1 requires
-    /// keccak256(data) == dataHash for contract signatures (GS027); the registry used
-    /// to pass empty `data`, so such a Safe could never enroll.
-    function test_Safe141_ContractOwnerCoSignsRegistration() public {
+    /// keccak256(data) == dataHash for contract signatures (GS027); v1.3.0 hands
+    /// `data` to the owner unchecked. The registry used to pass empty `data`, so such
+    /// a Safe could never enroll.
+    function test_ContractOwnerCoSignsRegistration() public {
         bytes32 structHash = _approveKeyStruct(block.timestamp + 1 days);
         wallet.approveMessage(_preimage(structHash));
         bytes32 keyId = _register(structHash, block.timestamp + 1 days);
@@ -101,7 +114,7 @@ contract LegacySafe141Test is Test {
 
     /// Same for the owner-governed emergency revocation request — and the contract
     /// owner's approval is per message: one it never approved is rejected (GS024).
-    function test_Safe141_ContractOwnerCoSignsRevocationRequest() public {
+    function test_ContractOwnerCoSignsRevocationRequest() public {
         bytes32 structHash = _approveKeyStruct(block.timestamp + 1 days);
         wallet.approveMessage(_preimage(structHash));
         bytes32 keyId = _register(structHash, block.timestamp + 1 days);
@@ -177,5 +190,39 @@ contract LegacySafe141Test is Test {
         bytes memory contractSig = abi.encodePacked(bytes32(uint256(uint160(address(wallet)))), uint256(130), uint8(0));
         bytes memory head = owner < address(wallet) ? bytes.concat(eoaSig, contractSig) : bytes.concat(contractSig, eoaSig);
         return bytes.concat(head, abi.encode(uint256(0))); // contract signature: length 0
+    }
+}
+
+/// test/vectors/safe-v1.4.1/*.bin: creation bytecode of Safe.sol and
+/// proxies/SafeProxyFactory.sol at github.com/safe-global/safe-smart-account tag v1.4.1
+/// (bf943f80), unmodified source, solc 0.8.37, optimizer 200 runs, no via-IR (the
+/// v1.4.1 sources hit stack-too-deep under this repo's via-IR profile).
+contract LegacySafe141Test is LegacySafeRegistryTest {
+    function _vectorDir() internal pure override returns (string memory) {
+        return "test/vectors/safe-v1.4.1";
+    }
+}
+
+/// test/vectors/safe-v1.3.0/*.bin: creation bytecode of GnosisSafe.sol and
+/// proxies/GnosisSafeProxyFactory.sol at github.com/safe-global/safe-smart-account tag
+/// v1.3.0 (186a21a7), unmodified source, solc 0.8.20, optimizer 200 runs, no via-IR.
+/// v1.3.0 has no GS027 check: it passes `data` straight to the owner's legacy
+/// isValidSignature(bytes,bytes), which must see the exact EIP-712 preimage.
+contract LegacySafe130Test is LegacySafeRegistryTest {
+    function _vectorDir() internal pure override returns (string memory) {
+        return "test/vectors/safe-v1.3.0";
+    }
+}
+
+/// Control: Safe v1.5.0 (this repo's lib) ignores `data` in the legacy overload and
+/// asks contract owners isValidSignature(bytes32 digest, bytes) — the same ceremony
+/// must keep working there.
+contract Safe150ContractOwnerTest is LegacySafeRegistryTest {
+    function _vectorDir() internal pure override returns (string memory) {
+        return "";
+    }
+
+    function _singletonAndFactory() internal override returns (address, address) {
+        return (address(new Safe()), address(new SafeProxyFactory()));
     }
 }
