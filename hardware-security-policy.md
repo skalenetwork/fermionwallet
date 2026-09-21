@@ -56,18 +56,20 @@ both confined to the SE. The physical boundary is the SE package; the MCU, USB/B
 
 | Service (APDU) | Role | SSPs touched | Description |
 |---|---|---|---|
-| `GEN_XMSS_KEY` | Administrator | SK_SEED, SK_PRF (create); leaf counter (init = 0) | Generates the XMSS key from SE TRNG. **Not derived from the BIP-39 seed** — deliberately unrecoverable from the 24 words (a restore would reset leaf state and enable reuse-forgery). Runs a pairwise consistency test; zeroizes on failure. |
+| `GEN_XMSS_KEY` | Administrator | SK_SEED, SK_PRF of one free slot (create); that slot's leaf counter (init = 0) | Generates a new XMSS key in a free slot (up to 4 keys; existing keys untouched) from SE TRNG. **Not derived from the BIP-39 seed** — deliberately unrecoverable from the 24 words (a restore would reset leaf state and enable reuse-forgery). Runs a pairwise consistency test; zeroizes on failure. |
 | `GET_XMSS_ROOT` | Any | none (public) | Returns `xmssRoot`, `treeHeight`, `parameterSet`. |
 | `ATTEST_KEY` | Administrator | attestation key (read) | Clear-signs EIP-712 `QuantumKeyAttestation{safe, quantumAdmin, xmssRoot, treeHeight, parameterSet, registryNonce}` on-device for the registration ceremony. |
 | `SIGN_PREAPPROVAL` | Administrator | SK_SEED, SK_PRF, admin key (read); leaf counter (increment) | Renders token/recipient/amount/window/Safe nonce/leaf index on the trusted screen; one physical confirmation releases **both hybrid halves** (ECDSA EIP-712 + XMSS) over the same digest. |
 | `GET_STATUS` | Any | none (public) | App version, `xmssRoot`, current leaf index, leaves remaining ($2^h - idx$), key status. |
+| `RETIRE_KEY` | Administrator | SK_SEED, SK_PRF, counter of one slot (zeroize) | Erases one key after a double-confirmed on-device flow; other slots unaffected. Used after a rotation is confirmed on-chain. |
 | Device wipe / app delete | Administrator (PIN) or automatic (3 PIN failures) | all CSPs | Zeroization — see §5. |
 
 ### 3.1 Leaf-counter invariants (enforced in SE firmware)
 
 1. **Counter-before-signature.** `SIGN_PREAPPROVAL` reserves index $idx_{sig}$, commits $idx \leftarrow idx_{sig}+1$ to SE NVRAM, and only then computes and emits the signature. A power-pull mid-operation wastes leaf $idx_{sig}$; it can never reuse it.
 2. **Exhaustion.** The app refuses to sign when $idx_{sig} \ge 2^h$ — all $2^h$ leaves (indices $0 \dots 2^h-1$) are usable; no off-by-one sacrifices the final leaf.
-3. **No rollback path.** The counter is increment-only in SE NVRAM; no APDU, OS update, or restore can decrement or reset it while the key exists. Deleting the key destroys the seeds with the counter — a fresh key ceremony (new root, on-chain registration) is the only "reset."
+3. **No rollback path.** Each key's counter is increment-only in SE NVRAM; no APDU, OS update, or restore can decrement or reset it while the key exists. Retiring a key destroys its seeds with its counter — a fresh key (new root, on-chain registration or rotation) is the only "reset."
+4. **Key isolation.** Every key has its own seeds and counter in its own slot; a command names its key (slot + expected root prefix) and can never use, read, or reset another.
 
 ---
 
@@ -90,7 +92,7 @@ both confined to the SE. The physical boundary is the SE package; the MCU, USB/B
 
 ## 5. Zeroization, Loss & Recovery
 
-- **Zeroization triggers:** authorized device wipe, FermionWallet app deletion, or 3 consecutive PIN failures. The SE destroys `SK_SEED`/`SK_PRF` and the counter irreversibly.
+- **Zeroization triggers:** `RETIRE_KEY` (one key), authorized device wipe, FermionWallet app deletion, or 3 consecutive PIN failures (all keys). The SE destroys `SK_SEED`/`SK_PRF` and the counter irreversibly.
 - **The XMSS key is intentionally unrecoverable** — from the 24-word phrase, from Ledger Recover, from backups. This is a security feature, not a gap: any restore path would resurrect a stale leaf counter.
 - **Recovery is on-chain, not on-device.** A lost, wiped, or destroyed Ledger costs signing capability only, never funds: the organization runs the co-signed ceremony for a new XMSS root on a new device (`registerQuantumKey`, or emergency rotation via Safe governance — see [quantum-key-registry.md](./quantum-key-registry.md)), and the Safe's time-locked escape hatches never depend on the device.
 

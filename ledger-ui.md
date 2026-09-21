@@ -42,22 +42,23 @@ Denying produces a Ledger-signed refusal that is as auditable as an approval but
 
 ![Key generation](./assets/ui/ledger/ledger-keygen.svg)
 
-Five screens: intent (parameter set + lifetime), the amber **NO BACKUP** acknowledgment (the key is intentionally not derivable from the recovery phrase — restoring a seed would reset the leaf counter and enable reuse forgery), tree-construction progress (not shown; cancellable until complete), root review with the **6-word ceremony code rendered by the secure element**, export confirmation (only the root, public SEED, height and parameter set leave the device — the public SEED is required on-chain to verify signatures), and the key attestation (`SIGN_KEY_ATTESTATION`): the device signs the registry's `QuantumKeyAttestation` for the shown Safe with its `quantumAdmin` key, filling the key fields itself so the host can't substitute a root. Re-running the command after generation replays screens 4–5 only; attestation is repeated per Safe.
+Five screens: intent (parameter set + lifetime), the amber **NO BACKUP** acknowledgment (the key is intentionally not derivable from the recovery phrase — restoring a seed would reset the leaf counter and enable reuse forgery), tree-construction progress (not shown; cancellable until complete), root review with the **6-word ceremony code rendered by the secure element**, export confirmation (only the root, public SEED, height and parameter set leave the device — the public SEED is required on-chain to verify signatures), and the key attestation (`SIGN_KEY_ATTESTATION`): the device signs the registry's `QuantumKeyAttestation` for the shown Safe with its `quantumAdmin` key, filling the key fields itself so the host can't substitute a root. The app holds up to four keys: generation always fills a free slot and never touches an existing key, and every screen header names the key (`Key 2 · orbit velvet`). Reading a key back replays screens 4–5 only; attestation is repeated per Safe.
 
 ## Rotation (`SIGN_ROTATION`) — amber frames
 
 ![Rotation flow](./assets/ui/ledger/ledger-rotate.svg)
 
-Run on the **old** device as the possession proof of the [rotation procedure](./quantum-key-registry.md). The device shows every field of the signed `RotateQuantumKey` payload: the Safe and chain, the new Administrator address (flagged when it changes), the new key's ceremony words, height and parameter set, and `validUntil` in UTC. It also shows old vs. new ceremony words (verify both out-of-band), the number of approvals being abandoned (so a pointless rotation can't be socially engineered invisibly), and a decision screen that names its cost: one old-key leaf. The device hashes these displayed fields itself; it never signs a digest supplied by the host.
+Signed with the **old** key — on the same device, where the new key sits in another slot, or on the old device — as the possession proof of the [rotation procedure](./quantum-key-registry.md). The rotation screens say which: `New key: Key 3 on this device` or `New key: another device`. The device shows every field of the signed `RotateQuantumKey` payload: the Safe and chain, the new Administrator address (flagged when it changes), the new key's ceremony words, height and parameter set, and `validUntil` in UTC. It also shows old vs. new ceremony words (verify both out-of-band), the number of approvals being abandoned (so a pointless rotation can't be socially engineered invisibly), and a decision screen that names its cost: one old-key leaf. The device hashes these displayed fields itself; it never signs a digest supplied by the host.
 
 ## Ambient and error screens
 
 ![Ambient and errors](./assets/ui/ledger/ledger-ambient.svg)
 
-- **Dashboard (idle):** parameter set + leaf-usage bar. Amber at ≥80%, red at ≥95%.
+- **Dashboard (idle):** parameter set + one leaf-usage bar per key (`Key 1 · orbit velvet`). Amber at ≥80%, red at ≥95%.
+- **Retire key (Settings):** red-framed, double-confirmed; shows the key's ceremony words and unused leaves and warns to retire only after the replacing rotation is confirmed on-chain. Erases that one slot.
 - **Rotation-overdue interstitial:** prepended to every signing flow at ≥95% usage.
 - **Key exhausted:** at 100% the app refuses to sign — rotation instructions are the only content.
-- **Errors:** every failure is a distinct plain-language screen (`Payload rejected — field out of range`, `Session already active`, `Key exhausted — rotate`, `Clock window invalid`). Numeric codes exist only at the APDU layer.
+- **Errors:** every failure is a distinct plain-language screen (`Payload rejected — field out of range`, `Session already active`, `Key exhausted — rotate`, `Clock window invalid`, `Key mismatch — check host`, `No free key slot — retire a key first`). Numeric codes exist only at the APDU layer.
 
 ## Acceptance criteria
 
