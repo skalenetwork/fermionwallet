@@ -14,7 +14,7 @@ import {IModuleGuard} from "@safe-global/safe-contracts/contracts/base/ModuleMan
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
-import {PreApprovalEngine} from "../src/PreApprovalEngine.sol";
+import {PreApprovalEngine, NO_MATCHING_PRE_APPROVAL} from "../src/PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "../src/QuantumKeyRegistry.sol";
 import {XMSS} from "../src/XMSS.sol";
 
@@ -1649,17 +1649,7 @@ contract GuardIntegrationTest is Test {
         assertFalse(valid);
         assertEq(reason, "key revoked");
         bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
-        bytes32 commitment =
-            keccak256(abi.encode(address(safe), PreApprovalEngine.ApprovalClass.TRANSFER, address(token), recipient, 1 ether));
-        bytes32 safeTxHash = safe.getTransactionHash(
-            address(token), 0, data, Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce()
-        );
-        _expectExecRevertWith(
-            address(token),
-            0,
-            data,
-            abi.encodeWithSelector(PreApprovalEngine.NoMatchingPreApproval.selector, address(safe), commitment, safeTxHash)
-        );
+        _expectExecRevertWith(address(token), 0, data, abi.encodeWithSignature("Error(string)", NO_MATCHING_PRE_APPROVAL));
     }
 
     /// quantum-key-registry.md: registration is refused while the Safe has a fallback
@@ -1798,12 +1788,12 @@ contract GuardIntegrationTest is Test {
         bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
 
         vm.prank(module);
-        vm.expectPartialRevert(PreApprovalEngine.NoMatchingPreApproval.selector);
+        vm.expectRevert(bytes(NO_MATCHING_PRE_APPROVAL));
         safe.execTransactionFromModule(address(token), 0, data, Enum.Operation.Call);
 
         _createTransfer(recipient, 1 ether, 3, keccak256("some pinned safeTxHash"));
         vm.prank(module);
-        vm.expectPartialRevert(PreApprovalEngine.NoMatchingPreApproval.selector);
+        vm.expectRevert(bytes(NO_MATCHING_PRE_APPROVAL));
         safe.execTransactionFromModule(address(token), 0, data, Enum.Operation.Call);
 
         bytes32 id = _createTransfer(recipient, 1 ether, 4, bytes32(0));

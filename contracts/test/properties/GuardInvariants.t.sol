@@ -7,7 +7,7 @@ import {MultiSendCallOnly} from "@safe-global/safe-contracts/contracts/libraries
 import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
 
 import {FermionWalletGuard} from "../../src/FermionWalletGuard.sol";
-import {PreApprovalEngine} from "../../src/PreApprovalEngine.sol";
+import {PreApprovalEngine, NO_MATCHING_PRE_APPROVAL} from "../../src/PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "../../src/QuantumKeyRegistry.sol";
 import {PropertyBase, FermionWalletGuardHarness, FrameRunner} from "./PropertyBase.sol";
 
@@ -589,7 +589,9 @@ contract GuardHandler is PropertyBase {
         _check(!ok, "unapproved probe executed");
         _check(probeErr != FermionWalletGuard.NestedSafeTransaction.selector, "depth counter leaked across transactions");
         _check(
-            probeErr == (paused ? FermionWalletGuard.SafePausedError.selector : PreApprovalEngine.NoMatchingPreApproval.selector),
+            paused
+                ? probeErr == FermionWalletGuard.SafePausedError.selector
+                : keccak256(err) == keccak256(abi.encodeWithSignature("Error(string)", NO_MATCHING_PRE_APPROVAL)),
             "probe rejected for an unexpected reason"
         );
         ++ghostProbes;

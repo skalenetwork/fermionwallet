@@ -5,6 +5,12 @@ import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/Signa
 import {DoubleEndedQueue} from "@openzeppelin/contracts/utils/structs/DoubleEndedQueue.sol";
 import {QuantumKeyRegistry} from "./QuantumKeyRegistry.sol";
 
+// Revert reason when a transaction has no matching pre-approval. A plain Error(string),
+// not a custom error: wallets such as Safe{Wallet} decode only string reasons, so this
+// is what a Safe owner actually reads when the Guard blocks an unapproved transaction.
+string constant NO_MATCHING_PRE_APPROVAL =
+    "FermionWallet: no quantum pre-approval for this transaction. Approve it in the FermionWallet app first.";
+
 /// @title PreApprovalEngine — hybrid (ECDSA + XMSS) time-bound pre-approvals
 /// @notice Creates, indexes, revokes, and (for the Guard) consumes pre-approvals per
 ///         pre-approval-engine.md. Every creation verifies BOTH hybrid halves over the
@@ -87,7 +93,6 @@ abstract contract PreApprovalEngine is QuantumKeyRegistry {
     error CommitmentQueueFull(bytes32 commitment);
     error UnknownApproval(bytes32 id);
     error NotRevocable(bytes32 id);
-    error NoMatchingPreApproval(address safe, bytes32 commitment, bytes32 safeTxHash);
 
     // ── Events ──────────────────────────────────────────────────────────────
 
@@ -370,7 +375,7 @@ abstract contract PreApprovalEngine is QuantumKeyRegistry {
                 return a.id;
             }
         }
-        revert NoMatchingPreApproval(safe, c, safeTxHash);
+        revert(NO_MATCHING_PRE_APPROVAL);
     }
 
     /// Pop permanently dead entries off the front of a Tier-2 queue (bounded by its cap).

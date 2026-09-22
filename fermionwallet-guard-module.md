@@ -454,13 +454,17 @@ interface IFermionWalletGuard is ITransactionGuard, IModuleGuard {
     event EmergencyDeGuardCancelled(address indexed safe, address indexed by);
     event EmergencyDeGuardCleared(address indexed safe);
 
-    // ── Custom errors (the fallback UI: Safe{Wallet} simulation shows these) ──
+    // ── Custom errors (Safe{Wallet} shows these as raw hex; see below) ──
     // Enforcement: NotEnrolledSafe, SafePausedError, NestedSafeTransaction,
     //   GasRefundForbidden, DelegateCallForbidden, ModuleDelegateCallForbidden,
     //   ModulesEnabledWithoutModuleGuard, ModuleGuardNotWired, FallbackHandlerForbidden,
     //   DeniedSelector, SelectorNotAllowed, NativeValueOnTransfer,
     //   MalformedTransferCalldata, MalformedBatch, BatchTooLarge,
-    //   ForbiddenBatchLegTarget, NoMatchingPreApproval.
+    //   ForbiddenBatchLegTarget.
+    // No matching pre-approval is NOT a custom error: it reverts with the string
+    //   "FermionWallet: no quantum pre-approval for this transaction. Approve it in the
+    //   FermionWallet app first." (PreApprovalEngine's NO_MATCHING_PRE_APPROVAL), because
+    //   Safe{Wallet} decodes only Error(string) reasons and this is the block owners hit.
     // Pre-approvals: ApprovalExists, InvalidWindow, AdminTimelockNotRespected,
     //   InvalidAdminTarget, NonZeroClassFields, InvalidEcdsaSignature, WrongQuantumKey,
     //   LeafIndexDoesNotMatchSignature, TxHashAlreadyPinned, CommitmentQueueFull,

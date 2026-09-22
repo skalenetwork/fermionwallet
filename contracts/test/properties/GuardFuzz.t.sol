@@ -6,7 +6,7 @@ import {ERC20Mock as MockToken} from "@openzeppelin/contracts/mocks/token/ERC20M
 import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
 
 import {FermionWalletGuard} from "../../src/FermionWalletGuard.sol";
-import {PreApprovalEngine} from "../../src/PreApprovalEngine.sol";
+import {PreApprovalEngine, NO_MATCHING_PRE_APPROVAL} from "../../src/PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "../../src/QuantumKeyRegistry.sol";
 import {PropertyBase, FermionWalletGuardHarness} from "./PropertyBase.sol";
 
@@ -358,7 +358,7 @@ contract GuardFuzzTest is PropertyBase {
             )
         );
         assertFalse(passed, "unapproved batch accepted");
-        bool structuralPass = _sel(err) == PreApprovalEngine.NoMatchingPreApproval.selector;
+        bool structuralPass = keccak256(err) == keccak256(abi.encodeWithSignature("Error(string)", NO_MATCHING_PRE_APPROVAL));
 
         if (structuralPass) {
             // Soundness against MultiSend's actual interpretation of the blob.
