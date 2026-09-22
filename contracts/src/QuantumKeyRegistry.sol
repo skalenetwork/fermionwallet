@@ -378,7 +378,8 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
         BitMaps.BitMap storage used = _usedLeaves[keyId];
         if (used.get(leafIndex)) revert LeafAlreadyUsed(keyId, leafIndex);
 
-        if (!XMSS.verify(digest, sig, XMSS.PublicKey({root: k.xmssRoot, seed: k.xmssSeed}))) {
+        // The registered height is passed in: the library binds it like the RFC's key OID.
+        if (!XMSS.verify(digest, sig, XMSS.PublicKey({root: k.xmssRoot, seed: k.xmssSeed}), k.treeHeight)) {
             revert InvalidXmssSignature();
         }
 
