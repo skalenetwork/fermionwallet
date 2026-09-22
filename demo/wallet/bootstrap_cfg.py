@@ -68,7 +68,7 @@ SafeApp.objects.update_or_create(
     url=APP_URL,
     defaults=dict(
         name="FermionWallet",
-        description="Post-quantum second authorization: approve transfers on a (simulated) Ledger with hybrid ECDSA + XMSS signatures.",
+        description="Post-quantum second authorization: approve queued Safe transactions on your Ledger with hybrid ECDSA + XMSS signatures.",
         chain_ids=[CHAIN_ID],
         icon_url="demo/fermionwallet.svg",
         listed=True,
