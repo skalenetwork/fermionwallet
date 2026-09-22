@@ -39,7 +39,7 @@ A FermionWallet release is a set of versioned artifacts published together under
 
 | # | Artifact | Source | Distribution | Owner doc |
 |---|---|---|---|---|
-| A1 | `XMSS` verifier library (internal, inlined into A3 — not deployed separately) | `contracts/src/XMSS.sol` | part of A3 | [contracts/README](./contracts/README.md) |
+| A1 | `XMSS` verifier library (internal, inlined into A3 — not deployed separately) | [skalenetwork/xmss-solidity](https://github.com/skalenetwork/xmss-solidity) `src/XMSS.sol`, submodule `contracts/lib/xmss-solidity` (formally verified against RFC 8391, see its `PROOF.md`) | part of A3 | [contracts/README](./contracts/README.md) |
 | A2 | `QuantumKeyRegistry` and `PreApprovalEngine` (abstract bases compiled into A3 — not deployed separately) | `contracts/src/QuantumKeyRegistry.sol`, `contracts/src/PreApprovalEngine.sol` | part of A3 | [Key Registry](./quantum-key-registry.md), [Pre-approval Engine](./pre-approval-engine.md) |
 | A3 | `FermionWalletGuard` (transaction guard + module guard; the only deployed contract) | `contracts/src/FermionWalletGuard.sol` | CREATE2 deployment, verified source; ABI, bytecode, immutable references and manifest attached to the GitHub Release | [Guard](./fermionwallet-guard-module.md) |
 | A4 | `deployments.json` | repository root | Git (signed tag), mirrored to `fermionwallet.eth` ENS text records | [Service deployment §2.3](./fermionwallet-gnosis-service-deployment.md#23-canonical-deployments--address-verification) |
@@ -115,7 +115,7 @@ A release may not advance to the next stage until every gate for that stage pass
 
 - [ ] `forge test` passes, including fuzz suites, with no skipped tests.
 - [ ] XMSS verifier passes the reference vectors at h = 4, 10, and 20 and the tamper/negative tests ([contracts/README](./contracts/README.md)).
-- [ ] Gas: `test_gas_verify_h20` passes (verification ≤ 1.1M gas; last measured 736,700).
+- [ ] Gas: `test_gas_verify_h20` passes (verification ≤ 1.1M gas; last measured 744,906).
 - [ ] Integration test against a real Safe (v1.3.0 and v1.4.1): a pre-approval pinned to the `safeTxHash` of nonce N executes at nonce N, and the Guard's `getTransactionHash(..., nonce() - 1)` recomputation matches ([Guard: Production constraints](./fermionwallet-guard-module.md#production-constraints)).
 - [ ] Malformed MultiSend fuzzing (truncated header, overrunning `dataLength`, trailing bytes, more than `MAX_BATCH_LEGS`) reverts cheaply.
 - [ ] A test proves `requestEmergencyDeGuard` succeeds while the Safe is paused (emergency allow runs before the pause check).

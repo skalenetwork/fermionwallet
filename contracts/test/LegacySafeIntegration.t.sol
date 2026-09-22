@@ -9,7 +9,7 @@ import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
 import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
 import {PreApprovalEngine} from "../src/PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "../src/QuantumKeyRegistry.sol";
-import {XMSS} from "../src/XMSS.sol";
+import {XMSS} from "xmss-solidity/XMSS.sol";
 
 /// The Safe surface this suite drives — ABI-identical in v1.3.0, v1.4.1 and v1.5.0
 /// (the repo's lib is v1.5.0, whose sources this repo compiles; legacy singletons
@@ -665,7 +665,7 @@ abstract contract LegacySafeIntegrationBase is Test {
     function _xmssSign(uint32 leaf, bytes32 digest) internal returns (bytes32 root, bytes32 seed, bytes memory encodedSig) {
         string[] memory cmd = new string[](5);
         cmd[0] = "python3";
-        cmd[1] = "py/sign_digest.py";
+        cmd[1] = "lib/xmss-solidity/py/sign_digest.py";
         cmd[2] = vm.toString(uint256(H));
         cmd[3] = vm.toString(uint256(leaf));
         cmd[4] = vm.toString(digest);

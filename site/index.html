@@ -514,20 +514,20 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
   <div class="wrap center">
     <div class="eyebrow">For your engineers</div>
     <h2>Post-quantum signatures,<br>verified in the EVM</h2>
-    <p class="lead">XMSS is pure hashing, so the chain checks it directly — no oracle, no trusted server. The verifier is a clean-room implementation of RFC 8391, tested against an independent Python reference.</p>
+    <p class="lead">XMSS is pure hashing, so the chain checks it directly — no oracle, no trusted server. The verifier is a clean-room implementation of RFC 8391, <strong>formally verified</strong> to compute exactly what the RFC's verification algorithms compute, for every input, and tested against an independent Python reference.</p>
   </div>
   <div class="wrap">
     <div class="stats">
-      <div class="stat"><div class="v">736,700</div><div class="l">gas per verification, measured at h = 20</div></div>
+      <div class="stat"><div class="v">744,906</div><div class="l">gas per verification, measured at h = 20</div></div>
       <div class="stat"><div class="v">~1M</div><div class="l">approvals per key (2<sup>20</sup> leaves)</div></div>
-      <div class="stat"><div class="v">3</div><div class="l">tree heights tested against a reference (h = 4, 10, 20)</div></div>
+      <div class="stat"><div class="v">Proven</div><div class="l">XMSS verifier formally verified against RFC 8391, for all inputs</div></div>
       <div class="stat"><div class="v">MIT</div><div class="l">XMSS verifier, written from the RFC, no borrowed code</div></div>
     </div>
     <div class="split">
       <div>
         <h3>Leaf reuse is impossible by construction</h3>
         <p>XMSS is stateful: reusing a one-time leaf would let an attacker forge. The Ledger commits its counter before releasing a signature, and the contract keeps a used-leaf bitmap that reverts on any reuse.</p>
-        <p><a href="https://github.com/skalenetwork/fermionwallet/tree/main/contracts">Browse the contracts →</a> · <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionwallet-guard-module.md">Guard spec →</a></p>
+        <p><a href="https://github.com/skalenetwork/fermionwallet/tree/main/contracts">Browse the contracts →</a> · <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionwallet-guard-module.md">Guard spec →</a> · <a href="https://github.com/skalenetwork/xmss-solidity/blob/main/PROOF.md">Formal proof →</a></p>
       </div>
       <div>
         <div class="code-title">contracts/src/QuantumKeyRegistry.sol (simplified)</div>
@@ -571,6 +571,10 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       <div class="status-row">
         <div><div class="name">Safe App &amp; Ledger screens</div><div class="desc">Queue, approval, batch, key ceremony, denial, emergency and device flows</div></div>
         <span class="tag done">Designed</span>
+      </div>
+      <div class="status-row">
+        <div><div class="name">XMSS verifier, formally verified</div><div class="desc">Proven equivalent to RFC 8391 by symbolic execution; published as <a href="https://github.com/skalenetwork/xmss-solidity">xmss-solidity</a></div></div>
+        <span class="tag done">Proven</span>
       </div>
       <div class="status-row">
         <div><div class="name">Guard, key registry &amp; pre-approval contracts</div><div class="desc">Built on audited Safe and OpenZeppelin libraries; Foundry suites include a real-Safe integration test</div></div>
@@ -635,7 +639,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       </details>
       <details>
         <summary>What does it cost in gas?</summary>
-        <p>Verifying the post-quantum signature costs about 740,000 gas, paid once when an approval is created (736,700 gas measured at h = 20). The check when the transaction executes is a lookup.</p>
+        <p>Verifying the post-quantum signature costs about 745,000 gas, paid once when an approval is created (744,906 gas measured at h = 20). The check when the transaction executes is a lookup.</p>
       </details>
       <details>
         <summary>Which Safes are supported?</summary>
@@ -647,7 +651,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       </details>
       <details>
         <summary>Can we use it in production today?</summary>
-        <p>Not yet. The post-quantum verifier and the Guard contracts are implemented and tested but not audited; the Ledger app and Safe App are in development, and an external audit is required before any mainnet deployment. Request early access to be among the first teams onboarded.</p>
+        <p>Not yet. The post-quantum verifier is formally verified against RFC 8391 and the Guard contracts are implemented and tested, but nothing is audited yet; the Ledger app and Safe App are in development, and an external audit is required before any mainnet deployment. Request early access to be among the first teams onboarded.</p>
       </details>
     </div>
   </div>

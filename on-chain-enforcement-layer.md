@@ -10,7 +10,7 @@ The enforcement layer is the Guard. It must not grow a parallel stack. See `ferm
 
 - `@safe-global/safe-contracts` v1.5.0 — `BaseTransactionGuard`, `BaseModuleGuard`, `ITransactionGuard`, `IModuleGuard`, `Enum`, `ISafe` (`getTransactionHash`, `getModulesPaginated`, `getStorageAt`, `isOwner`), `MultiSendCallOnly`
 - OpenZeppelin Contracts v5.2.0 — `EIP712`, `SignatureChecker`, `Nonces`, `BitMaps`, `DoubleEndedQueue`, `Bytes`, `SlotDerivation`, `TransientSlot`, `SafeCast`, `IERC20`, `IERC20Permit`
-- PQ: FermionWallet's own clean-room XMSS verifier (`contracts/src/XMSS.sol`, RFC 8391), verified fully on-chain at `createPreApproval`; only `signatureHash` is stored
+- PQ: FermionWallet's own clean-room XMSS verifier ([skalenetwork/xmss-solidity](https://github.com/skalenetwork/xmss-solidity), RFC 8391, formally verified against the RFC), verified fully on-chain at `createPreApproval`; only `signatureHash` is stored
 - Foundry + Slither for tests and static analysis
 
 No local copies of Guard/ERC165/hasher/signature code. The per-Safe pause and per-Safe nested-call depth counter are the only hand-written state guards (a global lock or pause would be a power over every Safe).

@@ -4,3 +4,6 @@
 [submodule "contracts/lib/safe-smart-account"]
 	path = contracts/lib/safe-smart-account
 	url = https://github.com/safe-global/safe-smart-account
+[submodule "contracts/lib/xmss-solidity"]
+	path = contracts/lib/xmss-solidity
+	url = https://github.com/skalenetwork/xmss-solidity.git

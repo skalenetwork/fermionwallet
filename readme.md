@@ -134,6 +134,7 @@ Full design: [`fermionwalletspec.md`](./fermionwalletspec.md)
 ## Security posture (what we refuse to hand-wave)
 
 - Real post-quantum or hybrid signatures — HMAC demos are not production claims
+- **Formally verified XMSS verifier:** the on-chain XMSS verifier ([skalenetwork/xmss-solidity](https://github.com/skalenetwork/xmss-solidity)) is proven, by symbolic execution, to compute exactly what RFC 8391's verification algorithms compute, for all inputs. See its [`PROOF.md`](https://github.com/skalenetwork/xmss-solidity/blob/main/PROOF.md) for what is proven and assumed
 - Exact calldata matching, not “a pre-approval ID exists”
 - Chain ID + Safe address + nonce + policyHash domain separation
 - Transaction-guard *and* module-guard coverage so `execTransactionFromModule` cannot walk around the gate
@@ -147,7 +148,7 @@ Details live in [`fermionwallet-guard-module.md`](./fermionwallet-guard-module.m
 
 ## Status
 
-The Solidity contracts are implemented and tested: the `FermionWalletGuard` (transaction guard and module guard, built on the official Safe `ITransactionGuard` / `IModuleGuard` interfaces) with its Quantum Key Registry, Pre-approval Engine and XMSS verifier. They are not audited and not deployed on any public network. The Ledger app is specified but not built yet (the demos use a simulated Ledger). The repository also keeps an early JavaScript prototype of the key, policy, and pre-approval flows (below).
+The Solidity contracts are implemented and tested: the `FermionWalletGuard` (transaction guard and module guard, built on the official Safe `ITransactionGuard` / `IModuleGuard` interfaces) with its Quantum Key Registry, Pre-approval Engine and XMSS verifier. The XMSS verifier is formally verified against RFC 8391; the Guard, registry and engine are covered by unit, integration, fuzz and invariant tests but not formally verified. They are not audited and not deployed on any public network. The Ledger app is specified but not built yet (the demos use a simulated Ledger). The repository also keeps an early JavaScript prototype of the key, policy, and pre-approval flows (below).
 
 This is early. The category is not.
 
