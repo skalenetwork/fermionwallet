@@ -1,0 +1,39 @@
+name: Contracts
+
+# On every push and pull request: the Guard, registry and engine test suites, and
+# two checks that FermionWallet keeps using the XMSS verifier as proven:
+#   - the pinned xmss-solidity submodule passes its own test suite here, so the
+#     verifier FermionWallet compiles in is a commit its tests cover (its proof
+#     runs in that repository's CI on every push);
+#   - the registry verifies with the key's registered tree height (the
+#     four-argument XMSS.verify), the form the proof recommends.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Same Foundry as demo/Dockerfile and release.yml: bump all together.
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.3
+
+      - name: Guard, registry and engine tests
+        working-directory: contracts
+        run: forge test -vv
+
+      - name: The pinned XMSS verifier passes its own tests
+        working-directory: contracts/lib/xmss-solidity
+        run: forge test
+
+      - name: The registry binds the key's tree height when verifying
+        working-directory: contracts
+        run: |
+          grep -qE 'XMSS\.verify\(digest, sig, XMSS\.PublicKey\(\{root: k\.xmssRoot, seed: k\.xmssSeed\}\), k\.treeHeight\)' src/QuantumKeyRegistry.sol \
+            || { echo "QuantumKeyRegistry must call the four-argument XMSS.verify with the registered treeHeight"; exit 1; }
