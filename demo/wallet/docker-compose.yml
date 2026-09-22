@@ -57,6 +57,8 @@ services:
     image: ${FERMION_DEMO_IMAGE:-ghcr.io/skalenetwork/fermionwallet-demo:latest}
     environment:
       DEMO_MODE: wallet
+      # The Safe App's backend reads each Safe's queue from the Transaction Service.
+      TXS_URL: http://nginx:8000/txs
     # Forward SIGTERM to every process of the demo (the entrypoint shell, anvil, the
     # server), so a restart stops the old chain at once instead of after 10 s.
     init: true

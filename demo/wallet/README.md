@@ -33,26 +33,26 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build -
 
 ## Walk through it
 
-1. **Connect the owner.** Click **Connect wallet**, choose **Private key**, and paste the demo owner's key. This is anvil's public test account #1, so never use it anywhere else:
+You play two roles: a Safe **owner**, who creates and executes transactions in Safe{Wallet}, and the **Quantum Administrator**, who approves them in the FermionWallet app on a Ledger.
+
+1. **Connect the owner.** Open http://localhost:8000/home?safe=fwdemo:0x8E3fd7B315486ce7Ea44A6E5129046148f807D49 (a 1-of-1 Safe holding 10 ETH and 1,000,000 dUSD). Click **Connect wallet**, choose **Private key**, and paste the demo owner's key. It is anvil's public test account #1, so never use it anywhere else:
    `0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d`
-2. **Open the demo Safe.** Go to http://localhost:8000/home?safe=fwdemo:0x8E3fd7B315486ce7Ea44A6E5129046148f807D49. This 1-of-1 Safe holds 10 ETH and 1,000,000 dUSD.
-3. **Open FermionWallet.** Go to **Apps**, click the **FermionWallet** card, then **Open Safe App**. The first time, accept Safe{Wallet}'s Safe Apps disclaimer.
-4. **Pay without approval.** Click **Propose payout in Safe{Wallet}**. Safe{Wallet} opens its normal review. Trust the Safe when asked (give it any name and confirm), then click **Continue**.
-   - Safe{Wallet} warns *"This transaction will most likely fail"*.
-   - If you press **Execute** anyway, Safe{Wallet} shows *"Error submitting the transaction"* and sends nothing. The owner's signature is valid, but the Guard reverts the transfer because no quantum pre-approval exists. Under **Details**, the revert data starts with `0x95828945`, the selector of `NoMatchingPreApproval`.
-   - To go back to the app, close the review with ✕ and confirm in the browser's dialog. Close the red notification first if it covers the ✕.
-5. **Approve on the Ledger.** Click **Send to Ledger for approval**. On the simulated device, page through all eight screens with ▶, then press **Approve**.
-   - The device signs the exact payment twice over one EIP-712 digest: once with ECDSA and once with XMSS. This uses one of its 16 one-time leaves.
-   - The pre-approval is then stored in the Guard.
-6. **Pay again.** Click the second **Propose payout in Safe{Wallet}**. The failure warning is gone, **Execute** succeeds, and the payment appears in Safe{Wallet}'s transaction history.
+2. **Create a payment and sign it.** Click **Send**, pick **Demo USD**, enter any recipient and amount, then **Next** → **Continue**. Open the menu next to **Execute**, choose **Sign**, and click **Sign**. Trust the Safe when asked (any name). The payment now waits in **Transactions → Queue**.
+3. **Try to execute it.** In **Transactions → Queue**, click **Execute**. Safe{Wallet} warns *"This transaction will most likely fail"*, and executing it fails: the owner's signature is valid, but the Guard reverts the payment because it has no quantum pre-approval. Close the dialog.
+4. **Connect the Ledger.** Open http://localhost:8001/ledger in a second window. It stands in for the Quantum Administrator's Ledger running the FermionWallet XMSS app, which is not released yet.
+5. **Approve it in FermionWallet.** In Safe{Wallet}, go to **Apps**, click the **FermionWallet** card, then **Open Safe App** (accept the Safe Apps disclaimer the first time). The **Queue** tab lists the payment as *Quantum approval required*. Click **Review**, check the decoded fields, pick how long the approval stays valid, and click **Sign on Ledger**.
+   - On the Ledger window, page through every screen with ▶ and press **Approve** on the last one. The device signs the exact payment, pinned to this Safe transaction, with ECDSA and XMSS over one EIP-712 digest. This uses one of the key's 16 one-time signatures.
+   - The app relays the signatures to the Guard, and the row turns *Ready to execute*.
+6. **Execute it.** Back in **Transactions → Queue**, click **Execute**. The failure warning is gone, the payment goes through, and it appears in the history. In FermionWallet, the **Approvals** tab shows the approval as *used*.
 
 ## Good to know
 
-- **16 approvals per run.** Each Ledger approval uses one of the demo key's 16 one-time XMSS leaves. When they are all used, the app says so and disables approving. Run `docker compose down -v`, then `docker compose up -d --wait`, to start again with a fresh key.
-- **Other ways to pay.** An approval covers one dUSD payment to the vendor for exactly the approved amount. The payment can also be made with Safe{Wallet}'s own **Send** flow, for the same token, recipient and amount. ETH transfers, batches (Safe{Wallet} sends them through MultiSendCallOnly) and Safe settings changes need kinds of approval this demo's Ledger does not sign, so the Guard always blocks them.
-- **Sign instead of Execute.** If you only sign a payout, it waits in **Transactions → Queue** and holds its nonce. Later payouts queue behind it and cannot execute. Rejecting it in Safe{Wallet} does not work either, because the rejection is itself a Safe transaction that the Guard blocks. To clear it, approve exactly its amount in the app, then execute it from the queue. The app shows this when it sees such a payout.
-- **"Recipient analysis failed" and "Cannot estimate".** Both are expected on the blocked payout. Safe Shield's recipient check needs Safe's transaction decoder service, which this stack leaves out, and the hosted one does not know the local chain. The fee cannot be estimated because the gas estimate simulates the payout, and the Guard reverts it.
-- **Demo Safe only.** The app only works on the demo Safe, because that is the Safe with the Guard and the Ledger key. On any other Safe it shows a notice and its buttons stay disabled.
+- **16 approvals per run.** The demo key has 16 one-time XMSS signatures; the app's key card shows how many are left. When they run out, run `docker compose down -v`, then `docker compose up -d --wait`, to start again with a fresh key.
+- **What the app approves.** Single ERC-20 transfers. ETH transfers, batches and Safe settings changes need approval classes this version of the app does not sign, so they stay listed as *Not supported* and the Guard blocks them.
+- **Revoking.** An approved payment shows a **Revoke** button. Revoking is itself a Safe transaction, which the Guard always lets through; execute it in Safe{Wallet} to take effect.
+- **Order matters.** A Safe executes transactions in nonce order. An approved payment behind an unapproved one waits; the app shows *Approved · waiting for earlier nonce*.
+- **"Recipient analysis failed" and "Cannot estimate".** Both are expected on an unapproved payment. Safe Shield's recipient check needs Safe's transaction decoder service, which this stack leaves out, and the fee estimate simulates the payment, which the Guard reverts.
+- **Any Safe.** The app works for whichever Safe it is opened in. A Safe without the FermionWallet Guard is shown as *Not protected*.
 
 ## What's inside
 

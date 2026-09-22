@@ -18,6 +18,8 @@ import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import app_api
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI_DIR = os.path.join(HERE, "ui")
 CONTRACTS = os.environ.get("CONTRACTS_DIR", "/app/contracts")
@@ -42,7 +44,10 @@ SEL_IS_LEAF_USED = "0xc7ac11b8"
 SEL_SAFE_TO_KEY = "0xe056ccae"
 GUARD_SLOT = "0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8"
 
-ERR_NO_MATCHING = "0x95828945"  # NoMatchingPreApproval(address,bytes32,bytes32)
+# The Guard's plain-text revert when nothing matches (PreApprovalEngine.NO_MATCHING_PRE_APPROVAL),
+# as it appears in forge output and, hex-encoded, inside Error(string) revert data.
+NO_MATCHING_TEXT = "no quantum pre-approval"
+NO_MATCHING_HEX = NO_MATCHING_TEXT.encode().hex()
 ERR_INSUFFICIENT_BALANCE = "0xe450d38c"  # ERC20InsufficientBalance(address,uint256,uint256)
 
 # Every flow reads chain state (Safe nonce) and broadcasts from the same deployer
@@ -158,25 +163,7 @@ def approve_on_ledger(amount):
         "nonce": "0x" + secrets.token_hex(32), "quantumKeyId": d["keyId"],
         "policyHash": DEMO_POLICY_HASH, "txHash": "0x" + "00" * 32,
     }
-    try:
-        # The device times out after 60 s idle on its decision screen, but an active reviewer
-        # can keep a session open longer: never give up on the device before it decides,
-        # or an approval pressed later would spend a leaf whose signatures nobody relays.
-        res = ledger("/apdu", {
-            "ins": "SIGN_PREAPPROVAL", "slot": LEDGER_SLOT, "rootPrefix": d["xmssRoot"][:18],
-            "domain": {"chainId": as_int(rpc("eth_chainId", [])), "verifyingContract": d["guard"]},
-            "payload": fields,
-        }, timeout=3600)
-    except ValueError as e:
-        msg = str(e)
-        if msg.startswith("Session already active"):
-            msg = ("The Ledger is already showing a signing request — approve or reject it on "
-                   "the device first.")
-        elif msg.startswith("Key exhausted"):
-            msg = ("Key exhausted — the Ledger has signed with all 16 one-time XMSS leaves of the "
-                   "demo key. Restart the demo to reset it (docker restart, or docker compose "
-                   "down -v && up for the Safe{Wallet} stack).")
-        raise ValueError(msg) from None
+    res = sign_on_device(fields, d["xmssRoot"], d["guard"])
     if res.get("status") != "approved":
         return {"ok": True, "outcome": "rejected", "reason": res.get("status", "rejected")}
     with FLOW_LOCK:
@@ -193,6 +180,30 @@ def approve_on_ledger(amount):
                 "approvalId": idm.group(1) if idm else None}
     return failure(out, f"The Ledger signed with leaf #{res['leaf']} (now spent — the device commits its "
                         "counter before signing), but the Guard refused the approval: ")
+
+
+def sign_on_device(fields, xmss_root, guard):
+    """Send the payload fields (never a hash) to the Ledger and wait for the human's
+    decision. Returns the device response ({"status": "approved", ...} or a rejection)."""
+    try:
+        # The device times out after 60 s idle on its decision screen, but an active reviewer
+        # can keep a session open longer: never give up on the device before it decides,
+        # or an approval pressed later would spend a leaf whose signatures nobody relays.
+        return ledger("/apdu", {
+            "ins": "SIGN_PREAPPROVAL", "slot": LEDGER_SLOT, "rootPrefix": xmss_root[:18],
+            "domain": {"chainId": as_int(rpc("eth_chainId", [])), "verifyingContract": guard},
+            "payload": fields,
+        }, timeout=3600)
+    except ValueError as e:
+        msg = str(e)
+        if msg.startswith("Session already active"):
+            msg = ("The Ledger is already showing a signing request — approve or reject it on "
+                   "the device first.")
+        elif msg.startswith("Key exhausted"):
+            msg = ("Key exhausted — the Ledger has signed with all of its one-time XMSS leaves. "
+                   "Rotate the key (for this local demo: restart it — docker restart, or "
+                   "docker compose down -v && up for the Safe{Wallet} stack).")
+        raise ValueError(msg) from None
 
 
 def forge_script(sig, args, broadcast):
@@ -240,8 +251,8 @@ def _run_flow_locked(flow, amount):
                 # A pre-approval for this amount exists, so the Guard let it through and
                 # the token transfer itself failed — not a Guard block.
                 return {"ok": False, "error": insufficient_balance_error(), "revertData": data[:74]}
-            reason = ("NoMatchingPreApproval — the Guard found no quantum pre-approval "
-                      "for this transfer") if data.startswith(ERR_NO_MATCHING) else "Guard revert"
+            reason = ("the Guard found no quantum pre-approval for this transfer"
+                      if NO_MATCHING_HEX in data else "Guard revert")
             return {"ok": True, "outcome": "blocked", "reason": reason, "revertData": data[:74]}
         if "RESULT UNEXPECTED_EXECUTION" in out:
             # The simulation (never broadcast) passed: a matching pre-approval already
@@ -280,7 +291,7 @@ def failure(out, prefix=""):
 
 def friendly_error(out):
     # forge prints decoded custom errors by name, raw selectors only when it can't decode.
-    if ERR_NO_MATCHING in out or "NoMatchingPreApproval" in out:
+    if NO_MATCHING_TEXT in out or NO_MATCHING_HEX in out:
         return ("Blocked by the Guard: no matching quantum pre-approval. "
                 "Create a pre-approval for this exact amount first.")
     if ERR_INSUFFICIENT_BALANCE in out or "ERC20InsufficientBalance" in out:
@@ -307,7 +318,32 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _app_api(self, method):
+        """/api/v1/safes/<safe>/{status,queue,approvals} — the Safe App's API."""
+        m = re.fullmatch(r"/api/v1/safes/([^/]+)/(status|queue|approvals)", self.path.split("?")[0])
+        if not m:
+            return False
+        safe, what = m.groups()
+        host = sys.modules[__name__]
+        try:
+            if method == "GET":
+                fn = {"status": app_api.safe_status, "queue": app_api.queue,
+                      "approvals": app_api.approvals}[what]
+                self._json(fn(host, safe))
+            elif what == "approvals":
+                length = int(self.headers.get("Content-Length", 0))
+                self._json(app_api.create_approval(host, safe, json.loads(self.rfile.read(length) or b"{}")))
+            else:
+                self.send_error(405)
+        except ValueError as e:  # ApiError and bad input
+            self._json({"ok": False, "error": str(e)}, 400)
+        except Exception as e:  # noqa: BLE001
+            self._json({"ok": False, "error": str(e)}, 500)
+        return True
+
     def do_GET(self):
+        if self._app_api("GET"):
+            return
         path = self.path.split("?")[0]
         if path == "/api/device/screen":
             try:
@@ -326,6 +362,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/favicon.ico":
             # Browsers that ignore the pages' <link rel="icon"> still ask for this.
             path = "/safe-app/logo.svg"
+        elif path in ("/ledger", "/ledger/"):
+            # Stand-in for the physical Ledger running the FermionWallet XMSS app.
+            path = "/ledger/index.html"
         elif path in ("/safe-app", "/safe-app/"):
             # The FermionWallet Safe App, loaded by Safe{Wallet} in an iframe.
             path = "/safe-app/index.html"
@@ -348,6 +387,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
+        if self._app_api("POST"):
+            return
         if self.path.split("?")[0] == "/api/device/button":
             try:
                 length = int(self.headers.get("Content-Length", 0))

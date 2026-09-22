@@ -1,5 +1,5 @@
 {
   "name": "FermionWallet",
-  "description": "Post-quantum second authorization for this Safe: approve transfers on a (simulated) Ledger with hybrid ECDSA + XMSS signatures, enforced by the FermionWalletGuard.",
+  "description": "Post-quantum second authorization for your Safe: review queued transactions and approve them on your Ledger with hybrid ECDSA + XMSS signatures, enforced on-chain by the FermionWallet Guard.",
   "iconPath": "logo.svg"
 }

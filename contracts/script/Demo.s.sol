@@ -193,6 +193,27 @@ contract Demo is Script {
         console2.logBytes32(id);
     }
 
+    /// Relayer for the FermionWallet Safe App: submit a pre-approval exactly as the
+    /// (simulated) Ledger signed it. `request` is the ABI-encoded PreApprovalRequest
+    /// (any Safe, token, recipient, amount, window and safeTxHash pin); the Guard
+    /// verifies both signature halves against it, so a relayer that altered any field
+    /// only gets a revert.
+    function relayPreApproval(bytes calldata request, bytes calldata ecdsaSignature, bytes calldata xmssBlob)
+        external
+    {
+        _load();
+        PreApprovalEngine.PreApprovalRequest memory req =
+            abi.decode(request, (PreApprovalEngine.PreApprovalRequest));
+
+        vm.startBroadcast(DEPLOYER_PK); // the relayer
+        bytes32 id = guard.createPreApproval(req, ecdsaSignature, _decodeXmss(req.xmssLeafIndex, xmssBlob));
+        vm.stopBroadcast();
+
+        console2.log("RESULT APPROVED leaf=%s", uint256(req.xmssLeafIndex));
+        console2.log("APPROVAL_ID");
+        console2.logBytes32(id);
+    }
+
     /// Owner-signed execTransaction of the pre-approved payout.
     function execute(uint256 tokens) external {
         _load();
