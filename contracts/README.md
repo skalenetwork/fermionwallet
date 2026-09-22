@@ -1,6 +1,8 @@
 # FermionWallet contracts
 
-Solidity contracts for FermionWallet. `XMSS.sol` and the deploy/demo scripts
+Solidity contracts for FermionWallet. The XMSS verifier lives in its own
+MIT-licensed repository, [skalenetwork/xmss-solidity](https://github.com/skalenetwork/xmss-solidity),
+included here as the submodule `lib/xmss-solidity`. The deploy/demo scripts
 are MIT-licensed; `FermionWalletGuard.sol`, `QuantumKeyRegistry.sol` and
 `PreApprovalEngine.sol` are LGPL-3.0-only (they build on Safe's LGPL
 contracts). The XMSS verifier is a **clean-room implementation** (RFC 8391 /
@@ -9,10 +11,12 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
 
 ## Contents
 
-- `src/XMSS.sol` — stateless XMSS verification library
-  (`XMSS-SHA2_*_256` family: n = 32, w = 16, len = 67; tree height taken
-  from auth-path length, max 20). SHA-256 precompile with bounded gas
-  stipend, memory-safe assembly hashing through a caller-allocated buffer.
+- `lib/xmss-solidity` (submodule) — the stateless XMSS verification library
+  `XMSS.sol` (`XMSS-SHA2_*_256`: n = 32, w = 16, len = 67; tree height from
+  the auth-path length, max 20), **formally verified** against RFC 8391 with
+  Halmos (see its `PROOF.md`), plus its tests, reference vectors and the
+  Python reference implementation (`py/xmss_ref.py`, `py/gen_h20.py`,
+  `py/sign_digest.py`). Imported as `xmss-solidity/XMSS.sol`.
 - `src/QuantumKeyRegistry.sol` — owns leaf-index consumption:
   `_verifyAndConsumeXmss` checks the key's used-leaf bitmap (OpenZeppelin
   `BitMaps`), verifies, and burns the leaf atomically; reverts loudly on reuse.
@@ -33,13 +37,6 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
   `execute` per payout.
 - `foundry.toml` pins solc 0.8.37, so a release tag rebuilds byte-identical
   binaries.
-- `py/xmss_ref.py` — independent Python reference implementation
-  (RFC 8391 keygen/sign/verify) used to generate the test vectors in
-  `test/vectors/` (h = 4, 10). `py/gen_h20.py` generates the h = 20
-  production-parameter vectors (multiprocessing, ~10 min).
-- `test/XMSS.t.sol` — Foundry suite: 12 positive vectors (h = 4, 10, 20 at
-  edge leaf indices), negative/tamper tests including checksum chains and
-  cross-height, 5 fuzz tests, gas benchmarks.
 - `test/GuardIntegration.t.sol`, `test/FermionWalletGuard.t.sol` — leaf
   consumption, reuse rejection, invalid-signature rollback, height binding,
   zero-key rejection (through the registry), plus the Guard and engine suites.
@@ -48,21 +45,21 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
 - `test/Deploy.t.sol` — `Deploy.s.sol` end to end: the same CREATE2 address
   on every target chain id (OP-stack ones included), idempotent re-runs,
   immutables read back, and rejection of bad parameters.
-- `test/properties/` — fuzz properties of the Guard, a stateful invariant
-  test against a reference model, and XMSS mutation properties.
-- `py/sign_digest.py`, `test/ffi/sign_batch.py` — test-only helpers that the
-  Foundry tests call through FFI to sign digests with the deterministic test
-  XMSS key.
+- `test/properties/` — fuzz properties of the Guard and a stateful invariant
+  test against a reference model.
+- `test/ffi/sign_batch.py`, and `lib/xmss-solidity/py/sign_digest.py` — test-only
+  helpers that the Foundry tests call through FFI to sign digests with the
+  deterministic test XMSS key.
 
 ## Measured gas
 
 | Operation | Gas |
 |---|---|
-| `XMSS.verify` (h = 10) | 703,258 |
-| `XMSS.verify` (h = 20, **measured**) | **736,700** |
+| `XMSS.verify` (h = 10) | 712,434 |
+| `XMSS.verify` (h = 20, **measured**) | **744,906** |
 
 Within the 0.4–1M target set in `../fermionwallet-guard-module.md`
-(asserted in CI: `test_gas_verify_h20` fails above 1.1M).
+(asserted in the library's CI: `test_gas_verify_h20` fails above 1.1M).
 
 ## Security notes
 
@@ -70,6 +67,10 @@ Within the 0.4–1M target set in `../fermionwallet-guard-module.md`
   leaf indices** — use the FermionWallet Guard's registry as the
   enforcement point. Index reuse breaks XMSS entirely.
 - `verify` rejects zero roots/seeds and tree heights outside 1..20.
+- The XMSS verifier is formally verified against RFC 8391 (functional
+  correctness, SHA-256 abstracted); see `lib/xmss-solidity/PROOF.md` for
+  what is proven and assumed. The Guard, registry and engine are fuzz and
+  invariant tested, not formally verified.
 - Not audited yet; audit is an acceptance criterion before mainnet.
 
 ## Usage
@@ -77,8 +78,9 @@ Within the 0.4–1M target set in `../fermionwallet-guard-module.md`
 You need [Foundry](https://getfoundry.sh) (the release workflow and the demo image pin v1.8.3:
 `curl -L https://foundry.paradigm.xyz | bash`, then `foundryup --install v1.8.3`)
 and `python3`: the tests sign with the Python reference implementation through
-Foundry FFI (`ffi = true` in `foundry.toml`). Fetch the OpenZeppelin and Safe
-libraries once from the repository root, then run everything from `contracts/`:
+Foundry FFI (`ffi = true` in `foundry.toml`). Fetch the OpenZeppelin, Safe
+and xmss-solidity libraries once from the repository root, then run everything
+from `contracts/`:
 
 ```shell
 git submodule update --init --recursive   # from the repository root
@@ -86,7 +88,9 @@ cd contracts
 ```
 
 ```shell
-forge test -vv                 # run tests + gas benchmarks
-python3 py/xmss_ref.py         # regenerate h=4 / h=10 test vectors
-python3 py/gen_h20.py          # regenerate h=20 vectors (~10 min, all cores)
+forge test -vv                 # run the Guard, registry and engine tests
 ```
+
+The XMSS library's own tests, gas benchmarks and formal proofs run in its
+repository (`cd lib/xmss-solidity && forge test`; the proofs with Halmos, see
+its README).

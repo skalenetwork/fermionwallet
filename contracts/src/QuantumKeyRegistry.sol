@@ -7,7 +7,7 @@ import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/Signa
 import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {BitMaps} from "@openzeppelin/contracts/utils/structs/BitMaps.sol";
-import {XMSS} from "./XMSS.sol";
+import {XMSS} from "xmss-solidity/XMSS.sol";
 
 /// @dev Version-portable owner-threshold check. Safe v1.3.0 and v1.4.1 expose ONLY
 ///      `checkSignatures(bytes32,bytes,bytes)`; v1.5.0 keeps it as a compatibility

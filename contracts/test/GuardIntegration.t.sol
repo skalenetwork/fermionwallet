@@ -16,7 +16,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
 import {PreApprovalEngine, NO_MATCHING_PRE_APPROVAL} from "../src/PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "../src/QuantumKeyRegistry.sol";
-import {XMSS} from "../src/XMSS.sol";
+import {XMSS} from "xmss-solidity/XMSS.sol";
 
 /// Malicious "token": its transfer() re-enters Safe.execTransaction with a fully
 /// signed, pre-approved inner transaction. The Guard's transient depth flag must
@@ -877,7 +877,7 @@ contract GuardIntegrationTest is Test {
     {
         string[] memory cmd = new string[](5);
         cmd[0] = "python3";
-        cmd[1] = "py/sign_digest.py";
+        cmd[1] = "lib/xmss-solidity/py/sign_digest.py";
         cmd[2] = vm.toString(uint256(h));
         cmd[3] = vm.toString(uint256(leaf));
         cmd[4] = vm.toString(digest);

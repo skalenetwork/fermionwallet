@@ -10,7 +10,7 @@ import {ITransactionGuard} from "@safe-global/safe-contracts/contracts/base/Guar
 import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
 import {PreApprovalEngine} from "../src/PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "../src/QuantumKeyRegistry.sol";
-import {XMSS} from "../src/XMSS.sol";
+import {XMSS} from "xmss-solidity/XMSS.sol";
 
 /// Minimal Safe stand-in reproducing the parts of Safe v1.5.0 `execTransaction` the
 /// Guard depends on: hash with the current nonce, increment, checkTransaction, call,
@@ -640,14 +640,14 @@ contract FermionWalletGuardTest is Test {
         return keccak256(abi.encodePacked("\x19\x01", domain, structHash));
     }
 
-    /// Sign `digest` at `leaf` with the deterministic height-`h` test key (py/sign_digest.py).
+    /// Sign `digest` at `leaf` with the deterministic height-`h` test key (lib/xmss-solidity/py/sign_digest.py).
     function _xmss(uint32 h, uint32 leaf, bytes32 digest)
         internal
         returns (bytes32 root, bytes32 seed, bytes memory encoded)
     {
         string[] memory cmd = new string[](5);
         cmd[0] = "python3";
-        cmd[1] = "py/sign_digest.py";
+        cmd[1] = "lib/xmss-solidity/py/sign_digest.py";
         cmd[2] = vm.toString(h);
         cmd[3] = vm.toString(leaf);
         cmd[4] = vm.toString(digest);

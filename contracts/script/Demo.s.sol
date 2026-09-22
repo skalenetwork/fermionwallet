@@ -12,7 +12,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
 import {PreApprovalEngine} from "../src/PreApprovalEngine.sol";
-import {XMSS} from "../src/XMSS.sol";
+import {XMSS} from "xmss-solidity/XMSS.sol";
 
 /// Minimal ERC-20 for the demo treasury.
 contract DemoToken is ERC20("Demo USD", "dUSD") {
@@ -29,7 +29,7 @@ contract DemoToken is ERC20("Demo USD", "dUSD") {
 ///   submitApproval(...) relay a pre-approval the (simulated) Ledger signed: ECDSA + XMSS halves
 ///   execute(uint256)   owner-signed execTransaction for that payout → allowed by the Guard
 /// Mirrors the helpers in test/GuardIntegration.t.sol; XMSS signatures come from the
-/// RFC 8391 reference implementation via FFI (py/sign_digest.py, demo key h = 4).
+/// RFC 8391 reference implementation via FFI (lib/xmss-solidity/py/sign_digest.py, demo key h = 4).
 contract Demo is Script {
     // anvil default accounts (mnemonic "test test ... junk")
     uint256 internal constant DEPLOYER_PK = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
@@ -242,7 +242,7 @@ contract Demo is Script {
     {
         string[] memory cmd = new string[](5);
         cmd[0] = "python3";
-        cmd[1] = "py/sign_digest.py";
+        cmd[1] = "lib/xmss-solidity/py/sign_digest.py";
         cmd[2] = vm.toString(uint256(H));
         cmd[3] = vm.toString(uint256(leaf));
         cmd[4] = vm.toString(digest);
@@ -252,7 +252,7 @@ contract Demo is Script {
         encodedSig = _decodeXmss(leaf, blob);
     }
 
-    /// Blob layout (py/sign_digest.py and the simulated Ledger):
+    /// Blob layout (lib/xmss-solidity/py/sign_digest.py and the simulated Ledger):
     /// root | seed | r | wotsSig[67] | authPath[H], 32-byte words.
     function _decodeXmss(uint32 leaf, bytes memory blob) internal pure returns (bytes memory encodedSig) {
         require(blob.length == 32 * (3 + 67 + H), "xmss blob size");

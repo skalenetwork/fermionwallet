@@ -45,7 +45,7 @@ SLOT = 1
 IDLE_TIMEOUT_S = 60  # this long idle on the decision screen = reject
 SESSION_CAP_S = 600  # an abandoned session on a field screen rejects after this long
 
-sys.path.insert(0, os.path.join(CONTRACTS, "py"))
+sys.path.insert(0, os.path.join(CONTRACTS, "lib", "xmss-solidity", "py"))
 import sign_digest  # noqa: E402  (deterministic demo XMSS key, RFC 8391 reference code)
 import xmss_ref  # noqa: E402
 

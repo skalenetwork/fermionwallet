@@ -13,7 +13,7 @@ import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
 
 import {FermionWalletGuard} from "../../src/FermionWalletGuard.sol";
 import {PreApprovalEngine} from "../../src/PreApprovalEngine.sol";
-import {XMSS} from "../../src/XMSS.sol";
+import {XMSS} from "xmss-solidity/XMSS.sol";
 
 /// Test-only view extension: exposes the Tier-2 queues so properties can assert on them.
 /// Adds views only — the enforcement code under test is the production contract's.
