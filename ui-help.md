@@ -253,4 +253,4 @@ The **Audit log** tab (top navigation) is the append-only record of everything w
 | "Rotation overdue" interstitial | Key past 95% of its leaf budget | Run Rotate key now; signing stops entirely at 100% |
 | Row shows ⛓️ blocked by earlier nonce | A lower-nonce Safe transaction hasn't executed | Execute (or reject/replace) the earlier nonce; approvals only run in nonce order |
 | Approval expired before execution | Validity window shorter than the queue ahead of it (or network congestion) | Re-approve with the suggested window; each expiry costs one XMSS leaf, so fix the window rather than retrying blind |
-| Simulation shows `NoMatchingPreApproval` in Safe{Wallet} | Executing before quantum authorization | Wait for 🟢 — this error is the system working as intended |
+| Safe{Wallet} says *"FermionWallet: no quantum pre-approval for this transaction"* | Executing before quantum authorization | Wait for 🟢 — this error is the system working as intended |

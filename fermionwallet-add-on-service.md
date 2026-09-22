@@ -60,12 +60,16 @@ Status is computed by comparing the queued Safe transaction hash and decoded cal
 
 ### 2. Simulation as a safety net
 
-Safe{Wallet} simulates `execTransaction` before enabling the Execute button. Without a valid pre-approval, the Guard reverts with a descriptive custom error such as `NoMatchingPreApproval(safe, commitment, safeTxHash)` (no live approval matches — missing, expired, used, or revoked), `SelectorNotAllowed(safe, selector)`, `DeniedSelector(selector)`, or `SafePausedError(safe)`. The full list is in the Guard spec's ABI. The Safe UI surfaces the failed simulation and its revert reason, so even a user who has never installed the FermionWallet Safe App:
+Safe{Wallet} simulates `execTransaction` before enabling the Execute button. Without a valid pre-approval, the Guard reverts with a plain-text reason:
+
+> FermionWallet: no quantum pre-approval for this transaction. Approve it in the FermionWallet app first.
+
+(no live approval matches — missing, expired, used, or revoked). Safe{Wallet} shows it under **Details** of *"This transaction will most likely fail"*, and again if someone executes anyway. So even a user who has never installed the FermionWallet Safe App:
 
 - cannot execute a transaction the Guard will reject,
 - sees a human-readable explanation of what is missing.
 
-This is why the Guard spec mandates explicit custom errors on every revert path — they are the fallback UI.
+This reason is a string (`Error(string)`) rather than a custom error on purpose: Safe{Wallet} decodes only string reasons and shows custom errors as *"unknown custom error"* plus raw hex. The rarer rejections — `SelectorNotAllowed(safe, selector)`, `DeniedSelector(selector)`, `SafePausedError(safe)` and the rest of the Guard spec's ABI — stay custom errors (they carry parameters, and the contract has little bytecode room left); in Safe{Wallet} they appear as hex whose first 4 bytes are the error selector.
 
 ### 3. Add-on service dashboard and notifications
 
