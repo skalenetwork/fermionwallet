@@ -16,10 +16,10 @@ use ledger_device_sdk::hash::HashInit;
 /// The payload the host streams, exactly (`demo/ledger_device.py::encode_payload`).
 pub const PAYLOAD_LEN: usize = 373;
 
-const DOMAIN_TYPE: &[u8] =
+pub const DOMAIN_TYPE: &[u8] =
     b"EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)";
 const DOMAIN_NAME: &[u8] = b"FermionGuard";
-const DOMAIN_VERSION: &[u8] = b"1";
+pub const DOMAIN_VERSION: &[u8] = b"1";
 const PRE_APPROVAL_TYPE: &[u8] = b"PreApproval(address safe,uint8 approvalClass,address token,\
 address recipient,uint256 amount,address target,uint256 value,bytes32 dataHash,uint64 validFrom,\
 uint64 validTo,bytes32 nonce,bytes32 quantumKeyId,uint32 xmssLeafIndex,bytes32 policyHash,\

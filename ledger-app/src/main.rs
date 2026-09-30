@@ -19,6 +19,7 @@
 
 mod eip712;
 mod fmt;
+mod wallet;
 mod xmss;
 
 use ledger_device_sdk::ecc::{
@@ -457,6 +458,54 @@ fn handle(comm: &mut Comm, ins: Ins) -> Result<(), Reply> {
     }
 }
 
+/// Parse the streamed payload, refuse anything malformed *before* a single screen,
+/// check what this key slot is already committed to, and show every signed field.
+/// Returns the digest to sign and the binding to commit, or the reason not to.
+///
+/// The payload's length says which product it belongs to: a `PreApproval` for a Safe
+/// running FermionGuard, or a FermionWallet `Transfer`. Both lengths are fixed and
+/// unequal, so no new APDU command is needed and the pre-approval wire format is
+/// untouched [FWL-033].
+#[allow(static_mut_refs)]
+fn review_and_digest(leaf: u32) -> Result<([u8; 32], u8, [u8; 20]), Reply> {
+    let payload = unsafe { &PAYLOAD };
+    match unsafe { PAYLOAD_LEN } {
+        eip712::PAYLOAD_LEN => {
+            let fields = eip712::Fields::new(payload);
+            if fields.approval_class() > 2 || fields.valid_from() > fields.valid_to() {
+                // "Payload rejected — field out of range", "Clock window invalid":
+                // there is no "review anyway" path.
+                return Err(Reply(SW_BAD_FIELDS));
+            }
+            let contract = *fields.verifying_contract();
+            wallet::check_binding(wallet::KIND_GUARD, &contract)?;
+            let digest = eip712::digest(&fields, leaf);
+            if !review_pre_approval(&fields, leaf) {
+                return Err(StatusWords::UserCancelled.into());
+            }
+            Ok((digest, wallet::KIND_GUARD, contract))
+        }
+        wallet::PAYLOAD_LEN => {
+            let head: &[u8; wallet::PAYLOAD_LEN] =
+                payload[..wallet::PAYLOAD_LEN].try_into().unwrap();
+            let fields = wallet::Fields::new(head);
+            // A wallet with no address, or a window that has already closed, is a
+            // signature that could never be used: refuse it unseen rather than ask.
+            if fields.wallet() == &[0u8; 20] || fields.valid_until() == 0 {
+                return Err(Reply(SW_BAD_FIELDS));
+            }
+            let contract = *fields.wallet();
+            wallet::check_binding(wallet::KIND_WALLET, &contract)?;
+            let digest = wallet::digest(&fields, leaf);
+            if !wallet::review(&fields, leaf, total_leaves(), &APP_ICON) {
+                return Err(StatusWords::UserCancelled.into());
+            }
+            Ok((digest, wallet::KIND_WALLET, contract))
+        }
+        _ => Err(StatusWords::BadLen.into()),
+    }
+}
+
 /// Accumulate the streamed fields; on the last chunk, run the whole ceremony:
 /// parse, refuse anything malformed before a single screen, show every field, and
 /// only then commit the counter and release both halves.
@@ -475,7 +524,10 @@ fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
     let data = &data[..len];
 
     unsafe {
-        if chunk == P1_FIRST {
+        // `P1_LAST` with no session open is a payload that arrived whole: the wallet's
+        // 132-byte `Transfer` fits in one APDU, and a host that sends it as a single
+        // chunk is doing nothing wrong. `P1_MORE` with no session is still a bug.
+        if chunk == P1_FIRST || (chunk == P1_LAST && !STREAMING) {
             PAYLOAD_LEN = 0;
             BLOB_READY = false;
         } else if !STREAMING {
@@ -495,28 +547,17 @@ fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
     }
 
     // ── The last chunk: everything below happens before any screen ──
-    if unsafe { PAYLOAD_LEN } != eip712::PAYLOAD_LEN {
-        return Err(StatusWords::BadLen.into());
-    }
     let leaf = next_leaf();
     if leaf >= total_leaves() {
         return Err(Reply(SW_EXHAUSTED));
     }
-    let payload = unsafe { &PAYLOAD };
-    let fields = eip712::Fields::new(payload);
-    if fields.approval_class() > 2 || fields.valid_from() > fields.valid_to() {
-        // "Payload rejected — field out of range", "Clock window invalid": there is
-        // no "review anyway" path.
-        return Err(Reply(SW_BAD_FIELDS));
-    }
-    let digest = eip712::digest(&fields, leaf);
+    let (digest, kind, contract) = review_and_digest(leaf)?;
 
-    if !review_pre_approval(&fields, leaf) {
-        return Err(StatusWords::UserCancelled.into());
-    }
-
-    // Counter first, durably, then the signatures — never the other way round.
+    // Counter and binding first, durably, then the signatures — never the other way
+    // round. The binding is state a released signature depends on just as the counter
+    // is, so it is written under the same rule.
     consume_leaf(leaf);
+    wallet::commit_binding(kind, &contract);
     SingleMessage::new("Signing...").show();
 
     let ecdsa = sign_ecdsa(&digest).ok_or::<Reply>(StatusWords::Unknown.into())?;
@@ -560,9 +601,27 @@ fn home(comm: &mut Comm) -> Ins {
     leaves.push_str(" of ");
     leaves.push_u32_grouped(total_leaves());
 
+    // Which contract this key is committed to, if any. Invisible state that decides
+    // whether a signature will be refused belongs on the home screen [FWL-023].
+    let mut bound = fmt::Buf::<64>::new();
+    match wallet::bound_kind() {
+        wallet::KIND_GUARD => {
+            bound.push_str("Safe guard ");
+            push_address(&mut bound, &wallet::bound_contract());
+        }
+        wallet::KIND_WALLET => {
+            bound.push_str("Wallet ");
+            push_address(&mut bound, &wallet::bound_contract());
+        }
+        _ => {
+            bound.push_str("not used yet");
+        }
+    }
+
     let pages = [
         &Page::new(PageStyle::PictureNormal, ["FermionGuard", "is ready"], Some(&APP_ICON)),
         &Page::new(PageStyle::BoldNormal, ["Leaves used", leaves.as_str()], None),
+        &Page::new(PageStyle::BoldNormal, ["Key is for", bound.as_str()], None),
         &Page::new(PageStyle::BoldNormal, ["Version", env!("CARGO_PKG_VERSION")], None),
         &Page::new(PageStyle::BoldNormal, ["Quit", ""], None),
     ];

@@ -186,14 +186,18 @@ The on-chain used-leaf bitmap in the Guard/registry stays in place even after th
 
 ### Open items for FermionWallet
 
-[fermionwallet.md](./fermionwallet.md) specifies a second product this app does not yet support. Its
-`Transfer` payload is refused by the parser as written, so a shipped device cannot drive it. Adding it
-needs no new APDU command, but does need (FWL-033):
+[fermionwallet.md](./fermionwallet.md) specifies a second product: one contract holding ERC-20 tokens,
+no Safe and no registry. The four additions it needs (FWL-033) are implemented in
+[`ledger-app/src/wallet.rs`](./ledger-app/src/wallet.rs), and checked against the app running in
+Speculos by [`ledger-app/test/test_wallet.py`](./ledger-app/test/test_wallet.py):
 
-- [ ] the `Transfer` type and the `FermionWallet` EIP-712 domain accepted alongside `PreApproval`, with `verifyingContract` = the wallet
-- [ ] a signing flow for it: Flow 2's token, amount, recipient, validity and decision screens unchanged; the context screen shows **Wallet 0x…** and the chain in place of Safe address, `txHash` pin and `policyHash`
-- [ ] per-slot binding to a single verifying contract, written at first signature and checked on every later one, held in NVM beside the leaf counter (FWL-023)
-- [ ] refusal when a slot bound to a wallet is asked for a Safe pre-approval, or a slot used for Safes is asked for a wallet transfer — a key belongs to one product
+- [x] the `Transfer` type and the `FermionWallet` EIP-712 domain accepted alongside `PreApproval`, with `verifyingContract` = the wallet. No new APDU command: `SIGN_PREAPPROVAL` streams either payload and the device tells them apart by length, 132 bytes against the pre-approval's 373
+- [x] a signing flow for it: Flow 2's token, amount, recipient, validity and decision screens unchanged; the context screen shows **Wallet 0x…** and the chain in place of Safe address, `txHash` pin and `policyHash` — a `Transfer` has no such fields, and showing one would break "display only signed fields"
+- [x] per-slot binding to a single verifying contract, written at first signature and checked on every later one, held in NVM beside the leaf counter (FWL-023). The home screen shows it, because invisible state that decides whether a signature will be refused is state the Administrator should be able to read off the device
+- [x] refusal when a slot bound to a wallet is asked for a Safe pre-approval, or a slot used for Safes is asked for a wallet transfer — a key belongs to one product. Both directions are refused before a single screen is drawn, with status word `0x6A81`, and consume no leaf
+
+What is *not* done: this build has one key slot (`MAX_KEYS = 1`), so FWL-024 — several wallets needing
+several keys — waits on the key-generation and retire flows.
 
 The last two matter more than they look: the standalone wallet has no registry, so its on-chain bitmap
 cannot see leaves spent elsewhere. For that product the device binding is the *only* thing keeping one
