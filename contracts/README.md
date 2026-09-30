@@ -82,7 +82,10 @@ Within the 0.4–1M target set in `../fermionguard-module.md`
   correctness, SHA-256 abstracted); see `lib/xmss-solidity/PROOF.md` for
   what is proven and assumed. The registry's state machine is proven
   equivalent to the executable specification in `test/registry-proof/` with
-  Halmos (authorization and XMSS verification abstracted). Beyond that, the
+  Halmos (authorization and XMSS verification abstracted). That proof is run
+  offline — `halmos --match-contract RegistryEquivalence --loop 32
+  --solver-timeout-assertion 0` — and is not a CI gate yet: Halmos drives the
+  `check_*` functions, so `forge test` does not exercise it. Beyond that, the
   Guard, registry and engine are fuzz and invariant tested, not formally
   verified.
 - Not audited yet; audit is an acceptance criterion before mainnet.
