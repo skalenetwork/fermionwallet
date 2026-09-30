@@ -156,7 +156,31 @@ Details live in [`fermionguard-module.md`](./fermionguard-module.md).
 
 ## Status
 
-The Solidity contracts are implemented and tested: the `FermionGuard` (transaction guard and module guard, built on the official Safe `ITransactionGuard` / `IModuleGuard` interfaces) with its Quantum Key Registry, Pre-approval Engine and XMSS verifier. The XMSS verifier's primitives and its input-validation rejections are proven equal to RFC 8391's verification algorithms with Halmos — the root comparison that decides a well-formed signature, in either direction, is composed by a hand argument and pinned by vectors at h = 4, 10 and 20, not machine-checked for general h — and the key registry's state machine is proven equivalent to an executable specification with Halmos (`contracts/test/registry-proof/`, with authorization and signature verification abstracted). Beyond those, the Guard, registry and engine are covered by unit, integration, fuzz and invariant tests but not formally verified. They are not audited and not deployed on any public network. A first Rust Ledger app exists in `ledger-app/` and the demo can drive it in Ledger's Speculos emulator, but it is a subset of [`ledger-xmss-app.md`](./ledger-xmss-app.md) — one key slot, a demo tree height of 4, no key-generation or rotation commands, Nano screens only, and a recovery-phrase-derived XMSS seed that the hardware security policy forbids — so it must not hold real funds; `ledger-app/README.md` lists every gap, and the default demo still uses the simulated Ledger. The repository also keeps an early JavaScript prototype of the key, policy, and pre-approval flows (below).
+**Contracts — implemented and tested, not audited, not deployed anywhere.** The
+`FermionGuard` (transaction guard and module guard, on the official Safe
+`ITransactionGuard` / `IModuleGuard` interfaces) with its Quantum Key Registry,
+Pre-approval Engine and XMSS verifier. Unit, integration, fuzz and invariant tests
+throughout.
+
+**Proofs — real, and narrower than the word usually implies.** The XMSS verifier's
+primitives and its input-validation rejections are proven equal to RFC 8391's verification
+algorithms with Halmos, for all inputs; the root comparison that decides a well-formed
+signature — in either direction, accept or forgery-reject — is a hand argument pinned by
+concrete vectors at h = 4, 10 and 20, not machine-checked for general h. The key registry's
+state machine is proven equivalent to an executable specification (`contracts/test/registry-proof/`),
+with authorization and signature verification deliberately abstracted. Nothing else in the
+Guard or the engine is formally verified.
+
+**Ledger app — a first Rust app exists, and must not hold real funds.** It builds, and the
+demo can drive it in Ledger's Speculos emulator. It is a subset of
+[`ledger-xmss-app.md`](./ledger-xmss-app.md): one key slot, a demo tree height of 4, no
+key-generation or rotation commands, Nano screens only — and an XMSS seed derived from the
+recovery phrase, which [`hardware-security-policy.md`](./hardware-security-policy.md)
+forbids precisely because a restorable stateful key can sign one leaf twice.
+`ledger-app/README.md` lists every gap. The default demo still uses the simulated Ledger.
+
+**Also here:** an early JavaScript prototype of the key, policy and pre-approval flows,
+which is not the enforcement layer and not post-quantum (below).
 
 This is early. The category is not.
 
