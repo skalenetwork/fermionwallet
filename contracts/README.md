@@ -82,7 +82,7 @@ Within the 0.4–1M target set in `../fermionguard-module.md`
 - `verify` rejects zero roots/seeds and tree heights outside 1..20.
 - The XMSS verifier is *partly* machine-checked against RFC 8391 (functional
   correctness, SHA-256 abstracted): its primitives and the paths on which
-  `verify` rejects are proven for all inputs with Halmos, but the composition
+  `verify` rejects malformed input are proven for all inputs with Halmos, but the composition
   of those primitives into an accepting `verify` is a hand argument, checked
   symbolically only at h = 2 and by concrete vectors at h = 4, 10 and 20. It
   is not machine-checked for general h. See `lib/xmss-solidity/PROOF.md` for

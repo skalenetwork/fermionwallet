@@ -533,13 +533,13 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
   <div class="wrap center">
     <div class="eyebrow">For your engineers</div>
     <h2>Post-quantum signatures,<br>verified in the EVM</h2>
-    <p class="lead">XMSS is pure hashing, so the chain checks it directly — no oracle, no trusted server. The verifier is a clean-room implementation of RFC 8391, and we say exactly how far its proof reaches: every RFC primitive and every path on which verification <em>rejects</em> are <strong>machine-checked</strong>, for all inputs, against a line-by-line transcription of the RFC. Composing those into an <em>accepting</em> verification is argued by hand, checked symbolically at tree height 2, and pinned by RFC vectors at h = 4, 10 and 20.</p>
+    <p class="lead">XMSS is pure hashing, so the chain checks it directly — no oracle, no trusted server. The verifier is a clean-room implementation of RFC 8391, and we say exactly how far its proof reaches: every RFC primitive, and the checks that reject malformed input, are <strong>machine-checked</strong> for all inputs against a line-by-line transcription of the RFC. Composing them into the root comparison that finally accepts or refuses a well-formed signature is argued by hand, checked symbolically at tree height 2, and pinned by RFC vectors at h = 4, 10 and 20.</p>
   </div>
   <div class="wrap">
     <div class="stats">
       <div class="stat"><div class="v">745,003</div><div class="l">gas per verification, measured at h = 20</div></div>
       <div class="stat"><div class="v">~1M</div><div class="l">approvals per key (2<sup>20</sup> leaves)</div></div>
-      <div class="stat"><div class="v">11</div><div class="l">Halmos lemmas proving the verifier equals RFC 8391, for all inputs</div></div>
+      <div class="stat"><div class="v">11</div><div class="l">Halmos lemmas checking the verifier against RFC 8391, ten of them for all inputs</div></div>
       <div class="stat"><div class="v">MIT</div><div class="l">XMSS verifier, written from the RFC, no borrowed code</div></div>
     </div>
     <div class="split">
@@ -592,7 +592,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
         <span class="tag done">Designed</span>
       </div>
       <div class="status-row">
-        <div><div class="name">XMSS verifier, machine-checked</div><div class="desc">Primitives and reject paths proven equal to RFC 8391 by symbolic execution; the accept path argued by hand and pinned by vectors, not machine-checked for general h — <a href="https://github.com/skalenetwork/xmss-solidity/blob/main/PROOF.md">PROOF.md</a> states what is proven and assumed. Published as <a href="https://github.com/skalenetwork/xmss-solidity">xmss-solidity</a></div></div>
+        <div><div class="name">XMSS verifier, machine-checked</div><div class="desc">Primitives and input-validation checks proven equal to RFC 8391 by symbolic execution; the root comparison that decides a well-formed signature argued by hand and pinned by vectors, not machine-checked for general h — <a href="https://github.com/skalenetwork/xmss-solidity/blob/main/PROOF.md">PROOF.md</a> states what is proven and assumed. Published as <a href="https://github.com/skalenetwork/xmss-solidity">xmss-solidity</a></div></div>
         <span class="tag done">Proven in part</span>
       </div>
       <div class="status-row">
