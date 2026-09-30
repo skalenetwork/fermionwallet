@@ -18,14 +18,24 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
   composition argument and concrete vectors at h = 4, 10 and 20 (see its
   `PROOF.md`), plus its tests, reference vectors and the
   Python reference implementation (`py/xmss_ref.py`, `py/gen_h20.py`,
-  `py/sign_digest.py`). Imported as `xmss-solidity/XMSS.sol`.
+  `py/sign_digest.py`; the pinned revision still names it `gen_h20.py`). Imported as `xmss-solidity/XMSS.sol`.
 - `src/QuantumKeyRegistry.sol` — owns leaf-index consumption:
   `_verifyAndConsumeXmss` checks the key's used-leaf bitmap (OpenZeppelin
   `BitMaps`), verifies, and burns the leaf atomically; reverts loudly on reuse.
 - `src/PreApprovalEngine.sol` — hybrid (ECDSA + XMSS) pre-approvals: creation,
   revocation and consumption. Abstract, like the registry.
 - `src/FermionGuard.sol` — the Safe transaction guard and module guard;
-  the only deployable contract (it contains the registry and the engine).
+  the only deployable contract of the first product (it contains the registry
+  and the engine).
+- `src/FermionWallet.sol` — the **second product**, and unrelated to the Guard:
+  a standalone ERC-20 wallet with one immutable XMSS key, one state-changing
+  function and a used-leaf bitmap as its only mutable state. No owners, no
+  recovery, no ETH, no `approve`, no arbitrary calls. Specified in
+  [`fermionwallet.md`](../fermionwallet.md); it shares only the XMSS library.
+- `src/XmssVerifier.sol` — a stateless, callable wrapper over the library,
+  implementing the interface the XMSS verification ERC draft defines. It grants
+  no authority on its own: a caller that derives authority from a valid
+  signature must record the consumed leaf itself, keyed by the public root.
 - `script/Deploy.s.sol` — CREATE2 deployment of the Guard through an
   explicit call to the deterministic deployment proxy (env vars
   `MULTISEND_CALL_ONLY`, `ADMIN_TIMELOCK`, `EMERGENCY_TIMELOCK`,
