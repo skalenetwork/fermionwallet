@@ -377,8 +377,25 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
     ///      mismatch, or verification failure. Verify-then-mark: XMSS.verify's only
     ///      external touch is the SHA-256 precompile via staticcall — no reentrancy
     ///      window between check and effect.
+    ///
+    ///      `virtual` IS FOR TEST HARNESSES ONLY, and it is not free. This is the single
+    ///      enforcement point for one-time-leaf consumption, and leaf reuse is what makes
+    ///      WOTS+ forgeable: a subclass that overrides this forfeits that guarantee
+    ///      entirely, whatever else it does. Nothing under `contracts/src/` may override
+    ///      it, and CI fails if anything does — see `.github/workflows/contracts.yml`,
+    ///      because a rule kept only in a comment is a rule the next author never reads.
+    ///
+    ///      It is `virtual` because a valid XMSS signature does not exist under symbolic
+    ///      execution: Halmos models SHA-256 as an uninterpreted function even on concrete
+    ///      input, so the 67 WOTS+ chains fork forever and no lemma can reach a *succeeding*
+    ///      verification. Without an overridable seam, `PreApprovalEngine._create` is
+    ///      unreachable — taking the commitment-queue cap, `MIN_WINDOW`, the admin timelock
+    ///      lead time and `TxHashAlreadyPinned` with it — and so are the effects of a
+    ///      succeeding rotation, which is why deleting `oldKey.status = KeyStatus.Rotated`
+    ///      passes every lemma and is caught only by two concrete tests.
     function _verifyAndConsumeXmss(bytes32 keyId, bytes32 digest, bytes calldata xmssSignature)
         internal
+        virtual
         returns (uint32 leafIndex)
     {
         KeyRegistration storage k = _keys[keyId];

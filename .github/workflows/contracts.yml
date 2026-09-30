@@ -75,6 +75,18 @@ jobs:
           grep -qE 'XMSS\.verify\(digest, sig, XMSS\.PublicKey\(\{root: xmssRoot, seed: xmssSeed\}\), treeHeight\)' src/FermionWallet.sol \
             || { echo "FermionWallet must call the four-argument XMSS.verify with its immutable treeHeight"; exit 1; }
 
+      - name: Nothing in src/ overrides the leaf-consumption enforcement point
+        working-directory: contracts
+        # `_verifyAndConsumeXmss` is `virtual` so a test harness can stub the possession
+        # proof — a valid XMSS signature is unreachable under symbolic execution, so
+        # without that seam `_create` and the effects of a succeeding rotation cannot be
+        # proven at all. A production override would silently forfeit the one-time-leaf
+        # guarantee, so the guarantee is pinned here rather than left to a comment.
+        # Matches an override site, not the `virtual` declaration itself.
+        run: |
+          ! grep -rnE '_verifyAndConsumeXmss[^;{]*\boverride\b' src/ \
+            || { echo "No contract in src/ may override _verifyAndConsumeXmss: it is the single enforcement point for XMSS leaf consumption"; exit 1; }
+
       - name: Every documented file, link and anchor still exists
         # Three times in one day this repository documented a file that did not exist —
         # a coverage script named by three specifications before anyone wrote it, a
