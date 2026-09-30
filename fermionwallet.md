@@ -83,7 +83,7 @@ leaf than the one it actually used would simply fail the ECDSA check. This is th
 ### What `transfer` checks, in order
 
 1. `block.timestamp <= validUntil`, else revert. A signed transfer that was never relayed stops being valid. [FWL-015]
-2. `leafIdx` is read from the signature's first four bytes and `isLeafUsed(leafIdx)` must be false, else revert. Reading the index needs no verification, so this check still comes **before** the ~700k-gas cryptography and a replay costs the relayer almost nothing. [FWL-016]
+2. `leafIdx` is decoded from `xmssSignature` (the `leafIdx` field of `XMSS.Signature`, at a fixed offset once the signature is decoded — no cryptography involved) and `isLeafUsed(leafIdx)` must be false, else revert. So this check still comes **before** the ~700k-gas verification, and a replay costs the relayer almost nothing. [FWL-016]
 3. The ECDSA half recovers to `quantumAdmin` over the digest built with that `leafIdx` (via OpenZeppelin `SignatureChecker`, so an ERC-1271 signer also works). [FWL-017]
 4. The XMSS half verifies against `(xmssRoot, xmssSeed)` at `treeHeight`, using [`xmss-solidity`](https://github.com/skalenetwork/xmss-solidity)'s four-argument `XMSS.verify`, the form that binds the tree height to the key. [FWL-018]
 5. The leaf is marked spent **before** the token call. [FWL-019]
@@ -135,9 +135,9 @@ A single immutable, permissionless `LeafRegistry` per chain, keyed by XMSS root,
 
 | | Gas |
 |---|---|
-| XMSS verification, h = 10 | ~712k |
-| XMSS verification, h = 16 | ~731k |
-| XMSS verification, h = 20 | ~745k |
+| XMSS verification, h = 10 (measured) | ~712k |
+| XMSS verification, h = 16 (interpolated — no h = 16 vector or benchmark exists yet) | ~731k |
+| XMSS verification, h = 20 (measured) | ~745k |
 | ECDSA check, leaf bookkeeping, token transfer, base cost | ~90k |
 | **Total per transfer** | **~0.8M** |
 
@@ -210,7 +210,7 @@ Optionally, a CREATE2 factory lets the address be computed before deployment, so
 
 ## Relationship to the rest of this repository
 
-- The XMSS verification is [`xmss-solidity`](https://github.com/skalenetwork/xmss-solidity) unchanged — the same formally verified library FermionGuard uses, included as the submodule `contracts/lib/xmss-solidity`. FermionWallet adds no cryptography of its own. [FWL-032]
+- The XMSS verification is [`xmss-solidity`](https://github.com/skalenetwork/xmss-solidity) unchanged — the same library FermionGuard uses, with the same partial machine-checked proof (primitives and reject paths proven in Halmos; accept path by hand argument plus vectors at h = 4, 10 and 20 — see its `PROOF.md`), included as the submodule `contracts/lib/xmss-solidity`. FermionWallet adds no cryptography of its own. [FWL-032]
 - The device is the same Fermion Ledger app ([ledger-xmss-app.md](./ledger-xmss-app.md)) — but **not** the same app build. Key generation and export (`GEN_XMSS_KEY`, `GET_XMSS_ROOT`, `GET_ADMIN_ADDRESS`, `GET_LEAF_INDEX`) are reused unchanged; signing is not. The app refuses payloads it does not recognize ("unknown or malformed payload fields abort the flow before screen 1"), and a `Transfer` is unrecognized: different EIP-712 type hash, domain name `FermionWallet`, `verifyingContract` = the wallet, and none of the fields Flow 2's screens are built around (no Safe address, no `txHash` pin, no `policyHash`, no payload class). Supporting FermionWallet therefore requires, in the app: [FWL-033]
   1. the `Transfer` type and the `FermionWallet` domain accepted by the payload parser, alongside `PreApproval`;
   2. a signing flow whose context screen shows **Wallet 0x…** and the chain instead of Safe / pin / policy — the existing token, amount, recipient, validity and decision screens carry over;
