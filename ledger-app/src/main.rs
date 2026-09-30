@@ -278,13 +278,17 @@ fn sub(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
 
 const APP_ICON: Glyph = Glyph::from_include(include_gif!("icons/app_fermionguard_14x14.gif"));
 
-/// Every string a review displays is cut from this one static arena.
+/// Every string a review displays is cut from this one static arena, so the review's
+/// peak stack stays flat however many fields it grows to.
 ///
-/// Not a style choice: a dozen field values as stack locals overflowed the Nano S
-/// Plus's stack and the app died with SIGSEGV part-way through a signing session —
-/// after the leaf counter had been committed, so the failure burned a one-time leaf.
-/// One reusable `Buf` plus this arena keeps the review's peak stack flat however many
-/// fields it grows to.
+/// This was introduced as a fix for a SIGSEGV part-way through a signing session, on
+/// the theory that a dozen field strings as stack locals had overflowed the stack.
+/// That theory is wrong and the comment that asserted it has been removed:
+/// `arm-none-eabi-nm`/`objdump` on the crashing build put the whole inlined signing
+/// frame at 2,744 bytes against 27,304 bytes of stack, and overflowing the stack here
+/// would corrupt bss and trip `app_stack_canary` rather than fault. Bounded stack is
+/// still the better shape, but it fixed nothing: the crash is a wild write somewhere
+/// else and is still open.
 static mut TEXT: [u8; 1024] = [0; 1024];
 static mut TEXT_USED: usize = 0;
 
