@@ -222,6 +222,13 @@ contract GuardFuzzTest is PropertyBase {
     /// exactly that approval is consumed and exactly the approved effect happens.
     /// forge-config: default.fuzz.runs = 1024
     /// Covers: [GRD-057], [GRD-058], [GRD-117], [GRD-120], [ENG-036]
+    /// The `amount` argument of an ERC-20 `transfer(address,uint256)` payload.
+    function _transferAmount(bytes memory data) internal pure returns (uint256 amount) {
+        assembly ("memory-safe") {
+            amount := mload(add(data, 68)) // 32 length + 4 selector + 32 recipient
+        }
+    }
+
     function testFuzz_MatchingIsExact(uint8 base, uint8 mutation, uint256 delta, address other, bytes calldata junk, bool viaModule)
         public
     {
@@ -258,6 +265,18 @@ contract GuardFuzzTest is PropertyBase {
             data = bytes.concat(data, junk);
         } else if (mutation == 7) {
             safeTxGas = 1 + (delta % 1e6); // unbound for Tier-2, part of the Tier-1 pin
+        }
+
+        // A mutation can land exactly on ANOTHER approval's transaction, and then the Guard
+        // is right to let it through — "matching is exact" says an approval authorizes one
+        // set of fields, not that every mutation of one transaction is refused. The
+        // fixture holds A (1000 to `recipient`) and D (3000 to `recipient`, pinned), so
+        // `base = A, mutation = amount + 2000` reconstructs D byte for byte, including its
+        // pinned `safeTxHash`, and executes. The fuzzer found that with a seed after this
+        // test had been green all day; it is the expectation that was wrong, not the Guard.
+        if ((base == 0 || base == 3) && (mutation == 1 || mutation == 2)) {
+            uint256 mutated = _transferAmount(data);
+            vm.assume(mutated != AMT_A && mutated != AMT_D);
         }
 
         // Owner path: safeTxGas is bound only by the Tier-1 pin. Module path: Tier-2 only
