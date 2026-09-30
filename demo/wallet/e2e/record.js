@@ -192,7 +192,7 @@ async function executeFromQueue(page) {
     await devicePage.locator('#next:not([disabled])').waitFor({ timeout: 30000 });
     await page.bringToFront();
     const deviceCaption =
-      'The Quantum Administrator reads every field on the device — a simulated Ledger.';
+      'The Quantum Administrator reads the payment on the device — a simulated Ledger.';
     await cap(page, 'device', 900, deviceCaption, widget);
     for (let i = 0; await devicePage.locator('#next:not([disabled])').count(); i++) {
       if (i > 12) fail('the device never reached its last screen');
