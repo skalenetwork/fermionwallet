@@ -117,9 +117,18 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
     /// Sticky enrollment flag: set at first registration, never cleared, so the
     /// emergency de-guard path stays reachable even after key revocation.
     mapping(address safe => bool) public enrolledSafe;
-    /// Used-leaf bitmap per key. Consensus-critical — XMSS leaf reuse enables forgery
-    /// (quantum-key-registry.md, "on-chain only").
-    mapping(bytes32 quantumKeyId => BitMaps.BitMap) private _usedLeaves;
+    /// Used-leaf bitmap per XMSS KEY, not per registration. Consensus-critical — XMSS
+    /// leaf reuse enables forgery (quantum-key-registry.md, "on-chain only").
+    ///
+    /// Keyed by the XMSS root, deliberately NOT by
+    /// `quantumKeyId`: the same physical key may be registered by several Safes (the
+    /// device attests one key per Safe), and each registration has its own
+    /// `quantumKeyId`. Keying the bitmap by registration would hand every Safe a fresh,
+    /// empty bitmap for the same key, so one one-time leaf could sign two different
+    /// digests — the exact condition that makes WOTS+ forgeable, and the one this
+    /// bitmap exists to prevent. Root identity stays per Safe (`rootRegistered`);
+    /// only the leaf accounting is global.
+    mapping(bytes32 xmssRoot => BitMaps.BitMap) private _usedLeaves;
     /// Pending emergency revocations: safe => executableAt (0 = none pending).
     mapping(address safe => uint64) public keyRevocationExecutableAt;
     /// The exact key each pending revocation names. Execution revokes THIS key only:
@@ -152,7 +161,9 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
     }
 
     function isLeafUsed(bytes32 quantumKeyId, uint32 leafIndex) public view returns (bool) {
-        return _usedLeaves[quantumKeyId].get(leafIndex);
+        KeyRegistration storage k = _keys[quantumKeyId];
+        if (k.xmssRoot == bytes32(0)) return false;
+        return _usedLeaves[k.xmssRoot].get(leafIndex);
     }
 
     /// Per-Safe ceremony nonce (OpenZeppelin `Nonces`). Bound into every owner-signed
@@ -375,7 +386,7 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
         }
         leafIndex = sig.leafIdx;
 
-        BitMaps.BitMap storage used = _usedLeaves[keyId];
+        BitMaps.BitMap storage used = _usedLeaves[k.xmssRoot];
         if (used.get(leafIndex)) revert LeafAlreadyUsed(keyId, leafIndex);
 
         // The registered height is passed in: the library binds it like the RFC's key OID.
