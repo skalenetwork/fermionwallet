@@ -1,0 +1,10 @@
+# Manifest read by Ledger's tooling (ledger-app-workflows CI, ledgerctl, the
+# app-store pipeline). `sdk = "Rust"` tells it to drive cargo-ledger rather than
+# make.
+[app]
+sdk = "Rust"
+build_directory = "./"
+devices = ["nanos+", "nanox"]
+
+# Stax and Flex are in ledger-xmss-app.md's supported list but not built here: the
+# NBGL screens are a separate UI layer and this build has only the BAGL (Nano) one.

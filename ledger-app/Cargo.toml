@@ -1,0 +1,31 @@
+[package]
+name = "fermionguard"
+version = "0.1.0"
+edition = "2021"
+description = "FermionGuard — the Quantum Administrator's hybrid ECDSA + XMSS Ledger app"
+license = "LGPL-3.0-only"
+
+[dependencies]
+ledger_device_sdk = "1.37.1"
+ledger_secure_sdk_sys = "1.16.4"
+include_gif = "1.3.2"
+
+[profile.release]
+opt-level = 'z'
+lto = true
+debug = false
+panic = "abort"
+
+[package.metadata.ledger]
+curve = ["secp256k1"]
+# BOLOS enforces this derivation prefix: every path the app asks for must sit under
+# it, including the ones the XMSS seeds come from.
+path = ["44'/60'"]
+name = "FermionGuard"
+flags = "0"
+
+[package.metadata.ledger.nanosplus]
+icon = "icons/app_fermionguard_14x14.gif"
+
+[package.metadata.ledger.nanox]
+icon = "icons/app_fermionguard_14x14.gif"
