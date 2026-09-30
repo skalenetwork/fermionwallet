@@ -467,6 +467,64 @@ contract DocExamplesTest is Test {
         safe.exec(address(token), 0, abi.encodeCall(IERC20.approve, (recipient, 1 ether)));
     }
 
+    // ui-help.md (as corrected): "**Sending** an ERC-721 out of the Safe: ERC-721
+    // `transferFrom(address,address,uint256)` has the same selector `0x23b872dd` as
+    // ERC-20 `transferFrom`, which is permanently deny-listed and can never be added to
+    // the permit-list."  (The doc previously listed plain ERC-721 `transferFrom` under
+    // "Works as normal"; it cannot.)
+    function test_Doc_Erc721TransferFromSharesTheDeniedErc20Selector() public {
+        bytes4 erc721TransferFrom = bytes4(keccak256("transferFrom(address,address,uint256)"));
+        assertEq(erc721TransferFrom, IERC20.transferFrom.selector, "one signature, one selector");
+        assertEq(erc721TransferFrom, bytes4(0x23b872dd), "the selector the doc quotes");
+
+        // An ERC-721 transfer out of the Safe is refused by selector, before any policy
+        // lookup — and no governance action can permit it.
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.DeniedSelector.selector, erc721TransferFrom));
+        safe.exec(address(token), 0, abi.encodeWithSelector(erc721TransferFrom, address(safe), recipient, 1));
+
+        vm.prank(address(safe));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.DeniedSelector.selector, erc721TransferFrom));
+        guard.setSelectorPolicy(address(safe), erc721TransferFrom, true);
+    }
+
+    // ui-help.md (as corrected): aborting a key ceremony is off-chain — "Nothing an owner
+    // can call advances the registry nonce during a first enrollment
+    // (`requestKeyRevocation` needs an Active key)". The doc previously claimed the abort
+    // "bumps the registry nonce on-chain so the session is provably dead".
+    function test_Doc_CeremonyAbortCannotBumpTheNonceBeforeFirstEnrollment() public {
+        MockSafe fresh = new MockSafe(owner);
+        assertEq(guard.registryNonce(address(fresh)), 0);
+
+        // The only owner-reachable action that consumes the nonce needs an Active key,
+        // which a Safe mid-first-ceremony does not have.
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(QuantumKeyRegistry.NoActiveKey.selector, address(fresh)));
+        guard.requestKeyRevocation(address(fresh), block.timestamp + 1 days, "owners-ok");
+        assertEq(guard.registryNonce(address(fresh)), 0, "no on-chain abort exists");
+
+        // Only a completed registration moves it.
+        _register(guard, fresh, 4);
+        assertEq(guard.registryNonce(address(fresh)), 1);
+    }
+
+    // quantum-key-registry.md (as corrected): "An owner-co-signed rotation in the
+    // meantime **cancels** the pending revocation outright ..., so a later
+    // `executeKeyRevocation` reverts `RevocationNotRequested`. `RevocationSuperseded`
+    // backs that up ... which no current code path can reach."
+    function test_Doc_RotationCancelsAPendingRevocation_ExecutionThenRevertsNotRequested() public {
+        guard.requestKeyRevocation(address(safe), block.timestamp + 1 days, "owners-ok");
+        uint64 executableAt = guard.keyRevocationExecutableAt(address(safe));
+        assertTrue(executableAt != 0);
+
+        _rotateOn(safe, treeHeight, 5);
+        assertEq(guard.keyRevocationExecutableAt(address(safe)), 0, "the rotation cancelled it");
+        assertEq(guard.keyRevocationKeyId(address(safe)), bytes32(0));
+
+        vm.warp(executableAt);
+        vm.expectRevert(abi.encodeWithSelector(QuantumKeyRegistry.RevocationNotRequested.selector, address(safe)));
+        guard.executeKeyRevocation(address(safe));
+    }
+
     // fermionguard-module.md: "initialized at the Safe's first enrollment to `{transfer}`
     // only (registering a new key after an emergency key revocation does not reset it)"
     // quantum-key-registry.md: "The Guard initialises the Safe's selector permit-list to

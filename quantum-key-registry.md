@@ -53,7 +53,7 @@ Owner signatures are checked with the EIP-712 message as `data`: `dataHash` is t
 
 ## Key rotation procedure (Quantum Administrator)
 
-Rotation is the same one-shot co-signed path as registration, plus **proof of possession of the old key**. It is the only way forward at exhaustion and the standard response to device replacement.
+Rotation is the same one-shot co-signed path as registration, plus **proof of possession of the old key**. It is the way forward **as** exhaustion approaches and the standard response to device replacement. Rotate before the last leaf is spent: the possession proof consumes one leaf of the old key, so a key with every leaf already used cannot be rotated at all (`_verifyAndConsumeXmss` reverts `LeafAlreadyUsed` for any index) and only the emergency revocation path below remains.
 
 ### When to rotate
 
@@ -79,9 +79,9 @@ If the Administrator's address changes (`newQuantumAdmin ≠ quantumAdmin`), own
 
 The old-key possession proof is impossible, so the path is Safe governance with a time lock:
 
-1. **If compromise is suspected:** any owner immediately calls `pauseSafe(safe)` (fail-closed) and `revokePreApproval` on pending transfer/payload approvals; pending ADMIN approvals are revoked by the Safe (owner threshold) or the Administrator. [QKR-019]
+1. **If compromise is suspected:** any owner immediately calls `pauseSafe(safe)` (fail-closed — unless the post-unpause cooldown from a previous pause is still running, in which case pausing takes an owner-threshold Safe transaction) and `revokePreApproval` on pending transfer/payload approvals; pending ADMIN approvals are revoked by the Safe (owner threshold) or the Administrator. [QKR-019]
 2. The owner threshold signs EIP-712 `RequestKeyRevocation { safe, quantumKeyId, registryNonce, validUntil }` — no quantum signature is needed. Anyone submits `requestKeyRevocation(safe, validUntil, ownerSignatures)`, which records the exact `keyId` and starts `EMERGENCY_ROTATION_TIMELOCK` (set to the same value as the emergency de-guard timelock, e.g. 14 days). [QKR-020] The request consumes the registry nonce, so the signatures work exactly once and cannot be replayed to re-arm a cancelled request; this also invalidates any ceremony signatures in flight. [QKR-021] During the delay **only the Safe itself** can cancel (`cancelKeyRevocation`, an owner-threshold Safe transaction that the Guard never blocks) — the Administrator's key alone cannot, so a stolen Ledger cannot block the owners' remedy. [QKR-022] After the delay, anyone calls `executeKeyRevocation(safe)`. [QKR-023]
-3. At execution, the registry revokes only that recorded key. If the Safe's active key changed in the meantime, `executeKeyRevocation` reverts with `RevocationSuperseded`; an owner-co-signed rotation cancels the pending revocation because the rotation itself resolves the compromise. [QKR-024]
+3. At execution, the registry revokes only that recorded key — never the successor. An owner-co-signed rotation in the meantime **cancels** the pending revocation outright (the rotation itself resolves the compromise), so a later `executeKeyRevocation` reverts `RevocationNotRequested`. `RevocationSuperseded` backs that up: it fires if the recorded key is ever not the Safe's active key at execution time, which no current code path can reach, and it is kept as a belt-and-braces guard. [QKR-024]
 4. Once revoked, a **fresh registration** (not rotation) runs on a new device: full ceremony, owner co-signatures, new `registerQuantumKey` — the one-Active-key rule is satisfied because the old key is `Revoked`, not `Active`. [QKR-025]
 5. The time lock is the security boundary: a thief holding only the stolen Ledger cannot beat the owners to a quiet key swap, and owners alone cannot instantly bypass the quantum layer. The registration that follows is protected only by classical signatures (owner threshold plus the new Administrator's attestation). An adversary that can forge the owners' ECDSA keys can race it and register its own key the moment the revocation matures. See [threat-model.md §2.1](./threat-model.md#21-quantum-capable-attacker-the-headline-adversary).
 
@@ -170,7 +170,7 @@ Every normative requirement in this document carries a stable `[QKR-nnn]` tag.
 | QKR-021 | The revocation request consumes the registry nonce, so its owner signatures work exactly once. |
 | QKR-022 | During the delay only the Safe itself can cancel a revocation; the Administrator's key alone cannot. |
 | QKR-023 | After the delay anyone may call `executeKeyRevocation`. |
-| QKR-024 | Execution revokes only the recorded key, reverts `RevocationSuperseded` if it changed, and a rotation cancels the request. |
+| QKR-024 | Execution revokes only the recorded key; a rotation cancels the request (so execution then reverts `RevocationNotRequested`), and `RevocationSuperseded` is the belt-and-braces guard if the recorded key is ever not the active one. |
 | QKR-025 | After a revocation the successor key comes from a fresh registration, not a rotation. |
 | QKR-026 | The rotation switch is atomic: never a window with zero or two Active keys. |
 | QKR-027 | Pre-approvals created before rotation remain executable; the old key creates nothing new. |

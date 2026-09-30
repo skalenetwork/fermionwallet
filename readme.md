@@ -8,6 +8,12 @@
 
 <p align="center"><a href="https://skalenetwork.github.io/fermionwallet/"><b>🌐 skalenetwork.github.io/fermionwallet</b></a> — product site</p>
 
+<p align="center">
+  <a href="./demo/wallet/README.md"><img src="./assets/fermionguard-demo.gif" alt="A 250,000 dUSD transfer is fully signed in Safe{Wallet} and still fails; the Quantum Administrator approves it on a Ledger with a one-time XMSS signature; the same transfer then executes" width="900"/></a>
+</p>
+
+<p align="center"><i>Not a mockup. An owner signs a 250,000 dUSD transfer in the <b>real Safe{Wallet}</b> — and it still will not execute. The Quantum Administrator reads every field on the device and approves it with a one-time post-quantum signature. Only then does the money move.<br/>Recorded end to end against the local stack by <a href="./demo/wallet/e2e/record.js"><code>demo/wallet/e2e/record.js</code></a>.</i></p>
+
 > **Official Safe App URL:** `https://skalenetwork.github.io/fermionwallet/app/`
 >
 > Add it in Safe{Wallet} under *Apps → My custom apps → Add custom Safe App*. Only ever copy this URL from this README — never from an email, chat message or search result. The app is a preview: it shows your Safe's FermionGuard readiness (Guard and fallback-handler status); approvals and the key ceremony are not live yet, and the contracts are not audited.
@@ -150,7 +156,7 @@ Details live in [`fermionguard-module.md`](./fermionguard-module.md).
 
 ## Status
 
-The Solidity contracts are implemented and tested: the `FermionGuard` (transaction guard and module guard, built on the official Safe `ITransactionGuard` / `IModuleGuard` interfaces) with its Quantum Key Registry, Pre-approval Engine and XMSS verifier. The XMSS verifier is formally verified against RFC 8391; the Guard, registry and engine are covered by unit, integration, fuzz and invariant tests but not formally verified. They are not audited and not deployed on any public network. The Ledger app is specified but not built yet (the demos use a simulated Ledger). The repository also keeps an early JavaScript prototype of the key, policy, and pre-approval flows (below).
+The Solidity contracts are implemented and tested: the `FermionGuard` (transaction guard and module guard, built on the official Safe `ITransactionGuard` / `IModuleGuard` interfaces) with its Quantum Key Registry, Pre-approval Engine and XMSS verifier. The XMSS verifier is formally verified against RFC 8391, and the key registry's state machine is proven equivalent to an executable specification with Halmos (`contracts/test/registry-proof/`, with authorization and signature verification abstracted). Beyond those, the Guard, registry and engine are covered by unit, integration, fuzz and invariant tests but not formally verified. They are not audited and not deployed on any public network. The Ledger app is specified but not built yet (the demos use a simulated Ledger). The repository also keeps an early JavaScript prototype of the key, policy, and pre-approval flows (below).
 
 This is early. The category is not.
 

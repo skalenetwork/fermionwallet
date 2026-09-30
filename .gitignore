@@ -16,3 +16,4 @@ contracts/broadcast/
 demo-state/
 node_modules/
 demo/wallet/e2e/screenshots/
+demo/wallet/e2e/frames/

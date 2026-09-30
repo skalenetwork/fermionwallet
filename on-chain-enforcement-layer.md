@@ -10,8 +10,8 @@ The enforcement layer is the Guard. It must not grow a parallel stack. See `ferm
 
 - `@safe-global/safe-contracts` v1.5.0 — `BaseTransactionGuard`, `BaseModuleGuard`, `ITransactionGuard`, `IModuleGuard`, `Enum`, `ISafe` (`getTransactionHash`, `getModulesPaginated`, `getStorageAt`, `isOwner`), `MultiSendCallOnly`
 - OpenZeppelin Contracts v5.2.0 — `EIP712`, `SignatureChecker`, `Nonces`, `BitMaps`, `DoubleEndedQueue`, `Bytes`, `SlotDerivation`, `TransientSlot`, `SafeCast`, `IERC20`, `IERC20Permit`
-- PQ: FermionGuard's own clean-room XMSS verifier ([skalenetwork/xmss-solidity](https://github.com/skalenetwork/xmss-solidity), RFC 8391, formally verified against the RFC), verified fully on-chain at `createPreApproval`; only `signatureHash` is stored
-- Foundry + Slither for tests and static analysis
+- PQ: FermionGuard's own clean-room XMSS verifier ([skalenetwork/xmss-solidity](https://github.com/skalenetwork/xmss-solidity), RFC 8391, formally verified against the RFC), verified fully on-chain when a pre-approval is created (`createPreApproval`, `createPayloadPreApproval`, `createAdminPreApproval`) and when a key is rotated (`rotateQuantumKey`); only `signatureHash` is stored
+- Foundry for tests and proofs (`forge test`, plus Halmos on the executable specification under `contracts/test/registry-proof/`); Slither is a release gate, not yet wired into CI
 
 No local copies of Guard/ERC165/hasher/signature code. The per-Safe pause and per-Safe nested-call depth counter are the only hand-written state guards (a global lock or pause would be a power over every Safe).
 

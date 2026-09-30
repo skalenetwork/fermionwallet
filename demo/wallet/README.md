@@ -82,3 +82,15 @@ cd e2e && npm ci && node e2e.js   # CHROME=/path/to/chrome if not /usr/bin/googl
 ```
 
 Each run uses one of the 16 XMSS leaves, so reset the stack after 16 runs.
+
+## Recording the demo
+
+`e2e/record.js` drives the same flow and captures a frame at each beat; `e2e/make_gif.py`
+turns those frames into the animation in the repository README. The recording is a real
+run against this stack — the same assertions as the end-to-end test have to pass for it
+to produce anything.
+
+```sh
+cd e2e && npm ci && node record.js                       # frames/ + frames.json
+python3 make_gif.py frames ../../../assets/fermionguard-demo.gif
+```
