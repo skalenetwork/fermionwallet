@@ -129,6 +129,8 @@ Quantum Key Registry          Pre-approval Engine
 
 Full design: [`fermionguardspec.md`](./fermionguardspec.md)
 
+Not running a Safe? [`fermionwallet.md`](./fermionwallet.md) specifies **FermionWallet**, a second product: the smallest possible standalone contract that holds ERC-20 tokens and releases them only against the same Ledger's hybrid signature — no owners, no governance, and no recovery.
+
 ---
 
 ## Security posture (what we refuse to hand-wave)
