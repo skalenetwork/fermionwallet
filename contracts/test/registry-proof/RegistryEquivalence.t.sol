@@ -78,6 +78,7 @@ contract RegistryEquivalence is Test {
     /// A registration succeeds exactly when the specification allows it, and leaves
     /// exactly the state the specification describes, for every caller, timestamp and
     /// key parameter.
+    /// Covers: [QKR-005], [QKR-006], [QKR-008], [QKR-033]
     function check_register(address caller, bytes32 root, bytes32 seed, uint32 height, bytes32 paramSet, uint256 validUntil, uint64 nowTs)
         public
     {
@@ -104,6 +105,7 @@ contract RegistryEquivalence is Test {
 
     // ── Lemma 2: requesting an emergency revocation ────────────────────────
 
+    /// Covers: [QKR-020], [QKR-021]
     function check_requestRevocation(address caller, uint256 validUntil, uint64 nowTs) public {
         vm.warp(nowTs);
         RegistrySpec.SafeState memory before = registry.stateOf(safe);
@@ -125,6 +127,7 @@ contract RegistryEquivalence is Test {
 
     /// The time lock is armed from the present, so a second request can only move the
     /// deadline later: there is no way to shorten a pending revocation.
+    /// Covers: [QKR-020]
     function check_revocationTimelockNeverShortens(uint64 firstAt, uint64 secondAt, uint256 validUntil) public {
         vm.assume(firstAt <= secondAt);
         vm.assume(uint256(secondAt) + TIMELOCK < type(uint64).max);
@@ -146,6 +149,7 @@ contract RegistryEquivalence is Test {
 
     // ── Lemma 3: cancelling — the Safe alone, never the Administrator ──────
 
+    /// Covers: [QKR-022]
     function check_cancelRevocation(address caller, uint64 nowTs) public {
         vm.warp(nowTs);
         RegistrySpec.SafeState memory before = registry.stateOf(safe);
@@ -166,6 +170,7 @@ contract RegistryEquivalence is Test {
 
     // ── Lemma 4: executing a matured revocation ───────────────────────────
 
+    /// Covers: [QKR-023], [QKR-024]
     function check_executeRevocation(address caller, uint64 nowTs) public {
         vm.warp(nowTs);
         RegistrySpec.SafeState memory before = registry.stateOf(safe);
@@ -192,6 +197,7 @@ contract RegistryEquivalence is Test {
 
     /// Whatever sequence of registrations is attempted, the Safe never ends up with a
     /// second Active key under a root it already used.
+    /// Covers: [QKR-008], [QKR-009]
     function check_rootIsOneShot(bytes32 root, bytes32 seed, uint32 height, bytes32 paramSet, uint256 validUntil, uint64 nowTs)
         public
     {

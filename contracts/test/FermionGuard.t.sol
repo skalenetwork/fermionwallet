@@ -134,6 +134,7 @@ contract FermionGuardTest is Test {
 
     // ── Fix 1: owners pause and revoke fast, without a quantum approval ──────
 
+    /// Covers: [GRD-093], [GRD-096]
     function test_singleOwnerPausesSafeDirectly() public {
         vm.prank(owner);
         guard.pauseSafe(address(safe));
@@ -144,17 +145,20 @@ contract FermionGuardTest is Test {
         safe.exec(address(token), 0, _transferData(500));
     }
 
+    /// Covers: [GRD-093]
     function test_strangerCannotPauseSafe() public {
         vm.prank(stranger);
         vm.expectRevert(QuantumKeyRegistry.NotAuthorized.selector);
         guard.pauseSafe(address(safe));
     }
 
+    /// Covers: [GRD-072], [GRD-093]
     function test_safePausesItselfWithoutQuantumApproval() public {
         safe.exec(address(guard), 0, abi.encodeCall(guard.pauseSafe, (address(safe))));
         assertTrue(guard.safePaused(address(safe)));
     }
 
+    /// Covers: [GRD-035]
     function test_singleOwnerRevokesApprovalDirectly() public {
         bytes32 id = _approveTransfer(500, bytes32(0));
         vm.prank(owner);
@@ -164,12 +168,14 @@ contract FermionGuardTest is Test {
         safe.exec(address(token), 0, _transferData(500));
     }
 
+    /// Covers: [GRD-035], [GRD-072]
     function test_safeRevokesApprovalWithoutQuantumApproval() public {
         bytes32 id = _approveTransfer(500, bytes32(0));
         safe.exec(address(guard), 0, abi.encodeCall(guard.revokePreApproval, (id)));
         assertTrue(guard.getPreApproval(id).revoked);
     }
 
+    /// Covers: [GRD-035]
     function test_strangerCannotRevoke() public {
         bytes32 id = _approveTransfer(500, bytes32(0));
         vm.prank(stranger);
@@ -177,6 +183,7 @@ contract FermionGuardTest is Test {
         guard.revokePreApproval(id);
     }
 
+    /// Covers: [GRD-094]
     function test_unpauseSafeIsTimelockedSafeGovernance() public {
         vm.prank(owner);
         guard.pauseSafe(address(safe));
@@ -197,6 +204,7 @@ contract FermionGuardTest is Test {
     /// Anti-veto: a single owner's re-pause must NOT cancel a pending owner-threshold
     /// unpause, and after the unpause a single key cannot re-pause until the cooldown
     /// elapses — so one stolen key can't freeze an M-of-N Safe indefinitely.
+    /// Covers: [GRD-094], [GRD-095], [GRD-132]
     function test_singleOwnerCannotVetoUnpause() public {
         vm.prank(owner);
         guard.pauseSafe(address(safe));
@@ -227,6 +235,7 @@ contract FermionGuardTest is Test {
 
     // ── Fix 2: quantum-approved Guard removal works while paused ─────────────
 
+    /// Covers: [GRD-051], [GRD-067]
     function test_adminApprovedRemovalWorksWhileSafePaused() public {
         _approveAdminRemoval();
         vm.prank(owner);
@@ -237,6 +246,7 @@ contract FermionGuardTest is Test {
         assertEq(safe.guard(), address(0));
     }
 
+    /// Covers: [GRD-051]
     function test_unapprovedRemovalStillBlockedWhilePaused() public {
         vm.prank(owner);
         guard.pauseSafe(address(safe));
@@ -246,6 +256,7 @@ contract FermionGuardTest is Test {
 
     // ── Fix 3: a matured emergency request is consumed by the removal ────────
 
+    /// Covers: [GRD-068], [GRD-077], [GRD-078]
     function test_emergencyRemovalClearsRequest() public {
         safe.exec(address(guard), 0, abi.encodeCall(guard.requestEmergencyDeGuard, ()));
         vm.warp(block.timestamp + EMERGENCY_TIMELOCK);
@@ -259,6 +270,7 @@ contract FermionGuardTest is Test {
         safe.exec(address(safe), 0, abi.encodeWithSignature("setGuard(address)", address(0)));
     }
 
+    /// Covers: [GRD-078]
     function test_adminPathRemovalAlsoClearsPendingEmergencyRequest() public {
         safe.exec(address(guard), 0, abi.encodeCall(guard.requestEmergencyDeGuard, ()));
         _approveAdminRemoval();
@@ -269,6 +281,7 @@ contract FermionGuardTest is Test {
 
     // ── Fix 4: the Administrator's key alone cannot veto the owners' exits ───
 
+    /// Covers: [GRD-076]
     function test_adminKeyCannotCancelEmergencyDeGuard() public {
         safe.exec(address(guard), 0, abi.encodeCall(guard.requestEmergencyDeGuard, ()));
         vm.prank(admin);
@@ -279,6 +292,7 @@ contract FermionGuardTest is Test {
         assertEq(guard.emergencyDeGuardExecutableAt(address(safe)), 0);
     }
 
+    /// Covers: [QKR-022]
     function test_adminKeyCannotCancelKeyRevocation() public {
         guard.requestKeyRevocation(address(safe), block.timestamp + 1 days, "owners-ok");
         vm.prank(admin);
@@ -291,6 +305,7 @@ contract FermionGuardTest is Test {
 
     /// A pending revocation names an exact key; an owner-co-signed rotation cancels
     /// it, so a stale request can never destroy the successor key.
+    /// Covers: [GRD-033], [QKR-017], [QKR-024], [QKR-029]
     function test_rotationCancelsPendingRevocation_neverRevokesSuccessor() public {
         bytes32 oldKeyId = guard.safeToQuantumKey(address(safe));
         guard.requestKeyRevocation(address(safe), block.timestamp + 1 days, "owners-ok");
@@ -310,6 +325,7 @@ contract FermionGuardTest is Test {
 
     /// FIFO head must not permanently skip an approval that is merely scheduled for
     /// the future: consuming a currently-valid twin leaves the scheduled one usable.
+    /// Covers: [ENG-040]
     function test_futureValidApprovalSurvivesQueueConsumption() public {
         // Scheduled first (earlier in the queue), then an identical one valid now.
         PreApprovalEngine.PreApprovalRequest memory future = _baseRequest(bytes32(0));
@@ -333,6 +349,7 @@ contract FermionGuardTest is Test {
         assertEq(token.balanceOf(recipient), 800);
     }
 
+    /// Covers: [GRD-122], [QKR-011], [QKR-027], [ENG-035]
     function test_approvalSurvivesRoutineRotation() public {
         _approveTransfer(700, bytes32(0));
         _rotate(5);
@@ -343,6 +360,7 @@ contract FermionGuardTest is Test {
 
     // ── Fix 6: a dead pin can be replaced; a live one cannot ─────────────────
 
+    /// Covers: [ENG-041]
     function test_expiredPinCanBeReplaced() public {
         bytes32 txHash = _nextTxHash(address(token), _transferData(300));
         _approveTransfer(300, txHash);
@@ -353,6 +371,7 @@ contract FermionGuardTest is Test {
         assertEq(token.balanceOf(recipient), 300);
     }
 
+    /// Covers: [ENG-041]
     function test_livePinCannotBeReplaced() public {
         bytes32 txHash = _nextTxHash(address(token), _transferData(300));
         _approveTransfer(300, txHash);
@@ -399,6 +418,7 @@ contract FermionGuardTest is Test {
     /// A Safe that set the Guard before enrolling must still be able to detach it;
     /// otherwise a posture that blocks enrollment (fallback handler, enabled module)
     /// would freeze it forever.
+    /// Covers: [GRD-069], [GRD-070]
     function test_neverEnrolledSafeCanDetachGuard() public {
         MockSafe fresh = new MockSafe(owner);
         fresh.setGuardDirect(address(guard));
@@ -412,6 +432,7 @@ contract FermionGuardTest is Test {
 
     /// The shortcut is only for never-enrolled Safes: an enrolled Safe still needs
     /// an ADMIN approval or a matured emergency request to detach the Guard.
+    /// Covers: [GRD-051], [GRD-069]
     function test_enrolledSafeCannotDetachGuardWithoutApproval() public {
         vm.expectRevert();
         safe.exec(address(safe), 0, abi.encodeWithSignature("setGuard(address)", address(0)));
@@ -424,6 +445,7 @@ contract FermionGuardTest is Test {
     /// logic: no DELEGATECALL (proxy/upgrade pattern), SELFDESTRUCT, CALLCODE, or
     /// CREATE/CREATE2. Scans the runtime code, skipping PUSH data and the trailing
     /// CBOR metadata, so any future upgrade hook fails CI.
+    /// Covers: [GRD-005], [GRD-018], [GRD-112], [GRD-134]
     function test_guardBytecodeHasNoUpgradeOrSelfDestructPath() public view {
         bytes memory code = address(guard).code;
         uint256 metadataLength = (uint256(uint8(code[code.length - 2])) << 8) | uint8(code[code.length - 1]);
@@ -443,6 +465,7 @@ contract FermionGuardTest is Test {
     /// A transfer approval binds token/recipient/amount; Tier-2 matching ignores the
     /// Safe tx `value`, so without an explicit check the approval would also let ETH
     /// flow to the token contract. It must be rejected, not matched.
+    /// Covers: [GRD-057], [GRD-064]
     function test_transferApprovalDoesNotAuthoriseEthValue() public {
         vm.deal(address(safe), 1 ether);
         _approveTransfer(500, bytes32(0));
@@ -454,6 +477,7 @@ contract FermionGuardTest is Test {
 
     /// A commitment queue full of expired approvals must not lock that payment out
     /// forever — creation prunes dead entries before checking the cap.
+    /// Covers: [ENG-039]
     function test_queueOfExpiredApprovalsDoesNotJam() public {
         guard = new FermionGuard(
             address(new Placeholder()), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, 100, 2
@@ -478,6 +502,7 @@ contract FermionGuardTest is Test {
     /// Safe squat any root seen in the mempool and permanently DoS the victim's
     /// registration and rotation. Same-Safe reuse stays forbidden (one-shot leaf
     /// bitmap integrity).
+    /// Covers: [GRD-032], [QKR-009]
     function test_duplicateRootRejected() public {
         // Cross-Safe reuse of the already-registered root: allowed by design.
         MockSafe other = new MockSafe(owner);

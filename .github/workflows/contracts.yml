@@ -45,6 +45,15 @@ jobs:
             [ "$want" = "$have" ] || { echo "contracts/foundry.toml has '$have', the proven configuration is '$want'"; exit 1; }
           done
 
+      - name: Every requirement the tests cite is a requirement that exists
+        # The specifications tag their normative sentences [QKR-###] / [GRD-###] /
+        # [ENG-###]; the tests cite those tags in `Covers:` annotations. A citation of
+        # an ID no document defines — a typo, or a requirement deleted from a spec
+        # while its test kept claiming it — fails here. Uncovered requirements are
+        # printed, not fatal: the report is the honest state of the proof effort.
+        working-directory: contracts
+        run: python3 script/check_requirements.py
+
       - name: The registry binds the key's tree height when verifying
         working-directory: contracts
         run: |

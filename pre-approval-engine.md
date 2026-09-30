@@ -18,53 +18,53 @@ The pre-approval engine creates and validates time-bound, nonce-protected approv
 
 ## The Quantum Administrator
 
-Every pre-approval must be signed by the **Quantum Administrator** — a designated role holding a **permanent XMSS key** (RFC 8391 / NIST SP 800-208).
+Every pre-approval must be signed by the **Quantum Administrator** — a designated role holding a **permanent XMSS key** (RFC 8391 / NIST SP 800-208). [ENG-001]
 
-- The Administrator's XMSS public root is registered once in the quantum key registry (`quantumKeyId` → root hash).
-- Each pre-approval consumes exactly one XMSS leaf index; a `XMSS-SHA2_20_256`-class key covers ~1M approvals before rotation.
-- The on-chain engine records used leaf indices in a bitmap and **reverts on any index reuse** — statefulness is enforced on-chain, not just in the service.
-- The Ledger secure element commits its leaf-index increment to NVRAM *before* releasing a signature; a crash-recovery gap that reuses an index is a critical incident.
+- [ENG-002] The Administrator's XMSS public root is registered once in the quantum key registry (`quantumKeyId` → root hash).
+- [ENG-003] Each pre-approval consumes exactly one XMSS leaf index; a `XMSS-SHA2_20_256`-class key covers ~1M approvals before rotation.
+- [ENG-004] The on-chain engine records used leaf indices in a bitmap and **reverts on any index reuse** — statefulness is enforced on-chain, not just in the service.
+- [ENG-005] The Ledger secure element commits its leaf-index increment to NVRAM *before* releasing a signature; a crash-recovery gap that reuses an index is a critical incident.
 
 ### Leaf-index synchronization discipline
 
 Three counters exist (the Ledger secure-element counter — authoritative for the device, the service's advisory mirror, and the on-chain bitmap) and they **will** drift — reorgs, dropped transactions, crashes, restores. The rules that make drift safe:
 
-1. **The on-chain bitmap is the single source of truth.** All other counters are advisory optimizations.
-2. **Fail toward waste, never toward reuse.** Any ambiguity about whether an index was used (crash mid-release, tx dropped, RPC timeout) resolves by *skipping* that index permanently. Leaves are cheap (~1M per key); reuse is a forgery.
-3. **Resync before every signature.** The service reads the highest used index and bitmap state from chain before releasing a signature, and refuses to sign at an index ≤ the highest on-chain used index.
-4. **Monotonicity is local per counter.** The Ledger secure-element counter never decrements, even if the chain shows gaps; the service's advisory mirror never resets from a backup — a restored-from-backup service must resync from chain and skip forward past its own recorded maximum plus a safety margin.
-5. **Desync alarms.** If the service observes an on-chain used index it did not release, that is a key-compromise indicator: page the Administrator, pause the engine (fail-closed), and initiate rotation.
-- When the index space nears exhaustion, the Administrator rotates to a new XMSS root with `rotateQuantumKey`: owner co-signatures, the Ledger's attestation of the new key, and an XMSS possession proof signed by the old key (one final old-key leaf).
+1. [ENG-006] **The on-chain bitmap is the single source of truth.** All other counters are advisory optimizations.
+2. [ENG-007] **Fail toward waste, never toward reuse.** Any ambiguity about whether an index was used (crash mid-release, tx dropped, RPC timeout) resolves by *skipping* that index permanently. Leaves are cheap (~1M per key); reuse is a forgery.
+3. [ENG-008] **Resync before every signature.** The service reads the highest used index and bitmap state from chain before releasing a signature, and refuses to sign at an index ≤ the highest on-chain used index.
+4. [ENG-009] **Monotonicity is local per counter.** The Ledger secure-element counter never decrements, even if the chain shows gaps; the service's advisory mirror never resets from a backup — a restored-from-backup service must resync from chain and skip forward past its own recorded maximum plus a safety margin.
+5. [ENG-010] **Desync alarms.** If the service observes an on-chain used index it did not release, that is a key-compromise indicator: page the Administrator, pause the engine (fail-closed), and initiate rotation.
+- [ENG-011] When the index space nears exhaustion, the Administrator rotates to a new XMSS root with `rotateQuantumKey`: owner co-signatures, the Ledger's attestation of the new key, and an XMSS possession proof signed by the old key (one final old-key leaf).
 
 ## Quantum Administrator hardware: Ledger (the only hardware module)
 
-The Quantum Administrator operates using a **Ledger hardware wallet running the [FermionGuard XMSS app](./ledger-xmss-app.md)** as the sole hardware cryptographic module. No server HSMs, cloud enclaves, or host-side keystores exist anywhere in the system.
+The Quantum Administrator operates using a **Ledger hardware wallet running the [FermionGuard XMSS app](./ledger-xmss-app.md)** as the sole hardware cryptographic module. No server HSMs, cloud enclaves, or host-side keystores exist anywhere in the system. [ENG-012]
 
 ### The Ledger secure element is the complete post-quantum signing module
 
-1. **Keys never leave the device.** The XMSS master seed (`SK_SEED`, `SK_PRF`) is generated by, and confined to, the Ledger's ST33 secure element. The monotonic leaf counter lives in secure-element NVRAM with the counter-before-signature invariant enforced in firmware.
-2. **Hardware-enforced human-in-the-loop.** The Administrator connects the Ledger via WebHID (in the Safe App) or USB/BLE (to the companion relayer daemon) and reviews the exact human-readable pre-approval fields (recipient, token, amount, Safe address, nonce, policy hash, leaf index) on the trusted screen before physically confirming.
-3. **Hardware-anchored dual signing.** One confirmation releases both hybrid halves from the device: the classical EIP-712 ECDSA signature and the XMSS signature, both computed inside the secure element over the same digest.
-4. **On-chain enforcement.** `createPreApproval` validates both: the ECDSA signature against the registered Ledger address (`quantumAdmin`) and the XMSS signature against `xmssRoot`.
+1. [ENG-013] **Keys never leave the device.** The XMSS master seed (`SK_SEED`, `SK_PRF`) is generated by, and confined to, the Ledger's ST33 secure element. The monotonic leaf counter lives in secure-element NVRAM with the counter-before-signature invariant enforced in firmware.
+2. [ENG-014] **Hardware-enforced human-in-the-loop.** The Administrator connects the Ledger via WebHID (in the Safe App) or USB/BLE (to the companion relayer daemon) and reviews the exact human-readable pre-approval fields (recipient, token, amount, Safe address, nonce, policy hash, leaf index) on the trusted screen before physically confirming.
+3. [ENG-015] **Hardware-anchored dual signing.** One confirmation releases both hybrid halves from the device: the classical EIP-712 ECDSA signature and the XMSS signature, both computed inside the secure element over the same digest.
+4. [ENG-016] **On-chain enforcement.** `createPreApproval` validates both: the ECDSA signature against the registered Ledger address (`quantumAdmin`) and the XMSS signature against `xmssRoot`.
 
 ### Hard security guarantees
-- **No autonomous server signing:** the backend service holds no key material of any kind; it can only relay signatures the Ledger has already produced. Zero pre-approvals can exist without a physical button press.
-- **Strict seed isolation:** private key material never exists outside the secure element, encrypted or otherwise. Re-deriving keys on host machines is prohibited.
+- [ENG-017] **No autonomous server signing:** the backend service holds no key material of any kind; it can only relay signatures the Ledger has already produced. Zero pre-approvals can exist without a physical button press.
+- [ENG-018] **Strict seed isolation:** private key material never exists outside the secure element, encrypted or otherwise. Re-deriving keys on host machines is prohibited.
 
 ### Forbidden shortcuts
 
-- Deriving the XMSS key from the Ledger's BIP-39 seed so it can be "restored": a device restore resets no leaf state and invites leaf reuse — the XMSS key is intentionally **not** recoverable from the 24 words; recovery is by on-chain key rotation (see quantum-key-registry.md).
-- Holding the XMSS seed, or any copy of it, on a host, backend, HSM, or enclave — prohibited; the Ledger is the only key custodian.
-- Using the Ledger ECDSA signature *alone* as the "quantum" authorization — it is classical; it is only the hybrid anchor.
+- [ENG-019] Deriving the XMSS key from the Ledger's BIP-39 seed so it can be "restored": a device restore resets no leaf state and invites leaf reuse — the XMSS key is intentionally **not** recoverable from the 24 words; recovery is by on-chain key rotation (see quantum-key-registry.md).
+- [ENG-020] Holding the XMSS seed, or any copy of it, on a host, backend, HSM, or enclave — prohibited; the Ledger is the only key custodian.
+- [ENG-021] Using the Ledger ECDSA signature *alone* as the "quantum" authorization — it is classical; it is only the hybrid anchor.
 
 ## Responsibilities
 
 - creates pre-approvals for token actions
 - stores approval metadata, including amount and expiry
-- ensures approvals are nonce-protected to prevent replay attacks
-- rejects expired or revoked approvals
-- binds `policyHash` into the signed payload (the value is signed and stored; it is not checked against an on-chain policy — policy limits are enforced by the add-on service)
-- ensures both signature halves match the Safe's Active key
+- [ENG-022] ensures approvals are nonce-protected to prevent replay attacks
+- [ENG-023] rejects expired or revoked approvals
+- [ENG-024] binds `policyHash` into the signed payload (the value is signed and stored; it is not checked against an on-chain policy — policy limits are enforced by the add-on service)
+- [ENG-025] ensures both signature halves match the Safe's Active key
 
 ## Standard pre-approval data
 
@@ -73,11 +73,11 @@ Every pre-approval carries an `approvalClass` — `TRANSFER`, `PAYLOAD`, or `ADM
 - approvalClass (TRANSFER | PAYLOAD | ADMIN)
 - token, recipient, amount (TRANSFER class)
 - target, value, dataHash = keccak256(exact calldata) (PAYLOAD and ADMIN classes — this is how native ETH sends and administrative self-calls such as `setGuard(address(0))` are representable at all; without these fields the Guard could never be removed and the Safe would brick)
-- validFrom (ADMIN class: must be ≥ creation time + `ADMIN_TIMELOCK`, enforced on-chain)
+- validFrom (ADMIN class: must be ≥ creation time + `ADMIN_TIMELOCK`, enforced on-chain) [ENG-026]
 - validTo
 - nonce (the approval's ID salt: `id = keccak256(abi.encodePacked(safe, nonce))`; not the Safe nonce)
 - quantumKeyId (the Safe's Active key)
-- xmssLeafIndex (single-use, tracked on-chain; must equal the leaf inside the XMSS signature)
+- xmssLeafIndex (single-use, tracked on-chain; must equal the leaf inside the XMSS signature) [ENG-027]
 - policyHash
 - txHash (optional, any class: pins the approval to one exact `safeTxHash`; zero = matched by fields)
 - ecdsaSignature (classical hybrid half, from the Ledger; verified on-chain against `quantumAdmin`)
@@ -87,26 +87,77 @@ Every pre-approval carries an `approvalClass` — `TRANSFER`, `PAYLOAD`, or `ADM
 
 At creation (`createPreApproval` / `createPayloadPreApproval` / `createAdminPreApproval`):
 
-- the key must be the Safe's Active key
-- `validTo - validFrom ≥ 15 minutes` and `validTo` in the future; ADMIN: `validFrom ≥ now + ADMIN_TIMELOCK` (no maximum window is enforced on-chain)
-- the `(safe, nonce)` ID must be new
-- class-irrelevant fields must be zero
-- the ECDSA half must verify against the key's `quantumAdmin`, and the XMSS half against its root and seed
-- the XMSS leaf must be unused (on-chain bitmap) and is consumed
+- [ENG-028] the key must be the Safe's Active key
+- [ENG-029] `validTo - validFrom ≥ 15 minutes` and `validTo` in the future; ADMIN: `validFrom ≥ now + ADMIN_TIMELOCK` (no maximum window is enforced on-chain)
+- [ENG-030] the `(safe, nonce)` ID must be new
+- [ENG-031] class-irrelevant fields must be zero
+- [ENG-032] the ECDSA half must verify against the key's `quantumAdmin`, and the XMSS half against its root and seed
+- [ENG-033] the XMSS leaf must be unused (on-chain bitmap) and is consumed
 
 At execution (inside the Guard's `checkTransaction` / `checkModuleTransaction`):
 
-- the approval must not be used or revoked, and `validFrom ≤ now ≤ validTo`
-- its key must be Active or Rotated (a Revoked key's approvals are dead)
-- the transaction must match exactly: for TRANSFER, the same token, recipient and **exact** amount; for PAYLOAD/ADMIN, the same target, value and calldata hash
-- the approval is marked used atomically with execution; it stays used even if the call then fails
+- [ENG-034] the approval must not be used or revoked, and `validFrom ≤ now ≤ validTo`
+- [ENG-035] its key must be Active or Rotated (a Revoked key's approvals are dead)
+- [ENG-036] the transaction must match exactly: for TRANSFER, the same token, recipient and **exact** amount; for PAYLOAD/ADMIN, the same target, value and calldata hash
+- [ENG-037] the approval is marked used atomically with execution; it stays used even if the call then fails
 
 ### Tier-2 FIFO queue semantics
 
-Field-matched (`txHash == bytes32(0)`) approvals share a bounded FIFO per commitment (OpenZeppelin `DoubleEndedQueue`, cap `MAX_COMMITMENT_QUEUE`). Permanently dead entries — used, revoked, expired, or tied to a revoked key — are popped from the front on every create and every consume; when a create finds the queue at the cap, it also removes dead entries from the rest of the queue (for example behind a scheduled approval at the head), keeping the order of the live ones. So dead entries never count toward the cap and cannot jam the queue. A not-yet-valid approval (`validFrom` in the future) is never popped: consumption takes the first currently-valid entry, and the scheduled approval remains usable when its window opens.
+Field-matched (`txHash == bytes32(0)`) approvals share a bounded FIFO per commitment (OpenZeppelin `DoubleEndedQueue`, cap `MAX_COMMITMENT_QUEUE`). [ENG-038] Permanently dead entries — used, revoked, expired, or tied to a revoked key — are popped from the front on every create and every consume; when a create finds the queue at the cap, it also removes dead entries from the rest of the queue (for example behind a scheduled approval at the head), keeping the order of the live ones. So dead entries never count toward the cap and cannot jam the queue. [ENG-039] A not-yet-valid approval (`validFrom` in the future) is never popped: consumption takes the first currently-valid entry, and the scheduled approval remains usable when its window opens. [ENG-040]
 
-Pinned (Tier 1) approvals live in `approvalByTxHash[safe][safeTxHash]` instead; a pin can be replaced only after its approval can never execute — expired, revoked, or created under a since-revoked key. A used pin (that Safe transaction already executed) is never replaced; otherwise creation reverts with `TxHashAlreadyPinned`.
+Pinned (Tier 1) approvals live in `approvalByTxHash[safe][safeTxHash]` instead; a pin can be replaced only after its approval can never execute — expired, revoked, or created under a since-revoked key. A used pin (that Safe transaction already executed) is never replaced; otherwise creation reverts with `TxHashAlreadyPinned`. [ENG-041]
 
 ## Design intent
 
 The pre-approval engine is the policy gate that converts a quantum key into a usable second authorization for a specific transfer.
+
+## Requirement index
+
+Every normative requirement in this document carries a stable `[ENG-nnn]` tag.
+`contracts/script/check_requirements.py` cross-references these tags with the
+`Covers:` annotations on the tests, fuzz properties and proofs under
+`contracts/test/`, and reports the requirements that no check discharges yet.
+
+| ID | Requirement |
+|---|---|
+| ENG-001 | Every pre-approval is signed by the Quantum Administrator's permanent XMSS key. |
+| ENG-002 | The Administrator's XMSS public root is registered once in the quantum key registry. |
+| ENG-003 | Each pre-approval consumes exactly one XMSS leaf index. |
+| ENG-004 | The engine records used leaf indices in an on-chain bitmap and reverts on any index reuse. |
+| ENG-005 | The Ledger commits its leaf-index increment to NVRAM before releasing a signature. |
+| ENG-006 | The on-chain bitmap is the single source of truth; every other counter is advisory. |
+| ENG-007 | Any ambiguity about an index resolves by skipping it permanently — fail toward waste, never toward reuse. |
+| ENG-008 | The service resyncs from chain before every signature and refuses to sign at an index ≤ the highest on-chain used index. |
+| ENG-009 | The Ledger counter never decrements and the service's mirror never resets from a backup. |
+| ENG-010 | An on-chain used index the service did not release pages the Administrator, pauses the engine and starts rotation. |
+| ENG-011 | Near exhaustion the Administrator rotates with `rotateQuantumKey`: owner co-signatures, Ledger attestation, and an old-key XMSS possession proof. |
+| ENG-012 | The Ledger is the sole hardware cryptographic module; no server HSMs, enclaves or host keystores exist. |
+| ENG-013 | The XMSS seed is generated by and confined to the Ledger secure element; keys never leave the device. |
+| ENG-014 | The Administrator reviews the pre-approval fields on the Ledger's trusted screen and confirms physically. |
+| ENG-015 | One confirmation releases both hybrid halves, both computed inside the secure element over the same digest. |
+| ENG-016 | `createPreApproval` validates both halves on-chain: ECDSA against `quantumAdmin`, XMSS against `xmssRoot`. |
+| ENG-017 | The backend holds no key material; no pre-approval can exist without a physical button press. |
+| ENG-018 | Private key material never exists outside the secure element; re-deriving keys on hosts is prohibited. |
+| ENG-019 | The XMSS key must not be derivable from the Ledger's BIP-39 seed. |
+| ENG-020 | The XMSS seed must never be held on a host, backend, HSM or enclave. |
+| ENG-021 | The Ledger ECDSA signature alone is never the quantum authorization. |
+| ENG-022 | Approvals are nonce-protected against replay. |
+| ENG-023 | Expired or revoked approvals are rejected. |
+| ENG-024 | `policyHash` is bound into the signed payload (signed and stored; not checked on-chain). |
+| ENG-025 | Both signature halves must match the Safe's Active key. |
+| ENG-026 | An ADMIN approval's `validFrom` must be ≥ creation time + `ADMIN_TIMELOCK`, enforced on-chain. |
+| ENG-027 | `xmssLeafIndex` is single-use, tracked on-chain, and must equal the leaf inside the XMSS signature. |
+| ENG-028 | At creation, the key must be the Safe's Active key. |
+| ENG-029 | At creation, `validTo - validFrom ≥ 15 minutes`, `validTo` in the future; ADMIN adds the timelock. |
+| ENG-030 | At creation, the `(safe, nonce)` approval ID must be new. |
+| ENG-031 | At creation, class-irrelevant fields must be zero. |
+| ENG-032 | At creation, the ECDSA half verifies against `quantumAdmin` and the XMSS half against the key's root and seed. |
+| ENG-033 | At creation, the XMSS leaf must be unused in the on-chain bitmap, and is consumed. |
+| ENG-034 | At execution, the approval must be neither used nor revoked and `validFrom ≤ now ≤ validTo`. |
+| ENG-035 | At execution, the approval's key must be Active or Rotated; a Revoked key's approvals are dead. |
+| ENG-036 | At execution, the transaction must match the approval's bound fields exactly. |
+| ENG-037 | The approval is marked used atomically with execution and stays used even if the call fails. |
+| ENG-038 | Field-matched approvals share a bounded FIFO queue per commitment, capped at `MAX_COMMITMENT_QUEUE`. |
+| ENG-039 | Dead entries never count toward the cap and cannot jam the queue. |
+| ENG-040 | A not-yet-valid approval is never popped; consumption takes the first currently-valid entry. |
+| ENG-041 | A pin is replaceable only once its approval can never execute; a used pin is never replaced. |

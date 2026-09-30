@@ -663,6 +663,7 @@ contract GuardInvariantTest is PropertyBase {
     /// forge-config: default.invariant.runs = 64
     /// forge-config: default.invariant.depth = 80
     /// forge-config: default.invariant.fail-on-revert = true
+    /// Covers: [GRD-085], [GRD-094], [GRD-095], [GRD-116], [GRD-124], [ENG-038], [ENG-040]
     function invariant_guardMatchesModel() public view {
         assertEq(handler.failure(), "");
     }
@@ -671,6 +672,7 @@ contract GuardInvariantTest is PropertyBase {
     /// forge-config: default.invariant.runs = 64
     /// forge-config: default.invariant.depth = 80
     /// forge-config: default.invariant.fail-on-revert = true
+    /// Covers: [GRD-009], [GRD-054], [GRD-118], [GRD-124], [ENG-003], [ENG-038], [ENG-039]
     function invariant_stateInvariants() public view {
         uint256 n = handler.poolLength();
         uint256 usedCount;
@@ -734,6 +736,7 @@ contract GuardInvariantTest is PropertyBase {
     /// forge-config: default.invariant.runs = 64
     /// forge-config: default.invariant.depth = 80
     /// forge-config: default.invariant.fail-on-revert = true
+    /// Covers: [ENG-039]
     function invariant_creationAlwaysRecoverable() public {
         uint256 snap = vm.snapshotState();
         (,,,,,,,, bytes32 cX,,) = handler.entry(0);

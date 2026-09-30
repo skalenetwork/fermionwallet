@@ -59,7 +59,8 @@ COVERS_RE = re.compile(r"Covers:\s*(.+)$")
 # `function test_x(`, `function testFuzz_x(`, `function invariant_x(`, `check_x(`
 FUNC_RE = re.compile(r"^\s*function\s+((?:test|testFuzz|invariant_|check_)[A-Za-z0-9_]*)\s*\(")
 
-SOURCE_SUFFIXES = {".sol", ".py"}
+# .md so a proof folder's README can cite what its lemmas discharge.
+SOURCE_SUFFIXES = {".sol", ".py", ".md"}
 
 
 # ── Parsing ─────────────────────────────────────────────────────────────────

@@ -183,6 +183,22 @@ The on-chain used-leaf bitmap in the Guard/registry stays in place even after th
 - [ ] Host SDK in the add-on service (`ledger-xmss.ts`) replacing the Phase 1 software keystore path behind the same interface
 - [ ] Ledger security review submission
 
+### Open items for FermionWallet
+
+[fermionwallet.md](./fermionwallet.md) specifies a second product this app does not yet support. Its
+`Transfer` payload is refused by the parser as written, so a shipped device cannot drive it. Adding it
+needs no new APDU command, but does need (FWL-033):
+
+- [ ] the `Transfer` type and the `FermionWallet` EIP-712 domain accepted alongside `PreApproval`, with `verifyingContract` = the wallet
+- [ ] a signing flow for it: Flow 2's token, amount, recipient, validity and decision screens unchanged; the context screen shows **Wallet 0x…** and the chain in place of Safe address, `txHash` pin and `policyHash`
+- [ ] per-slot binding to a single verifying contract, written at first signature and checked on every later one, held in NVM beside the leaf counter (FWL-023)
+- [ ] refusal when a slot bound to a wallet is asked for a Safe pre-approval, or a slot used for Safes is asked for a wallet transfer — a key belongs to one product
+
+The last two matter more than they look: the standalone wallet has no registry, so its on-chain bitmap
+cannot see leaves spent elsewhere. For that product the device binding is the *only* thing keeping one
+leaf to one digest, which is why FermionWallet records the weaker guarantee as a residual risk
+(FWL-025) rather than claiming the defense in depth described above.
+
 ## Design intent
 
 Phase 1's split trust (Ledger ECDSA + software XMSS keystore) collapses into a single hardware trust anchor: the quantum signature itself comes from the secure element, with index state that a compromised host cannot corrupt.

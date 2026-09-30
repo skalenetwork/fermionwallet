@@ -30,6 +30,7 @@ contract DeployScriptTest is Test {
         return vm.computeCreate2Address(salt, keccak256(initCode), CREATE2_FACTORY);
     }
 
+    /// Covers: [GRD-080]
     function test_DefaultDeployment_SameAddressOnEveryTargetChain() public {
         address expected = _expected(keccak256("fermionguard.guard.v1"));
         uint256[6] memory chains = [uint256(1), 10, 8453, 42161, 137, 31337];
@@ -84,6 +85,7 @@ contract DeployScriptTest is Test {
         assertEq(guard.MAX_COMMITMENT_QUEUE(), 3);
     }
 
+    /// Covers: [GRD-075], [GRD-113]
     function test_RejectsBadParams() public {
         Deploy d = new Deploy();
         bytes32 salt = keccak256("fermionguard.guard.v1");

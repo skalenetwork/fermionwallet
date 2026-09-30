@@ -216,6 +216,7 @@ abstract contract LegacySafeIntegrationBase is Test {
 
     // ═══════════════════════ Enrollment + setGuard ══════════════════════════
 
+    /// Covers: [GRD-037], [GRD-131], [QKR-007]
     function test_Enrollment_KeyRegisteredAndGuardWired() public view {
         assertEq(guard.safeToQuantumKey(address(safe)), keyId);
         assertTrue(guard.enrolledSafe(address(safe)));
@@ -230,6 +231,7 @@ abstract contract LegacySafeIntegrationBase is Test {
 
     /// The default Safe{Wallet} handler must be removed before the ceremony: a Safe
     /// still carrying it cannot enroll (ERC-1271 bypass).
+    /// Covers: [GRD-037], [GRD-129], [QKR-006]
     function test_Enrollment_RefusedWhileFallbackHandlerInstalled() public {
         safe = _newSafe(compatHandler, address(0), "");
         _expectRegistrationRevert(
@@ -239,6 +241,7 @@ abstract contract LegacySafeIntegrationBase is Test {
 
     // ═══════════════════════════ Tier 2 / Tier 1 ════════════════════════════
 
+    /// Covers: [GRD-116], [GRD-124], [GRD-131], [ENG-022]
     function test_Tier2Transfer_BlockedWithoutApproval_AllowedWithOne() public {
         bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 7 ether));
         _expectExecRevert(address(token), 0, data, Enum.Operation.Call, "");
@@ -255,6 +258,7 @@ abstract contract LegacySafeIntegrationBase is Test {
     /// nonce() - 1: the Guard recomputes the safeTxHash with the Safe's own hasher
     /// after execTransaction incremented the nonce. A pin for the CURRENT nonce
     /// matches in-flight; a pin for the next nonce does not.
+    /// Covers: [GRD-083], [GRD-084], [GRD-127]
     function test_Tier1_PinnedTransfer_NonceMinusOne() public {
         bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 5 ether));
         uint256 n = safe.nonce();
@@ -273,6 +277,7 @@ abstract contract LegacySafeIntegrationBase is Test {
 
     /// Edge of nonce() - 1: a Safe whose guard was wired at setup time has its very
     /// first transaction (nonce 0) checked; the recomputation must use nonce 0.
+    /// Covers: [GRD-083], [GRD-084]
     function test_Tier1_FirstEverTransaction_NonceZero() public {
         SetupGuardWriter writer = new SetupGuardWriter();
         safe = _newSafe(address(0), address(writer), abi.encodeCall(SetupGuardWriter.wire, (address(guard))));
@@ -290,6 +295,7 @@ abstract contract LegacySafeIntegrationBase is Test {
 
     // ═════════════════════ Batch (MultiSendCallOnly) ═══════════════════════
 
+    /// Covers: [GRD-105], [GRD-106], [GRD-131]
     function test_Batch_MultiSendCallOnly_TwoTransfers() public {
         bytes memory txs = bytes.concat(
             _leg(address(token), abi.encodeCall(IERC20.transfer, (recipient, 2 ether))),
@@ -305,6 +311,7 @@ abstract contract LegacySafeIntegrationBase is Test {
         assertTrue(guard.getPreApproval(id).used);
     }
 
+    /// Covers: [GRD-107]
     function test_Batch_LegTargetingSafe_Rejected() public {
         bytes memory txs = _leg(address(safe), abi.encodeWithSignature("setGuard(address)", address(0)));
         bytes memory data = abi.encodeWithSignature("multiSend(bytes)", txs);
@@ -320,6 +327,7 @@ abstract contract LegacySafeIntegrationBase is Test {
 
     // ═════════════════════ Escape hatch: pause + de-guard ═══════════════════
 
+    /// Covers: [GRD-068], [GRD-072], [GRD-077], [GRD-078], [GRD-131]
     function test_EscapeHatch_PauseThenEmergencyDeGuard() public {
         vm.prank(owner2); // any single owner (Safe.isOwner on the legacy Safe)
         guard.pauseSafe(address(safe));
@@ -348,6 +356,7 @@ abstract contract LegacySafeIntegrationBase is Test {
         assertEq(token.balanceOf(recipient), 1 ether);
     }
 
+    /// Covers: [GRD-094], [GRD-132]
     function test_EscapeHatch_TimelockedUnpause() public {
         vm.prank(owner1);
         guard.pauseSafe(address(safe));
@@ -363,6 +372,7 @@ abstract contract LegacySafeIntegrationBase is Test {
 
     // ═════════════════════════ Fallback-handler ban ═════════════════════════
 
+    /// Covers: [GRD-052], [GRD-055], [GRD-056], [GRD-129]
     function test_FallbackHandler_AdminInstallForbidden_RemovalRemediates() public {
         bytes memory install = abi.encodeWithSignature("setFallbackHandler(address)", compatHandler);
         _createAdmin(address(safe), keccak256(install), 1);
@@ -396,6 +406,7 @@ abstract contract LegacySafeIntegrationBase is Test {
     // is refused even with a matured ADMIN approval, a Safe with modules cannot
     // enroll, and a guarded Safe that has one anyway fails closed until disableModule.
 
+    /// Covers: [GRD-046], [GRD-049], [GRD-130]
     function test_Module_EnableRejectedEvenWithAdminApproval() public {
         address module = makeAddr("module");
         bytes memory enable = abi.encodeWithSignature("enableModule(address)", module);
@@ -425,6 +436,7 @@ abstract contract LegacySafeIntegrationBase is Test {
     /// downgrade from 1.5.0, or planted before enrollment): holding this Guard's
     /// address there must not unlock enableModule — the module would bypass the
     /// Guard entirely.
+    /// Covers: [GRD-047], [GRD-049], [GRD-130]
     function test_Module_StaleModuleGuardSlotNotTrusted() public {
         vm.store(address(safe), MODULE_GUARD_SLOT, bytes32(uint256(uint160(address(guard)))));
         address module = makeAddr("module");
@@ -446,6 +458,7 @@ abstract contract LegacySafeIntegrationBase is Test {
         );
     }
 
+    /// Covers: [GRD-039], [GRD-046], [GRD-130]
     function test_Module_SafeWithModuleCannotEnroll() public {
         address module = makeAddr("module");
         safe = _newSafe(address(0), address(0), "");
@@ -459,6 +472,7 @@ abstract contract LegacySafeIntegrationBase is Test {
     /// window): the module transaction itself never reaches the Guard on this Safe
     /// version, so the Guard fails closed on every owner transaction instead, until
     /// the ADMIN-approved disableModule remediation — which is never deadlocked.
+    /// Covers: [GRD-039], [GRD-048], [GRD-050], [GRD-130]
     function test_Module_TransactionBypassesGuard_OwnerTxsFailClosedUntilDisabled() public {
         address module = makeAddr("module");
         safe = _newSafe(address(0), address(0), "");
@@ -502,6 +516,7 @@ abstract contract LegacySafeIntegrationBase is Test {
     /// Failed executions (safeTxGas != 0, so the Safe does not revert) still get
     /// checkAfterExecution and unwind the depth — for an escape call and for an
     /// approved transaction — so the next transaction in the same frame runs.
+    /// Covers: [GRD-087], [GRD-088], [ENG-037]
     function test_Depth_UnwindsAcrossTransactionsInOneFrame() public {
         uint256 tooMuch = token.balanceOf(address(safe)) + 1;
         bytes32 failing = _createTransfer(recipient, tooMuch, 1, bytes32(0));
@@ -525,6 +540,7 @@ abstract contract LegacySafeIntegrationBase is Test {
     }
 
     /// A nested execTransaction from inside an approved one is rejected.
+    /// Covers: [GRD-089]
     function test_Depth_NestedExecTransactionBlocked() public {
         LegacyReentrantToken attacker = new LegacyReentrantToken(safe);
         _createTransfer2(address(attacker), recipient, 1 ether, 1, bytes32(0));

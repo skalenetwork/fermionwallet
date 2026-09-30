@@ -138,6 +138,7 @@ contract GuardIntegrationTest is Test {
 
     // ═════════════════════════════ Registration ═════════════════════════════
 
+    /// Covers: [GRD-101], [QKR-005], [QKR-007]
     function test_RegistrationState() public view {
         assertEq(guard.safeToQuantumKey(address(safe)), keyId);
         assertTrue(guard.enrolledSafe(address(safe)));
@@ -152,6 +153,7 @@ contract GuardIntegrationTest is Test {
         assertFalse(guard.allowedSelectors(address(safe), IERC20.approve.selector));
     }
 
+    /// Covers: [GRD-032], [QKR-006], [QKR-008]
     function test_DoubleRegistrationReverts() public {
         vm.expectRevert(abi.encodeWithSelector(QuantumKeyRegistry.SafeAlreadyEnrolled.selector, address(safe)));
         vm.prank(relayer);
@@ -164,6 +166,7 @@ contract GuardIntegrationTest is Test {
 
     /// The production-checklist integration test: pin the exact hash the Safe will
     /// compute, then verify the Guard's nonce()-1 recomputation matches it in-flight.
+    /// Covers: [GRD-057], [GRD-083], [GRD-084], [GRD-127], [ENG-003]
     function test_Tier1_PinnedTransfer_Executes() public {
         bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 5 ether));
         bytes32 pin = safe.getTransactionHash(
@@ -180,6 +183,7 @@ contract GuardIntegrationTest is Test {
 
     // ═══════════════════════ Tier 2 — field-matched ═════════════════════════
 
+    /// Covers: [GRD-057], [ENG-036]
     function test_Tier2_FieldMatchedTransfer_Executes() public {
         bytes32 id = _createTransfer(recipient, 7 ether, 1, bytes32(0));
         _safeExec(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 7 ether)), Enum.Operation.Call);
@@ -187,6 +191,7 @@ contract GuardIntegrationTest is Test {
         assertTrue(guard.getPreApproval(id).used);
     }
 
+    /// Covers: [ENG-038]
     function test_Tier2_FifoOrder() public {
         bytes32 first = _createTransfer(recipient, 3 ether, 1, bytes32(0));
         bytes32 second = _createTransfer(recipient, 3 ether, 2, bytes32(0));
@@ -195,21 +200,25 @@ contract GuardIntegrationTest is Test {
         assertFalse(guard.getPreApproval(second).used);
     }
 
+    /// Covers: [GRD-116]
     function test_NoApproval_Reverts() public {
         _expectExecRevert(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)));
     }
 
+    /// Covers: [GRD-057], [ENG-036]
     function test_AmountMismatch_Reverts() public {
         _createTransfer(recipient, 5 ether, 1, bytes32(0));
         _expectExecRevert(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 6 ether)));
     }
 
+    /// Covers: [GRD-118], [ENG-023], [ENG-034]
     function test_ExpiredApproval_Reverts() public {
         _createTransfer(recipient, 5 ether, 1, bytes32(0));
         vm.warp(block.timestamp + 2 days + 1); // beyond validTo
         _expectExecRevert(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 5 ether)));
     }
 
+    /// Covers: [GRD-035], [GRD-118], [ENG-023], [ENG-034]
     function test_RevokedApproval_Reverts() public {
         bytes32 id = _createTransfer(recipient, 5 ether, 1, bytes32(0));
         vm.prank(ledger);
@@ -219,6 +228,7 @@ contract GuardIntegrationTest is Test {
 
     // ═════════════════════════ Hybrid signature rules ═══════════════════════
 
+    /// Covers: [GRD-009], [ENG-004], [ENG-033]
     function test_LeafReuse_Reverts() public {
         _createTransfer(recipient, 1 ether, 3, bytes32(0));
         // Second approval attempting the same leaf must die inside the registry.
@@ -229,6 +239,7 @@ contract GuardIntegrationTest is Test {
         guard.createPreApproval(req, ecdsaSig, xmssSig);
     }
 
+    /// Covers: [GRD-011], [GRD-036], [ENG-016], [ENG-032]
     function test_WrongEcdsaSigner_Reverts() public {
         PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
         (, bytes memory xmssSig) = _hybridSign(req, 0);
@@ -238,6 +249,7 @@ contract GuardIntegrationTest is Test {
         guard.createPreApproval(req, abi.encodePacked(r, s, v), xmssSig);
     }
 
+    /// Covers: [GRD-011], [ENG-016], [ENG-032]
     function test_XmssOverWrongDigest_Reverts() public {
         PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
         (bytes memory ecdsaSig,) = _hybridSign(req, 0);
@@ -247,6 +259,7 @@ contract GuardIntegrationTest is Test {
         guard.createPreApproval(req, ecdsaSig, wrongXmss);
     }
 
+    /// Covers: [ENG-027]
     function test_LeafIndexMismatch_Reverts() public {
         PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 2, bytes32(0));
         bytes32 digest = _preApprovalDigest(req, 0);
@@ -261,6 +274,7 @@ contract GuardIntegrationTest is Test {
 
     // ═════════════════════════ Policy enforcement ═══════════════════════════
 
+    /// Covers: [GRD-062]
     function test_DeniedSelector_ApproveReverts() public {
         _expectExecRevertWith(
             address(token),
@@ -270,6 +284,7 @@ contract GuardIntegrationTest is Test {
         );
     }
 
+    /// Covers: [GRD-063], [GRD-100]
     function test_UnlistedSelector_Reverts() public {
         _expectExecRevertWith(
             address(token),
@@ -281,6 +296,7 @@ contract GuardIntegrationTest is Test {
         );
     }
 
+    /// Covers: [GRD-079]
     function test_GasRefund_Reverts() public {
         bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
         bytes32 txHash = safe.getTransactionHash(
@@ -292,6 +308,7 @@ contract GuardIntegrationTest is Test {
         );
     }
 
+    /// Covers: [GRD-028], [GRD-081]
     function test_DirectCheckTransaction_NonEnrolled_Reverts() public {
         vm.expectRevert(abi.encodeWithSelector(FermionGuard.NotEnrolledSafe.selector, address(0xBAD)));
         vm.prank(address(0xBAD));
@@ -300,6 +317,7 @@ contract GuardIntegrationTest is Test {
         );
     }
 
+    /// Covers: [GRD-060], [GRD-105]
     function test_DelegateCallToArbitraryTarget_Reverts() public {
         _expectExecRevertOp(
             address(token),
@@ -312,6 +330,7 @@ contract GuardIntegrationTest is Test {
 
     /// A malicious call target re-enters execTransaction mid-flight with a fully
     /// signed, pre-approved inner transaction: the transient depth flag must kill it.
+    /// Covers: [GRD-088], [GRD-089]
     function test_Reentrancy_NestedExecTransaction_Blocked() public {
         ReentrantToken attacker = new ReentrantToken(safe);
 
@@ -344,6 +363,7 @@ contract GuardIntegrationTest is Test {
 
     // ═══════════════════════ ADMIN class + timelock ═════════════════════════
 
+    /// Covers: [GRD-059], [ENG-026]
     function test_AdminTimelock_TooEarly_Reverts() public {
         bytes memory call =
             abi.encodeCall(FermionGuard.setSelectorPolicy, (address(safe), MockToken.mint.selector, true));
@@ -363,6 +383,7 @@ contract GuardIntegrationTest is Test {
 
     /// Full governance round-trip: ADMIN pre-approval → timelock elapses → the Safe
     /// mutates its own selector permit-list through the Guard's ADMIN dispatch path.
+    /// Covers: [GRD-051], [GRD-101], [GRD-104]
     function test_AdminFlow_SetSelectorPolicy_EndToEnd() public {
         bytes memory call =
             abi.encodeCall(FermionGuard.setSelectorPolicy, (address(safe), MockToken.mint.selector, true));
@@ -372,12 +393,14 @@ contract GuardIntegrationTest is Test {
         assertTrue(guard.allowedSelectors(address(safe), MockToken.mint.selector));
     }
 
+    /// Covers: [GRD-003], [GRD-104]
     function test_SetSelectorPolicy_DirectEOA_Reverts() public {
         vm.expectRevert(QuantumKeyRegistry.NotAuthorized.selector);
         vm.prank(deployer);
         guard.setSelectorPolicy(address(safe), MockToken.mint.selector, true);
     }
 
+    /// Covers: [GRD-102]
     function test_SetSelectorPolicy_DenyListImmutable() public {
         vm.expectRevert(abi.encodeWithSelector(FermionGuard.DeniedSelector.selector, IERC20.approve.selector));
         vm.prank(address(safe));
@@ -389,6 +412,7 @@ contract GuardIntegrationTest is Test {
     /// Production-checklist mandatory test: the escape hatch works WHILE PAUSED
     /// and with the quantum key presumed lost — request, wait out the timelock,
     /// detach the Guard with setGuard(0), and confirm the Safe is free. End to end.
+    /// Covers: [GRD-068], [GRD-070], [GRD-074], [GRD-075], [GRD-077], [GRD-092], [GRD-096], [GRD-133]
     function test_EmergencyDeGuard_WorksWhilePaused_EndToEnd() public {
         _safeExec(
             address(guard), 0, abi.encodeCall(FermionGuard.pauseSafe, (address(safe))), Enum.Operation.Call
@@ -420,6 +444,7 @@ contract GuardIntegrationTest is Test {
         assertEq(token.balanceOf(recipient), 9 ether);
     }
 
+    /// Covers: [GRD-077]
     function test_EmergencyDeGuard_SetNonZeroGuard_NotUnlocked() public {
         _safeExec(
             address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call
@@ -432,6 +457,7 @@ contract GuardIntegrationTest is Test {
 
     /// Per-Safe pause: one owner freezes instantly (direct call); unpause is Safe-
     /// governed, time-locked, and flows through the escape hatch while frozen.
+    /// Covers: [GRD-092], [GRD-093], [GRD-094], [GRD-096]
     function test_SafePause_OwnerFreezes_TimelockedUnpause_EndToEnd() public {
         vm.prank(owner3);
         guard.pauseSafe(address(safe));
@@ -460,6 +486,7 @@ contract GuardIntegrationTest is Test {
 
     // ══════════════════════ Batch (MultiSendCallOnly) ═══════════════════════
 
+    /// Covers: [GRD-058], [GRD-105], [GRD-106]
     function test_Batch_TwoTransfers_Executes() public {
         bytes memory leg1 = abi.encodeCall(IERC20.transfer, (recipient, 2 ether));
         bytes memory leg2 = abi.encodeCall(IERC20.transfer, (owner3, 3 ether));
@@ -473,11 +500,13 @@ contract GuardIntegrationTest is Test {
         assertEq(token.balanceOf(owner3), 3 ether);
     }
 
+    /// Covers: [GRD-109]
     function test_Batch_TruncatedHeader_Reverts() public {
         bytes memory txs = new bytes(50); // < one 85-byte leg header
         _expectDirectBatchRevert(txs, abi.encodeWithSelector(FermionGuard.MalformedBatch.selector));
     }
 
+    /// Covers: [GRD-109]
     function test_Batch_DataLengthOverrun_Reverts() public {
         // Header claims 1000 bytes of leg calldata; only 4 are present.
         bytes memory txs =
@@ -485,12 +514,14 @@ contract GuardIntegrationTest is Test {
         _expectDirectBatchRevert(txs, abi.encodeWithSelector(FermionGuard.MalformedBatch.selector));
     }
 
+    /// Covers: [GRD-109]
     function test_Batch_TrailingBytes_Reverts() public {
         bytes memory leg = _leg(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)));
         bytes memory txs = bytes.concat(leg, hex"deadbe"); // 3-byte smuggled suffix
         _expectDirectBatchRevert(txs, abi.encodeWithSelector(FermionGuard.MalformedBatch.selector));
     }
 
+    /// Covers: [GRD-108], [GRD-109]
     function test_Batch_TooManyLegs_Reverts() public {
         bytes memory leg = _leg(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)));
         bytes memory txs;
@@ -502,6 +533,7 @@ contract GuardIntegrationTest is Test {
         );
     }
 
+    /// Covers: [GRD-107]
     function test_Batch_LegTargetingSafe_Reverts() public {
         bytes memory txs = _leg(address(safe), 0, abi.encodeWithSignature("setGuard(address)", address(0)));
         _expectDirectBatchRevert(
@@ -509,6 +541,7 @@ contract GuardIntegrationTest is Test {
         );
     }
 
+    /// Covers: [GRD-062], [GRD-107]
     function test_Batch_LegWithDeniedSelector_Reverts() public {
         bytes memory txs = _leg(address(token), 0, abi.encodeCall(IERC20.approve, (recipient, 1 ether)));
         _expectDirectBatchRevert(
@@ -518,6 +551,7 @@ contract GuardIntegrationTest is Test {
 
     /// Fuzz the structural validator with arbitrary bytes: it must never accept —
     /// any acceptance would mean an unsigned batch got through.
+    /// Covers: [GRD-109], [GRD-128]
     function testFuzz_Batch_GarbageNeverAccepted(bytes calldata garbage) public {
         vm.assume(garbage.length > 0 && garbage.length < 4096);
         bytes memory data = abi.encodeWithSignature("multiSend(bytes)", garbage);
@@ -547,6 +581,7 @@ contract GuardIntegrationTest is Test {
 
     // ═══════════════════════════ Key lifecycle ══════════════════════════════
 
+    /// Covers: [GRD-033], [QKR-012], [QKR-016], [QKR-017], [QKR-026]
     function test_Rotation_WithOldKeyProof() public {
         (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
         uint256 nonce = guard.registryNonce(address(safe));
@@ -590,6 +625,7 @@ contract GuardIntegrationTest is Test {
         assertTrue(guard.isLeafUsed(keyId, 6)); // rotation consumed one old-key leaf
     }
 
+    /// Covers: [GRD-033], [QKR-012], [QKR-017]
     function test_Rotation_WithoutOldKeyProof_Reverts() public {
         (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
         uint256 nonce = guard.registryNonce(address(safe));
@@ -627,6 +663,7 @@ contract GuardIntegrationTest is Test {
         );
     }
 
+    /// Covers: [GRD-034], [GRD-068], [QKR-020], [QKR-023], [QKR-024]
     function test_EmergencyRevocation_TimelockedLifecycle() public {
         uint256 validUntil = block.timestamp + 1 days;
         bytes32 digest = _guardDigest(
@@ -667,6 +704,7 @@ contract GuardIntegrationTest is Test {
     /// After an emergency key revocation, a Safe transaction that was pinned under the
     /// revoked key can be re-approved with the new key at once — the dead pin (its key
     /// is revoked) must not block the slot until its possibly far-off validTo.
+    /// Covers: [QKR-025], [ENG-041]
     function test_EmergencyRevocation_PinnedTxCanBeReapprovedWithNewKey() public {
         bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
         bytes32 pin = safe.getTransactionHash(
@@ -720,6 +758,7 @@ contract GuardIntegrationTest is Test {
         assertEq(token.balanceOf(recipient), 1 ether);
     }
 
+    /// Covers: [GRD-034], [QKR-021]
     function test_EmergencyRevocation_CancelledRequestCannotBeReplayed() public {
         uint256 validUntil = block.timestamp + 30 days;
         bytes32 digest = _guardDigest(
@@ -750,6 +789,7 @@ contract GuardIntegrationTest is Test {
     /// A mempool front-runner registering the victim's root under a fake "Safe"
     /// (self-authenticated checkSignatures) must NOT block the victim: root dedup
     /// is scoped per Safe, so the squat is inert.
+    /// Covers: [GRD-032], [QKR-009]
     function test_RootSquatting_CannotBlockRotation() public {
         (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
 
@@ -795,6 +835,7 @@ contract GuardIntegrationTest is Test {
 
     /// A non-allowlisted fallback handler (ERC-1271 isValidSignature = Guard bypass)
     /// freezes all checked transactions until remediated.
+    /// Covers: [GRD-054], [GRD-055], [GRD-129]
     function test_FallbackHandler_BlocksCheckedTransactions() public {
         address evil = makeAddr("evilHandler");
         _createTransfer(recipient, 1 ether, 1, bytes32(0));
@@ -809,6 +850,7 @@ contract GuardIntegrationTest is Test {
 
     /// Even a matured, quantum-approved ADMIN action cannot install a handler that
     /// is not on the governance allowlist.
+    /// Covers: [GRD-052], [GRD-129]
     function test_FallbackHandler_AdminInstallForbidden() public {
         address evil = makeAddr("evilHandler");
         bytes memory data = abi.encodeWithSignature("setFallbackHandler(address)", evil);
@@ -824,6 +866,7 @@ contract GuardIntegrationTest is Test {
 
     /// The remediation path must work WHILE the posture is bad: quantum-approved
     /// setFallbackHandler(0) clears the handler, after which transfers flow again.
+    /// Covers: [GRD-050], [GRD-056], [GRD-129]
     function test_FallbackHandler_RemovalWorksWhilePostureBad() public {
         bytes memory clear = abi.encodeWithSignature("setFallbackHandler(address)", address(0));
         _createAdmin(address(safe), keccak256(clear), 1);
@@ -840,6 +883,7 @@ contract GuardIntegrationTest is Test {
     /// unless this Guard is already wired as the Safe's module guard — the Safe can
     /// never be steered into a state its own remediation transactions can't exit,
     /// and on Safe <= 1.4.1 (unguardable modules) it is rejected outright.
+    /// Covers: [GRD-040], [GRD-049], [GRD-130]
     function test_EnableModule_RejectedUntilModuleGuardWired() public {
         address module = makeAddr("module");
         bytes memory enable = abi.encodeWithSignature("enableModule(address)", module);
@@ -1130,6 +1174,7 @@ contract GuardIntegrationTest is Test {
     /// One owner must not be able to veto the threshold: the ADMIN approval that
     /// removes that owner is revocable by the Safe (threshold) or the Administrator,
     /// never by an individual owner.
+    /// Covers: [GRD-035], [QKR-019]
     function test_SingleOwnerCannotRevokeAdminApproval() public {
         bytes memory removeOwner =
             abi.encodeWithSignature("removeOwner(address,address,uint256)", owner1, owner2, uint256(2));
@@ -1155,6 +1200,7 @@ contract GuardIntegrationTest is Test {
     /// The escape hatch returns before any other check — it must not also skip the
     /// refund ban. Otherwise owner-threshold signatures alone (the exact thing the
     /// quantum layer distrusts) drain any token as a "gas refund" of an escape call.
+    /// Covers: [GRD-073], [GRD-074], [GRD-079]
     function test_EscapeHatch_GasRefund_CannotDrain() public {
         address thief = makeAddr("thief");
         bytes memory data = abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ());
@@ -1177,6 +1223,7 @@ contract GuardIntegrationTest is Test {
     /// delegatecall. A zero-target leg is therefore a Safe self-call smuggled into a
     /// PAYLOAD batch (no ADMIN class, no ADMIN_TIMELOCK), e.g. enableModule when the
     /// Safe permit-lists that selector for a Zodiac-style modifier contract.
+    /// Covers: [GRD-107]
     function test_Batch_LegZeroTarget_IsSafeSelfCall_Reverts() public {
         bytes memory policy = abi.encodeCall(
             FermionGuard.setSelectorPolicy, (address(safe), bytes4(keccak256("enableModule(address)")), true)
@@ -1204,6 +1251,7 @@ contract GuardIntegrationTest is Test {
     /// Spec: dead entries "never count toward the cap and cannot jam the queue". A
     /// scheduled (future validFrom) approval at the head must not let used entries
     /// pile up behind it until identical recurring payouts can no longer be approved.
+    /// Covers: [ENG-039], [ENG-040]
     function test_Tier2_DeadEntriesBehindScheduledApproval_DoNotFillQueue() public {
         PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
         req.validFrom = uint64(block.timestamp) + 1 days;
@@ -1230,6 +1278,7 @@ contract GuardIntegrationTest is Test {
     /// An escape-hatch transaction nested inside an approved one used to clear the
     /// depth flag in its checkAfterExecution, re-opening the door for a further
     /// nested (non-escape) Safe transaction within the same outer execution.
+    /// Covers: [GRD-088], [GRD-089]
     function test_Reentrancy_NestedEscapeCallDoesNotResetDepth() public {
         EscapeThenReenterToken attacker = new EscapeThenReenterToken(safe);
         _createTransfer2(address(attacker), recipient, 1 ether, 1, bytes32(0));
@@ -1300,6 +1349,7 @@ contract GuardIntegrationTest is Test {
     /// The permit-list is initialised at FIRST enrollment only. Registering a new key
     /// after an emergency revocation (no owner vote on the permit-list) used to rerun
     /// the initialisation and silently re-enable `transfer` the owners had disabled.
+    /// Covers: [GRD-103], [QKR-007]
     function test_Reregistration_DoesNotReenableDisabledTransfer() public {
         _disableTransferSelector();
         _revokeAndReregister();
@@ -1308,6 +1358,7 @@ contract GuardIntegrationTest is Test {
 
     /// Removing `transfer` from the permit-list must actually stop TRANSFER-class
     /// execution — directly and inside batches — even with a matching approval.
+    /// Covers: [GRD-063], [GRD-101], [GRD-107]
     function test_DisabledTransferSelector_BlocksTransfers() public {
         _disableTransferSelector();
         bytes memory pay = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
@@ -1356,6 +1407,7 @@ contract GuardIntegrationTest is Test {
     /// paused AND its posture is bad (fallback handler set) — and each one leaves the
     /// transient depth at zero: a quantum-approved transaction executed right after
     /// them in the SAME call frame is not mistaken for a nested one.
+    /// Covers: [GRD-067], [GRD-072], [GRD-073], [GRD-088]
     function test_EscapeHatch_AllOwnerSafetyCallsPass_DepthReturnsToZero() public {
         bytes32 doomed = _createTransfer(recipient, 5 ether, 1, bytes32(0));
         bytes memory removeGuard = abi.encodeWithSignature("setGuard(address)", address(0));
@@ -1409,6 +1461,7 @@ contract GuardIntegrationTest is Test {
     /// Transactions whose inner call FAILS (safeTxGas != 0, so the Safe does not
     /// revert) still get checkAfterExecution and decrement the depth — both for an
     /// escape call and for an approved one — so the next one in the same frame runs.
+    /// Covers: [GRD-085], [GRD-087], [GRD-088], [ENG-037]
     function test_Depth_FailedExecutionsStillUnwind() public {
         uint256 tooMuch = token.balanceOf(address(safe)) + 1;
         bytes32 failing = _createTransfer(recipient, tooMuch, 1, bytes32(0));
@@ -1437,6 +1490,7 @@ contract GuardIntegrationTest is Test {
 
     /// Compaction at the cap keeps the survivors in FIFO order: live approvals queued
     /// behind a scheduled head and a run of used entries are consumed oldest-first.
+    /// Covers: [ENG-038], [ENG-039], [ENG-040]
     function test_Tier2_CompactionPreservesFifo() public {
         PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
         req.validFrom = uint64(block.timestamp) + 1 days;
@@ -1472,6 +1526,7 @@ contract GuardIntegrationTest is Test {
     /// then attach the Guard. Each remediation used to be exempt only from its own
     /// posture check, so disableModule died on the handler and setFallbackHandler(0)
     /// on the module — nothing but a full Guard removal could fix the posture.
+    /// Covers: [GRD-050], [GRD-130]
     function test_PostureRemediations_DoNotDeadlockEachOther() public {
         address module = makeAddr("module");
         // Safe storage: slot 1 = modules linked list (SENTINEL → module → SENTINEL).
@@ -1500,6 +1555,7 @@ contract GuardIntegrationTest is Test {
     /// §2.1: "neither pausing nor key rotation stops the de-guard clock", and the
     /// matured owners-only removal works while paused. The Administrator pauses (its
     /// fast-pause right) and a routine rotation happens mid-window; the clock runs on.
+    /// Covers: [GRD-070], [GRD-075], [QKR-030]
     function test_TM_DeGuardClockSurvivesPauseAndRotation() public {
         _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
         uint64 executableAt = guard.emergencyDeGuardExecutableAt(address(safe));
@@ -1519,6 +1575,7 @@ contract GuardIntegrationTest is Test {
     /// §2.3: owners clear-sign ApproveQuantumKey{safe, quantumAdmin, xmssRoot, ...,
     /// registryNonce, validUntil}: a swapped root, a swapped Administrator, or a stale
     /// (aborted-session) nonce invalidates every owner signature.
+    /// Covers: [GRD-030], [GRD-031], [QKR-004], [QKR-010], [QKR-018]
     function test_TM_CeremonySubstitutionAndStaleNonceRejected() public {
         _revokeKey();
         (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
@@ -1559,6 +1616,7 @@ contract GuardIntegrationTest is Test {
 
     /// §2.9: a mempool copy of registerQuantumKey executes identically (the relayer
     /// has no authority; nothing is redirectable) and a second submission reverts.
+    /// Covers: [GRD-029], [QKR-006]
     function test_TM_FrontRunRegistration_ExecutesIdentically() public {
         _revokeKey();
         (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
@@ -1583,6 +1641,7 @@ contract GuardIntegrationTest is Test {
 
     /// §2.9: a front-runner submitting the same createPreApproval calldata creates
     /// exactly the approval the Administrator signed; the relayer's copy reverts.
+    /// Covers: [GRD-124], [ENG-030]
     function test_TM_FrontRunCreatePreApproval_SecondSubmissionReverts() public {
         PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
         (bytes memory ecdsaSig, bytes memory xmssSig) = _hybridSign(req, 0);
@@ -1601,6 +1660,7 @@ contract GuardIntegrationTest is Test {
 
     /// Guard spec, "Cross-chain replay": the EIP-712 domain binds block.chainid, so an
     /// approval signed for this chain verifies nowhere else — including on a fork.
+    /// Covers: [GRD-080], [GRD-117], [GRD-123]
     function test_TM_CrossChainReplayRejected() public {
         PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
         (bytes memory ecdsaSig, bytes memory xmssSig) = _hybridSign(req, 0);
@@ -1617,6 +1677,7 @@ contract GuardIntegrationTest is Test {
     /// Registry invariants: after rotation the old key "can create nothing new", while
     /// every registration, rotation, revocation request and revocation consumes the
     /// registry nonce.
+    /// Covers: [QKR-011], [QKR-027], [QKR-028], [ENG-028]
     function test_TM_RotatedKeyCreatesNothing_NonceConsumedByEveryStep() public {
         uint256 n0 = guard.registryNonce(address(safe));
         bytes32 oldKeyId = keyId;
@@ -1638,6 +1699,7 @@ contract GuardIntegrationTest is Test {
 
     /// pre-approval-engine.md, "At execution": a Revoked key's approvals are dead —
     /// also after a fresh key is registered for the same Safe.
+    /// Covers: [GRD-122], [QKR-011], [ENG-035]
     function test_TM_RevokedKeyApprovalsStayDeadAfterReregistration() public {
         PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
         req.validTo = uint64(block.timestamp) + 60 days; // outlives the revocation timelock
@@ -1654,6 +1716,7 @@ contract GuardIntegrationTest is Test {
 
     /// quantum-key-registry.md: registration is refused while the Safe has a fallback
     /// handler or an unguarded enabled module (the enrollment posture check).
+    /// Covers: [GRD-037], [GRD-039], [QKR-006]
     function test_TM_RegistrationRefusedWithBadPosture() public {
         _revokeKey();
         (bytes32 newRoot, bytes32 newSeed,) = _xmssSign(H_NEW, 0, bytes32(uint256(1)));
@@ -1680,6 +1743,7 @@ contract GuardIntegrationTest is Test {
     /// pre-approval-engine.md, "Validation rules" at creation: class-irrelevant fields
     /// must be zero, ADMIN targets only the Safe or this Guard, and TRANSFER/PAYLOAD
     /// reject zero addresses — all before any signature work.
+    /// Covers: [GRD-059], [ENG-031]
     function test_TM_CreationShapeRules() public {
         PreApprovalEngine.PreApprovalRequest memory req = _transferReq(recipient, 1 ether, 1, bytes32(0));
         req.value = 1;
@@ -1711,6 +1775,7 @@ contract GuardIntegrationTest is Test {
     /// Guard spec, "Required inheritance" + "Immutability and deployment hygiene":
     /// supportsInterface reports exactly Safe's ITransactionGuard / IModuleGuard IDs
     /// plus ERC-165, and the constructor validates its deployment parameters.
+    /// Covers: [GRD-020], [GRD-024], [GRD-113]
     function test_TM_InterfaceIdsAndConstructorValidation() public {
         assertTrue(guard.supportsInterface(type(ITransactionGuard).interfaceId));
         assertTrue(guard.supportsInterface(type(IModuleGuard).interfaceId));
@@ -1732,6 +1797,7 @@ contract GuardIntegrationTest is Test {
     /// quantum attacker holding the owner keys can therefore register ITS key in the
     /// same block the revocation matures and win the race against the honest owners'
     /// ceremony. The 14-day public countdown is the only on-chain protection.
+    /// Covers: [QKR-025]
     function test_TM_ResidualRisk_PostRevocationRegistrationIsClassicalOnly() public {
         _revokeKey();
         uint256 nonce = guard.registryNonce(address(safe));
@@ -1783,6 +1849,7 @@ contract GuardIntegrationTest is Test {
     /// A module transaction needs a Tier-2 approval like any owner transaction; a
     /// pinned (Tier-1) approval never matches it (no safeTxHash); the module address
     /// is logged.
+    /// Covers: [GRD-040], [GRD-042]
     function test_TM_ModulePath_NeedsTier2Approval() public {
         address module = _enableModule();
         bytes memory data = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
@@ -1807,6 +1874,7 @@ contract GuardIntegrationTest is Test {
 
     /// Module-specific rules: DELEGATECALL is always rejected (no MultiSend exception),
     /// the Safe's pause applies, and a module can never install a fallback handler.
+    /// Covers: [GRD-041], [GRD-043], [GRD-045]
     function test_TM_ModulePath_DelegatecallPauseAndHandlerRules() public {
         address module = _enableModule();
 
@@ -1836,6 +1904,7 @@ contract GuardIntegrationTest is Test {
 
     /// Emergency de-guard, step 4: a module-executed (ADMIN-approved) setGuard also
     /// ends the Guard's tenure and clears the pending emergency request.
+    /// Covers: [GRD-044], [GRD-078]
     function test_TM_ModuleExecutedSetGuardClearsEmergencyRequest() public {
         address module = _enableModule();
         _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);

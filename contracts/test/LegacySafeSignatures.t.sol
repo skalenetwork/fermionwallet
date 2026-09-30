@@ -105,6 +105,7 @@ abstract contract LegacySafeRegistryTest is Test {
     /// keccak256(data) == dataHash for contract signatures (GS027); v1.3.0 hands
     /// `data` to the owner unchecked. The registry used to pass empty `data`, so such
     /// a Safe could never enroll.
+    /// Covers: [GRD-030], [QKR-014], [QKR-015]
     function test_ContractOwnerCoSignsRegistration() public {
         bytes32 structHash = _approveKeyStruct(block.timestamp + 1 days);
         wallet.approveMessage(_preimage(structHash));
@@ -114,6 +115,7 @@ abstract contract LegacySafeRegistryTest is Test {
 
     /// Same for the owner-governed emergency revocation request — and the contract
     /// owner's approval is per message: one it never approved is rejected (GS024).
+    /// Covers: [QKR-014], [QKR-015], [QKR-021]
     function test_ContractOwnerCoSignsRevocationRequest() public {
         bytes32 structHash = _approveKeyStruct(block.timestamp + 1 days);
         wallet.approveMessage(_preimage(structHash));

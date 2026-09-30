@@ -7,7 +7,7 @@ import {QuantumKeyRegistry} from "../src/QuantumKeyRegistry.sol";
 
 /// One XMSS key, several Safes: the used-leaf bitmap must be shared.
 ///
-/// Covers: [QKR-009], [QKR-009a]
+/// Covers: [QKR-009], [QKR-009a], [GRD-009]
 ///
 /// The device attests one key per Safe (ledger-ui.md: "attestation is repeated per
 /// Safe"), and root identity is scoped per Safe, so the same key legitimately has a

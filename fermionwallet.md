@@ -13,6 +13,7 @@ It is deliberately the simplest contract that can be called a wallet: one immuta
 | Governance | owners, timelocks, pause, emergency removal | none |
 | Recovery if the device is lost | owners remove the Guard after the emergency delay | **none — the funds are gone** |
 | On-chain state | keys, approvals, queues, policy | one used-leaf bitmap |
+| Ledger app | ships today | needs the additions in [FWL-033](#requirements) |
 | Who it is for | desks that already run a Safe | a single holder who wants quantum-safe storage and nothing else |
 
 ## What it does
@@ -44,7 +45,8 @@ contract FermionWallet {
     uint256 public immutable treeHeight;   // 10, 16 or 20 (RFC 8391 parameter sets)
     address public immutable quantumAdmin; // the device's ECDSA address
 
-    mapping(uint32 leafIndex => bool) public leafUsed;   // the only mutable state
+    BitMaps.BitMap private _usedLeaves;    // the only mutable state
+    function isLeafUsed(uint32 leafIndex) external view returns (bool);
 
     event Transferred(address indexed token, address indexed to, uint256 amount, uint32 leafIndex);
 
@@ -52,15 +54,16 @@ contract FermionWallet {
         address token,
         address to,
         uint256 amount,
-        uint32 leafIndex,
         uint64 validUntil,
         bytes calldata ecdsaSignature,
-        bytes calldata xmssSignature
+        bytes calldata xmssSignature     // its embedded index is the leaf that is spent
     ) external;
 }
 ```
 
-That is the whole interface. [FWL-012]
+That is the whole interface. [FWL-012] Note what is *absent*: there is no `leafIndex` argument. The
+index that gets marked spent is the one inside the XMSS signature, never a number the caller supplies
+alongside it — see below for why.
 
 ### The signed message
 
@@ -70,29 +73,59 @@ Transfer(address wallet,address token,address to,uint256 amount,uint32 leafIndex
 
 under the EIP-712 domain `{ name: "FermionWallet", version: "1", chainId, verifyingContract: <the wallet> }`. The domain binds the chain and the wallet address, so a signature for one wallet can never be replayed on another wallet or another chain. [FWL-013] The device computes this digest itself from the fields it displays, exactly as it does for FermionGuard — it never signs a hash handed to it by the host. [FWL-014]
 
+`leafIndex` appears in the signed struct but **not** in the calldata. The contract reads the index out
+of the XMSS signature (`XMSS.Signature.leafIdx`) and uses that value both for the bitmap and when it
+rebuilds the digest, so the two can never disagree: a signature whose struct field named a different
+leaf than the one it actually used would simply fail the ECDSA check. This is the same discipline
+`QuantumKeyRegistry` follows (`leafIndex = sig.leafIdx`), and it is not cosmetic — see
+[One leaf, one digest](#one-leaf-one-digest). [FWL-034]
+
 ### What `transfer` checks, in order
 
 1. `block.timestamp <= validUntil`, else revert. A signed transfer that was never relayed stops being valid. [FWL-015]
-2. `leafUsed[leafIndex]` is false, else revert. Checked **before** the ~700k-gas verification, so a replay costs the relayer almost nothing. [FWL-016]
-3. The ECDSA half recovers to `quantumAdmin` (via OpenZeppelin `SignatureChecker`, so an ERC-1271 signer also works). [FWL-017]
+2. `leafIdx` is read from the signature's first four bytes and `isLeafUsed(leafIdx)` must be false, else revert. Reading the index needs no verification, so this check still comes **before** the ~700k-gas cryptography and a replay costs the relayer almost nothing. [FWL-016]
+3. The ECDSA half recovers to `quantumAdmin` over the digest built with that `leafIdx` (via OpenZeppelin `SignatureChecker`, so an ERC-1271 signer also works). [FWL-017]
 4. The XMSS half verifies against `(xmssRoot, xmssSeed)` at `treeHeight`, using [`xmss-solidity`](https://github.com/skalenetwork/xmss-solidity)'s four-argument `XMSS.verify`, the form that binds the tree height to the key. [FWL-018]
-5. `leafUsed[leafIndex] = true` is written **before** the token call. [FWL-019]
+5. The leaf is marked spent **before** the token call. [FWL-019]
 6. `SafeERC20.safeTransfer(token, to, amount)`. [FWL-020]
 
 `msg.sender` is never consulted. Any address may relay a valid signature, and no address can do anything without one. [FWL-021]
 
 **Both halves are required.** Breaking the wallet means forging ECDSA *and* XMSS over the same digest: a quantum adversary who breaks ECDSA still faces the hash-based half, and a flaw in our young XMSS code still leaves the battle-tested classical half. The device produces both in one confirmation (`SIGN_PREAPPROVAL`), so this costs the user nothing. [FWL-022]
 
+## One leaf, one digest
+
+Everything the XMSS half is worth rests on one rule: a WOTS+ one-time key signs **one** digest.
+Sign two different digests with the same leaf and an attacker can combine the two chains into
+signatures the holder never authorized. The bitmap is the on-chain backstop for that rule — the thing
+that still holds when the device's own counter cannot be trusted.
+
+A backstop that can be pointed at the wrong leaf is not a backstop. Had the index been a separate
+calldata field, the holder's own device (compromised firmware, or a rollback) could sign leaf 5 twice
+while labelling the two transfers leaf 0 and leaf 1: both would verify, both would execute, the bitmap
+would record two untouched leaves, and the one condition the bitmap exists to prevent would have
+happened with the chain's blessing. Taking the index from the signature closes that off structurally
+rather than by adding a check that could be forgotten. [FWL-034]
+
 ## One key, one wallet
 
-The used-leaf bitmap lives in the wallet contract, so it can only see leaves spent by *that* wallet. If the same XMSS key were bound to two FermionWallets, each would start with an empty bitmap and one one-time leaf could sign two different transfers — the condition that makes WOTS+ forgeable. This is the same mistake [the key registry had](./quantum-key-registry.md) (QKR-009a), where it was fixable on-chain by keying the bitmap on the root; here the wallets are separate contracts and cannot see each other.
+The bitmap lives in the wallet contract, so it can only see leaves spent by *that* wallet. If the same
+XMSS key were bound to two FermionWallets — or to a FermionWallet **and** a Safe running FermionGuard —
+each bitmap starts empty and, again, one leaf can be spent twice. This is the same mistake
+[the key registry had](./quantum-key-registry.md) (QKR-009a), where it was fixable on-chain by keying the
+bitmap on the root; here the contracts are separate and cannot see each other.
 
 Therefore:
 
-- **A key slot may be bound to exactly one FermionWallet.** The device records the wallet address at first use for that slot and refuses to sign a `Transfer` for any other wallet. [FWL-023]
+- **A key slot is used by exactly one contract.** The device records the verifying contract at first use for that slot and refuses to sign for any other — another wallet, or a Safe pre-approval. A key is either a FermionWallet key or a FermionGuard key, never both. [FWL-023]
 - A holder who wants several wallets generates several keys — the app holds `MAX_KEYS = 4` (see [ledger-xmss-app.md](./ledger-xmss-app.md)). [FWL-024]
 
-**Residual risk, stated honestly:** a rolled-back or cloned device could still bind one key to two wallets, and no on-chain check in this design would catch it. Deployments that cannot accept that risk should use the optional shared leaf registry below, or FermionGuard, whose registry keys leaf accounting by the root across every Safe. [FWL-025]
+**Residual risk, stated plainly:** FWL-023 is enforced *only* on the device, and a device is exactly
+what the backstop exists to distrust. A rolled-back or cloned device can bind one key to two contracts,
+and no on-chain check in this design would catch it. So for the standalone wallet the "one leaf, once"
+rule is device-enforced with no independent second opinion — weaker than FermionGuard, where the
+registry keys leaf accounting by the root and holds across every Safe. Deployments that cannot accept
+that should use the shared leaf registry below, or FermionGuard. [FWL-025]
 
 ### Optional: a shared leaf registry
 
@@ -103,6 +136,7 @@ A single immutable, permissionless `LeafRegistry` per chain, keyed by XMSS root,
 | | Gas |
 |---|---|
 | XMSS verification, h = 10 | ~712k |
+| XMSS verification, h = 16 | ~731k |
 | XMSS verification, h = 20 | ~745k |
 | ECDSA check, leaf bookkeeping, token transfer, base cost | ~90k |
 | **Total per transfer** | **~0.8M** |
@@ -115,7 +149,7 @@ When the leaves run out, the wallet still works for exactly as long as it takes 
 
 The straightforward path is to deploy the contract, then send tokens to it. [FWL-030]
 
-Optionally, a CREATE2 factory lets the address be computed before deployment, so tokens can be sent to it first and the contract deployed later, when a transfer is first needed. The salt must commit to `(xmssRoot, xmssSeed, treeHeight, quantumAdmin)` so that the address itself pins the key, and no one else can deploy a different wallet at that address. [FWL-031]
+Optionally, a CREATE2 factory lets the address be computed before deployment, so tokens can be sent to it first and the contract deployed later, when a transfer is first needed. What pins the key to the address is that the constructor arguments are part of the init code, and CREATE2 hashes the init code: for a fixed factory, one address can only ever hold the wallet built with those exact `(xmssRoot, xmssSeed, treeHeight, quantumAdmin)` values. Nobody — including the holder — can deploy a *different* wallet there. The salt is then free; deriving it from the key as well is a convenience for rediscovering the address, not a security property. [FWL-031]
 
 ## What can go wrong
 
@@ -125,12 +159,13 @@ Optionally, a CREATE2 factory lets the address be computed before deployment, so
 | Flaw in our XMSS verifier | Still needs the ECDSA half; funds safe |
 | Compromised host, phishing frontend | The device shows token, recipient and amount and signs only what it displays |
 | Relayer censors or front-runs | Anyone else can relay the same signature; the signature binds every field, so a front-runner can only submit the transfer the holder already authorized |
-| Replayed transaction | The leaf is already spent; the transfer reverts before the expensive verification |
+| Replayed transaction | The leaf is already spent on-chain; the transfer reverts before the expensive verification |
 | Device lost or destroyed | **Funds are unrecoverable.** This is the accepted cost of the design (FWL-007) |
-| Device rolled back or cloned | Leaf reuse becomes possible; see FWL-025 |
+| Device rolled back or cloned | Leaf reuse becomes possible, and nothing on-chain stops it; see FWL-025 |
 | Leaves exhausted | No further transfers; move the balance before that point (FWL-029) |
 | Token with transfer fees or rebasing | Supported only as far as `safeTransfer` is: the signed `amount` is what is sent, not necessarily what is received |
-| Token that reverts on zero-value transfers | Reverts; nothing is lost, but the leaf is already spent |
+| The token call reverts (paused, blocklisted, zero-value refused) | The whole transaction reverts, so the leaf is **not** marked spent on-chain — but the device already committed its counter before signing, so that leaf is gone from the device's side. Nothing is lost; the leaf is simply burned. [FWL-035] |
+| …and then the token unpauses | The same signature is still valid and still relayable **by anyone** until `validUntil`, and there is no cancel path. The only control is signing short windows. [FWL-036] |
 
 ## Requirements
 
@@ -151,16 +186,16 @@ Optionally, a CREATE2 factory lets the address be computed before deployment, so
 | FWL-013 | The EIP-712 domain binds chain id and wallet address. |
 | FWL-014 | The device derives the digest from displayed fields; it never signs a host-supplied hash. |
 | FWL-015 | A transfer past `validUntil` reverts. |
-| FWL-016 | The leaf-reuse check precedes signature verification. |
+| FWL-016 | The leaf-reuse check reads the index from the signature and precedes verification. |
 | FWL-017 | The ECDSA half must recover to `quantumAdmin`. |
 | FWL-018 | The XMSS half is verified with the height-bound `XMSS.verify`. |
 | FWL-019 | The leaf is marked spent before the token call. |
 | FWL-020 | Transfers use `SafeERC20.safeTransfer`. |
 | FWL-021 | `msg.sender` carries no authority. |
 | FWL-022 | Both signature halves are required over the same digest. |
-| FWL-023 | A device key slot signs for exactly one wallet address. |
+| FWL-023 | A device key slot signs for exactly one verifying contract — one wallet, or Safes, never both. |
 | FWL-024 | Multiple wallets require multiple keys. |
-| FWL-025 | A rolled-back or cloned device can defeat leaf accounting; documented residual risk. |
+| FWL-025 | FWL-023 is device-enforced only; a rolled-back or cloned device defeats leaf accounting with no on-chain backstop. Documented residual risk. |
 | FWL-026 | A shared leaf registry is an optional, non-default mitigation for FWL-025. |
 | FWL-027 | Supported tree heights are the RFC 8391 sets 10, 16 and 20. |
 | FWL-028 | Receiving costs the sender no more than an ordinary ERC-20 transfer. |
@@ -168,10 +203,19 @@ Optionally, a CREATE2 factory lets the address be computed before deployment, so
 | FWL-030 | Deployment binds the key at construction. |
 | FWL-031 | An optional CREATE2 factory derives the address from the key, so the address pins the key. |
 | FWL-032 | XMSS verification is the unmodified `xmss-solidity` library; the wallet adds no cryptography. |
-| FWL-033 | The device is the unmodified Fermion Ledger app; no new APDU is required. |
+| FWL-033 | The Ledger app needs four additions — `Transfer` type and `FermionWallet` domain, a wallet context screen, per-slot contract binding, and cross-product refusal — before any device can drive this product. No new APDU command is required. |
+| FWL-034 | The spent leaf index is taken from the XMSS signature, never from a separate argument, and the digest is rebuilt with it. |
+| FWL-035 | A reverting token call burns the leaf on the device while leaving it unspent on-chain; no funds are lost. |
+| FWL-036 | A signed transfer stays relayable by anyone until `validUntil`, with no cancel path; short windows are the only control. |
 
 ## Relationship to the rest of this repository
 
 - The XMSS verification is [`xmss-solidity`](https://github.com/skalenetwork/xmss-solidity) unchanged — the same formally verified library FermionGuard uses, included as the submodule `contracts/lib/xmss-solidity`. FermionWallet adds no cryptography of its own. [FWL-032]
-- The device is the same Fermion Ledger app ([ledger-xmss-app.md](./ledger-xmss-app.md)), using `GEN_XMSS_KEY`, `GET_XMSS_ROOT`, `GET_ADMIN_ADDRESS`, `GET_LEAF_INDEX` and `SIGN_PREAPPROVAL`, with the transfer fields in place of a pre-approval's. A device that can drive FermionGuard can drive FermionWallet. [FWL-033]
+- The device is the same Fermion Ledger app ([ledger-xmss-app.md](./ledger-xmss-app.md)) — but **not** the same app build. Key generation and export (`GEN_XMSS_KEY`, `GET_XMSS_ROOT`, `GET_ADMIN_ADDRESS`, `GET_LEAF_INDEX`) are reused unchanged; signing is not. The app refuses payloads it does not recognize ("unknown or malformed payload fields abort the flow before screen 1"), and a `Transfer` is unrecognized: different EIP-712 type hash, domain name `FermionWallet`, `verifyingContract` = the wallet, and none of the fields Flow 2's screens are built around (no Safe address, no `txHash` pin, no `policyHash`, no payload class). Supporting FermionWallet therefore requires, in the app: [FWL-033]
+  1. the `Transfer` type and the `FermionWallet` domain accepted by the payload parser, alongside `PreApproval`;
+  2. a signing flow whose context screen shows **Wallet 0x…** and the chain instead of Safe / pin / policy — the existing token, amount, recipient, validity and decision screens carry over;
+  3. per-slot binding to one verifying contract, recorded at first signature and enforced on every later one (FWL-023) — new NVM state the current app does not keep;
+  4. a refusal path when a slot bound to a wallet is asked for a Safe pre-approval, and vice versa.
+
+  Until those land, no shipped device can drive FermionWallet. They are additions, not redesigns: the counter-before-signature invariant, the hybrid output, the one-confirmation UX and the "display only signed fields" rule all apply as written. [ledger-xmss-app.md](./ledger-xmss-app.md) carries these as open items.
 - The two products share no on-chain code and no deployment. A holder may use both.

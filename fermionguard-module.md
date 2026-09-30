@@ -40,6 +40,7 @@
 - [Security flaws fixed in this version](#security-flaws-fixed-in-this-version)
 - [Production constraints](#production-constraints)
 - [Summary](#summary)
+- [Requirement index](#requirement-index)
 
 ## Programming language
 
@@ -52,17 +53,17 @@ The Guard is glue. Every security primitive must come from an audited, pinned op
 1. mapping a decoded ERC-20 `transfer` onto a stored pre-approval, and
 2. reverting when that mapping fails.
 
-Anything else — Guard interface, ERC165, pause, access control, reentrancy, EIP-712, hashing, signature checks, nonce bitmaps, allowlists, Safe tx hash — **must be inherited or called, never reimplemented.** Duplicating `ITransactionGuard` in this repo is a defect: a locally compiled `interfaceId` can disagree with Safe’s `GuardManager` and `setGuard` reverts `GS300`.
+Anything else — Guard interface, ERC165, pause, access control, reentrancy, EIP-712, hashing, signature checks, nonce bitmaps, allowlists, Safe tx hash — **must be inherited or called, never reimplemented.** [GRD-001] Duplicating `ITransactionGuard` in this repo is a defect: a locally compiled `interfaceId` can disagree with Safe’s `GuardManager` and `setGuard` reverts `GS300`. [GRD-002]
 
 ## No global powers
 
 The Guard is one contract shared by every enrolled Safe, so any power over the Guard itself is a power over all customers. There is none:
 
-- no admin, owner, guardian, or role of any kind (no `AccessControl`, no `Ownable`);
-- no global pause, and no governance-curated list (such as a fallback-handler allowlist);
-- no upgrade path: the Guard is non-upgradeable (no proxy, no `selfdestruct`, no delegatecall to mutable code).
+- [GRD-003] no admin, owner, guardian, or role of any kind (no `AccessControl`, no `Ownable`);
+- [GRD-004] no global pause, and no governance-curated list (such as a fallback-handler allowlist);
+- [GRD-005] no upgrade path: the Guard is non-upgradeable (no proxy, no `selfdestruct`, no delegatecall to mutable code).
 
-Every control is scoped to one Safe and held by that Safe's owners: its pause, its selector policy, its key, its pre-approvals, and whether the Guard is attached at all. **Only a Safe's owners can change or remove the Guard attached to that Safe**, because `setGuard` is a Safe self-call that needs the owner threshold. A new Guard version is a new deployment, which each Safe adopts (or not) on its own. Any future change that adds a power reaching more than one Safe violates this spec.
+Every control is scoped to one Safe and held by that Safe's owners: its pause, its selector policy, its key, its pre-approvals, and whether the Guard is attached at all. **Only a Safe's owners can change or remove the Guard attached to that Safe**, because `setGuard` is a Safe self-call that needs the owner threshold. [GRD-006] A new Guard version is a new deployment, which each Safe adopts (or not) on its own. Any future change that adds a power reaching more than one Safe violates this spec. [GRD-007]
 
 ## Mandatory libraries (pin exact releases in `package.json` / `foundry.toml`)
 
@@ -96,7 +97,7 @@ Pinned release: **v5.2.0** (the first release with `Bytes`).
 | ERC-20 selector constants | `IERC20`, `IERC20Permit` |
 | Custom errors pattern | OZ-style custom errors; do not invent a parallel error system |
 
-Hand-written code remains only where no library fits: the MultiSend packed-leg loop, and the XMSS hashing assembly (gas limit).
+Hand-written code remains only where no library fits: the MultiSend packed-leg loop, and the XMSS hashing assembly (gas limit). [GRD-008]
 
 Do **not** use OpenZeppelin upgradeable proxies for the Guard. The Guard is non-upgradeable; a new Guard is a new deployment set via Safe `setGuard`.
 
@@ -109,11 +110,11 @@ The second authorization is produced by a designated **Quantum Administrator** h
 | Layer | Choice |
 |---|---|
 | PQ signature scheme | **XMSS** (e.g., `XMSS-SHA2_20_256` or a keccak-instantiated variant), one long-lived key per Quantum Administrator, good for 2^20 (~1M) pre-approvals |
-| On-chain verification | Solidity XMSS verifier: WOTS+ chain recomputation + L-tree + Merkle auth path to the registered root. Pure SHA-256 hashing through the precompile (`XMSS-SHA2_*_256`) — 744,906 gas measured per verification at h = 20, benchmarked in Foundry as an acceptance criterion |
-| State management (critical) | Each signature consumes one leaf index. **Index reuse is catastrophic** (forgery becomes possible), so the contract tracks used indices in an OpenZeppelin `BitMaps` bitmap keyed by `(quantumKeyId, leafIndex)` and reverts on reuse. The Ledger app commits its leaf counter before releasing any signature |
-| Classical hybrid half (on-chain) | OpenZeppelin `SignatureChecker` + `EIP712` — the pre-approval is valid only if **both** the XMSS and the classical signature verify |
+| On-chain verification | Solidity XMSS verifier: WOTS+ chain recomputation + L-tree + Merkle auth path to the registered root. Pure SHA-256 hashing through the precompile (`XMSS-SHA2_*_256`) — 745,003 gas measured per verification at h = 20, benchmarked in Foundry as an acceptance criterion |
+| State management (critical) | Each signature consumes one leaf index. **Index reuse is catastrophic** (forgery becomes possible), so the contract tracks used indices in an OpenZeppelin `BitMaps` bitmap keyed by `(quantumKeyId, leafIndex)` and reverts on reuse [GRD-009]. The Ledger app commits its leaf counter before releasing any signature [GRD-010] |
+| Classical hybrid half (on-chain) | OpenZeppelin `SignatureChecker` + `EIP712` — the pre-approval is valid only if **both** the XMSS and the classical signature verify [GRD-011] |
 | Key lifecycle | Registered as a single XMSS root (`xmssRoot`) in the registry via the co-signed one-shot `registerQuantumKey`. When leaf indices near exhaustion, the Administrator rotates to a new root via `rotateQuantumKey` (owner co-signatures, the Ledger's attestation of the new key, and an XMSS possession proof by the old key, per the access-control rules) |
-| Off-chain signing | The FermionGuard XMSS Ledger app — the only signer; the add-on service holds no keys (the demo simulates the device with the RFC 8391 reference code in `contracts/py/`). Never `crypto.createHmac` labeled as quantum-safe |
+| Off-chain signing | The FermionGuard XMSS Ledger app — the only signer; the add-on service holds no keys (the demo simulates the device with the RFC 8391 reference code in `contracts/py/`). Never `crypto.createHmac` labeled as quantum-safe [GRD-012] |
 
 ### Existing open-source Solidity code for XMSS
 
@@ -157,7 +158,7 @@ contract FermionGuard is
 }
 ```
 
-`supportsInterface` reports exactly `type(ITransactionGuard).interfaceId`, `type(IModuleGuard).interfaceId` and `type(IERC165).interfaceId`, using Safe's own interface definitions.
+`supportsInterface` reports exactly `type(ITransactionGuard).interfaceId`, `type(IModuleGuard).interfaceId` and `type(IERC165).interfaceId`, using Safe's own interface definitions. [GRD-020]
 
 Safe’s install check remains:
 
@@ -172,13 +173,13 @@ That `interfaceId` must be the one from **Safe’s** package, which is why we in
 
 The following, if written by hand in this repo, is a spec violation:
 
-- A local `ITransactionGuard` / `BaseTransactionGuard` / `Enum` / `IERC165`
-- A local `ecrecover` wrapper, HMAC, or “quantum signature” function
-- A global pause flag or any role mapping (the per-Safe pause and per-Safe transient depth counter are the only exceptions — see "No global powers")
-- A local EIP-712 domain separator or Safe tx hasher (call `ISafe.getTransactionHash`)
-- A local nonce counter or used-bit mapping when `Nonces` / `BitMaps` will do
-- Upgradeable-proxy scaffolding
-- Any `tx.origin` check
+- [GRD-013] A local `ITransactionGuard` / `BaseTransactionGuard` / `Enum` / `IERC165`
+- [GRD-014] A local `ecrecover` wrapper, HMAC, or “quantum signature” function
+- [GRD-015] A global pause flag or any role mapping (the per-Safe pause and per-Safe transient depth counter are the only exceptions — see "No global powers")
+- [GRD-016] A local EIP-712 domain separator or Safe tx hasher (call `ISafe.getTransactionHash`)
+- [GRD-017] A local nonce counter or used-bit mapping when `Nonces` / `BitMaps` will do
+- [GRD-018] Upgradeable-proxy scaffolding
+- [GRD-019] Any `tx.origin` check
 
 ## Official Safe interface (reference only — import, do not paste into production)
 
@@ -481,24 +482,24 @@ interface IFermionGuard is ITransactionGuard, IModuleGuard {
 
 ## Mandatory Safe Guard rules
 
-- The contract must implement the official Gnosis Safe `ITransactionGuard` interface exactly.
-- It must expose `checkTransaction(...)` with the exact Safe parameter list and types.
-- It must implement `checkAfterExecution(bytes32 hash, bool success)`.
-- It must implement `supportsInterface(bytes4 interfaceId)` so Safe can validate it during `setGuard(...)`.
-- It must not expose any fake execution entrypoint such as `executeTransaction`, `exec`, or any custom function that is meant to act like a signer.
+- [GRD-021] The contract must implement the official Gnosis Safe `ITransactionGuard` interface exactly.
+- [GRD-022] It must expose `checkTransaction(...)` with the exact Safe parameter list and types.
+- [GRD-023] It must implement `checkAfterExecution(bytes32 hash, bool success)`.
+- [GRD-024] It must implement `supportsInterface(bytes4 interfaceId)` so Safe can validate it during `setGuard(...)`.
+- [GRD-025] It must not expose any fake execution entrypoint such as `executeTransaction`, `exec`, or any custom function that is meant to act like a signer.
 - A Smart contract cannot be a normal EOA signer in Safe. It is a guard, not a signer.
-- `checkTransaction` is the pre-execution permit/deny check. It reverts to deny; it returns to allow.
-- `checkAfterExecution` is post-execution bookkeeping only. It must never be used as the primary authorization gate.
+- [GRD-026] `checkTransaction` is the pre-execution permit/deny check. It reverts to deny; it returns to allow.
+- [GRD-027] `checkAfterExecution` is post-execution bookkeeping only. It must never be used as the primary authorization gate.
 - The Safe can be configured with a guard only if it supports `type(ITransactionGuard).interfaceId`.
 
 ## Access control rules
 
-- `checkTransaction(...)` must require that `msg.sender` is an enrolled Safe. Without this, anyone can call it directly and consume single-use pre-approvals, creating a denial-of-service on legitimate transfers.
-- `registerQuantumKey(...)` runs on a **shared singleton** whose caller is the Administrator's relayer EOA, so the target `safe` is an explicit parameter — it determines which Safe's `checkSignatures` is consulted and which `safeToQuantumKey[safe]` slot is written; `msg.sender` must never be used to infer the Safe. It must verify the owner co-signatures (Safe threshold, via the legacy `checkSignatures(bytes32,bytes,bytes)` form for Safe 1.3/1.4/1.5 portability) over an EIP-712 struct that binds the XMSS root itself, the `quantumAdmin` address, the `safe` address, chain ID, `registryNonce`, and a validity deadline — so a mempool front-runner cannot redirect a ceremony to a different Safe. It must verify that `ledgerAttestation` is signed by `quantumAdmin`, reject if the Safe already has an Active key, reject same-Safe root reuse while allowing cross-Safe reuse, and bump the per-safe `registryNonce` on success.
-- `rotateQuantumKey(...)` must additionally verify an XMSS signature by the **old** key over the same `RotateQuantumKey` digest the owners signed (which binds the new root; consumes one leaf), plus owner co-signatures as above. It supersedes any pending key revocation. Emergency revocation without the old key goes through `requestKeyRevocation` → `EMERGENCY_ROTATION_TIMELOCK` → `executeKeyRevocation`; its owner signatures are single-use (the request consumes the registry nonce), only the Safe itself can cancel it, and execution revokes only the key the request named.
-- `revokePreApproval(...)` is callable by the Safe or the `quantumAdmin` of the key that created the approval, and by **any single owner** of the Safe directly from the owner's address — revocation is deliberately cheaper than approval — **except for ADMIN approvals**, which a single owner cannot revoke: ADMIN approvals are how the threshold changes governance (including removing a rogue owner), so one owner must not be able to veto them. The Safe can still revoke them with an owner-threshold transaction the Guard never blocks.
-- `createPreApproval(...)` (all classes) must verify **both hybrid halves** on-chain before storing the approval: the ECDSA half via `SignatureChecker.isValidSignatureNow` against the registered `quantumAdmin`, and the XMSS half against the registered `xmssRoot` with leaf-bitmap consumption. It must not accept unverified records, and a valid XMSS half with a missing/invalid ECDSA half must revert (the Ledger anchor is not optional).
-- Enrollment must verify Safe posture before accepting a Safe: no fallback handler, and no unguarded modules. Operators must also revoke pre-existing token/Permit2 allowances before enrollment; allowances granted before the Guard cannot be policed by it.
+- [GRD-028] `checkTransaction(...)` must require that `msg.sender` is an enrolled Safe. Without this, anyone can call it directly and consume single-use pre-approvals, creating a denial-of-service on legitimate transfers.
+- `registerQuantumKey(...)` runs on a **shared singleton** whose caller is the Administrator's relayer EOA, so the target `safe` is an explicit parameter — it determines which Safe's `checkSignatures` is consulted and which `safeToQuantumKey[safe]` slot is written; `msg.sender` must never be used to infer the Safe. [GRD-029] It must verify the owner co-signatures (Safe threshold, via the legacy `checkSignatures(bytes32,bytes,bytes)` form for Safe 1.3/1.4/1.5 portability) over an EIP-712 struct that binds the XMSS root itself, the `quantumAdmin` address, the `safe` address, chain ID, `registryNonce`, and a validity deadline — so a mempool front-runner cannot redirect a ceremony to a different Safe. [GRD-030] It must verify that `ledgerAttestation` is signed by `quantumAdmin` [GRD-031], reject if the Safe already has an Active key, reject same-Safe root reuse while allowing cross-Safe reuse, and bump the per-safe `registryNonce` on success. [GRD-032]
+- `rotateQuantumKey(...)` must additionally verify an XMSS signature by the **old** key over the same `RotateQuantumKey` digest the owners signed (which binds the new root; consumes one leaf), plus owner co-signatures as above. It supersedes any pending key revocation. [GRD-033] Emergency revocation without the old key goes through `requestKeyRevocation` → `EMERGENCY_ROTATION_TIMELOCK` → `executeKeyRevocation`; its owner signatures are single-use (the request consumes the registry nonce), only the Safe itself can cancel it, and execution revokes only the key the request named. [GRD-034]
+- `revokePreApproval(...)` is callable by the Safe or the `quantumAdmin` of the key that created the approval, and by **any single owner** of the Safe directly from the owner's address — revocation is deliberately cheaper than approval — **except for ADMIN approvals**, which a single owner cannot revoke: ADMIN approvals are how the threshold changes governance (including removing a rogue owner), so one owner must not be able to veto them. The Safe can still revoke them with an owner-threshold transaction the Guard never blocks. [GRD-035]
+- `createPreApproval(...)` (all classes) must verify **both hybrid halves** on-chain before storing the approval: the ECDSA half via `SignatureChecker.isValidSignatureNow` against the registered `quantumAdmin`, and the XMSS half against the registered `xmssRoot` with leaf-bitmap consumption. It must not accept unverified records, and a valid XMSS half with a missing/invalid ECDSA half must revert (the Ledger anchor is not optional). [GRD-036]
+- [GRD-037] Enrollment must verify Safe posture before accepting a Safe: no fallback handler, and no unguarded modules. Operators must also revoke pre-existing token/Permit2 allowances before enrollment; allowances granted before the Guard cannot be policed by it. [GRD-038]
 
 ## Module bypass — mandatory mitigation
 
@@ -506,12 +507,12 @@ Safe transaction guards are only invoked in the `execTransaction` path. Transact
 
 Required mitigations:
 
-- The Safe must have **no enabled modules**, verified at enrollment and re-checked in `checkTransaction`, or
-- On Safe v1.5.0+, this same FermionGuard contract must already be installed as the Safe's `IModuleGuard` via `setModuleGuard(...)`, implementing `checkModuleTransaction(...)` and `checkAfterModuleExecution(...)` with the same policy checks.
+- [GRD-039] The Safe must have **no enabled modules**, verified at enrollment and re-checked in `checkTransaction`, or
+- [GRD-040] On Safe v1.5.0+, this same FermionGuard contract must already be installed as the Safe's `IModuleGuard` via `setModuleGuard(...)`, implementing `checkModuleTransaction(...)` and `checkAfterModuleExecution(...)` with the same policy checks.
 
-**Module-guard architecture (resolved):** the tx guard and the module guard are **one contract**. `FermionGuard` inherits `BaseTransactionGuard` *and* `BaseModuleGuard`, overrides `supportsInterface` to report both `type(ITransactionGuard).interfaceId` and `type(IModuleGuard).interfaceId` (per the note in "Contract header" above), and routes `checkModuleTransaction(to, value, data, operation, module)` through the same class-dispatch pipeline as `checkTransaction` — with these module-specific rules: `operation == DELEGATECALL` from a module is always rejected (no MultiSend exception); matching is Tier 2 only (module transactions have no `safeTxHash`); the module address is logged in `ModuleTransactionChecked`; the same fallback-handler rules apply (a module can never install a handler); and a module-executed `setGuard` clears any emergency de-guard request, via `checkAfterModuleExecution`. The Safe's own pause applies to module transactions too. On Safe < 1.5.0 the module-guard entry points are never wired, so `enableModule` is rejected outright and enrollment enforces the "no enabled modules" rule. "Wired" means both that the Safe's module-guard slot (`keccak256("module_manager.module_guard.address")`) holds this Guard **and** that the Safe's `VERSION()` is ≥ 1.5.0: on v1.3.0/v1.4.1 that slot is ordinary storage the singleton never reads (a Safe downgraded from 1.5 keeps a stale value, and a pre-enrollment delegatecall can plant one), so the Guard never trusts it there — a Safe without a parseable `VERSION()` ≥ 1.5 counts as unwired (fail closed). On those versions the residual posture is therefore: a module enabled in the window between enrollment and `setGuard` still executes unguarded (the Guard never sees `execTransactionFromModule`), while every owner transaction fails closed with `ModulesEnabledWithoutModuleGuard` until the quantum-approved `disableModule` remediation.
-- `enableModule(...)` is rejected with `ModuleGuardNotWired` unless this Guard is already wired as the Safe's module guard. On Safe v1.5 the required order is two separate quantum-approved admin actions: `setModuleGuard(guard)` first, then `enableModule(...)`.
-- The module-posture check must exempt remediation self-calls: `disableModule(...)`, `setModuleGuard(...)`, and the quantum-approved `setGuard(address(0))` Guard removal path, so an unsafe module posture never blocks its own repair. Every remediation self-call (`disableModule`, `setModuleGuard`, `setFallbackHandler(address(0))`) is exempt from **both** posture checks: a Safe that installed a handler and a module before attaching the Guard is bad on both counts, and neither repair may be blocked by the other defect.
+**Module-guard architecture (resolved):** the tx guard and the module guard are **one contract**. `FermionGuard` inherits `BaseTransactionGuard` *and* `BaseModuleGuard`, overrides `supportsInterface` to report both `type(ITransactionGuard).interfaceId` and `type(IModuleGuard).interfaceId` (per the note in "Contract header" above), and routes `checkModuleTransaction(to, value, data, operation, module)` through the same class-dispatch pipeline as `checkTransaction` — with these module-specific rules: `operation == DELEGATECALL` from a module is always rejected (no MultiSend exception) [GRD-041]; matching is Tier 2 only (module transactions have no `safeTxHash`) [GRD-042]; the module address is logged in `ModuleTransactionChecked`; the same fallback-handler rules apply (a module can never install a handler) [GRD-043]; and a module-executed `setGuard` clears any emergency de-guard request, via `checkAfterModuleExecution` [GRD-044]. The Safe's own pause applies to module transactions too. [GRD-045] On Safe < 1.5.0 the module-guard entry points are never wired, so `enableModule` is rejected outright and enrollment enforces the "no enabled modules" rule. [GRD-046] "Wired" means both that the Safe's module-guard slot (`keccak256("module_manager.module_guard.address")`) holds this Guard **and** that the Safe's `VERSION()` is ≥ 1.5.0: on v1.3.0/v1.4.1 that slot is ordinary storage the singleton never reads (a Safe downgraded from 1.5 keeps a stale value, and a pre-enrollment delegatecall can plant one), so the Guard never trusts it there — a Safe without a parseable `VERSION()` ≥ 1.5 counts as unwired (fail closed). [GRD-047] On those versions the residual posture is therefore: a module enabled in the window between enrollment and `setGuard` still executes unguarded (the Guard never sees `execTransactionFromModule`), while every owner transaction fails closed with `ModulesEnabledWithoutModuleGuard` until the quantum-approved `disableModule` remediation. [GRD-048]
+- [GRD-049] `enableModule(...)` is rejected with `ModuleGuardNotWired` unless this Guard is already wired as the Safe's module guard. On Safe v1.5 the required order is two separate quantum-approved admin actions: `setModuleGuard(guard)` first, then `enableModule(...)`.
+- The module-posture check must exempt remediation self-calls: `disableModule(...)`, `setModuleGuard(...)`, and the quantum-approved `setGuard(address(0))` Guard removal path, so an unsafe module posture never blocks its own repair. Every remediation self-call (`disableModule`, `setModuleGuard`, `setFallbackHandler(address(0))`) is exempt from **both** posture checks [GRD-050]: a Safe that installed a handler and a module before attaching the Guard is bad on both counts, and neither repair may be blocked by the other defect.
 
 ## Guard-removal and self-call protection
 
@@ -519,8 +520,8 @@ A Safe transaction whose target is the Safe itself can call `setGuard(address(0)
 
 The Guard must therefore:
 
-- treat any transaction with `to == safe` (or `to ==` the Guard) as a restricted administrative action requiring a matching, timelock-elapsed `ADMIN` approval — this covers `setGuard`, `setModuleGuard`, `enableModule`, `disableModule`, owner/threshold changes, and **every other self-call** (the Guard does not enumerate self-call selectors; the exact calldata is bound by the approval),
-- additionally reject `enableModule` unless this Guard is already the module guard, and reject `setFallbackHandler` to any non-zero handler even with an approval. The Guard recognises the `setFallbackHandler` and `setGuard` self-calls by selector and first argument word, **not** by exact calldata length: Safe's ABI decoder ignores trailing calldata, so `setFallbackHandler(h) ‖ junk` installs `h` just like the canonical 36-byte call and must be rejected the same way (and a padded `setGuard` ends the Guard's tenure like any other).
+- [GRD-051] treat any transaction with `to == safe` (or `to ==` the Guard) as a restricted administrative action requiring a matching, timelock-elapsed `ADMIN` approval — this covers `setGuard`, `setModuleGuard`, `enableModule`, `disableModule`, owner/threshold changes, and **every other self-call** (the Guard does not enumerate self-call selectors; the exact calldata is bound by the approval),
+- [GRD-052] additionally reject `enableModule` unless this Guard is already the module guard, and reject `setFallbackHandler` to any non-zero handler even with an approval. The Guard recognises the `setFallbackHandler` and `setGuard` self-calls by selector and first argument word, **not** by exact calldata length: Safe's ABI decoder ignores trailing calldata, so `setFallbackHandler(h) ‖ junk` installs `h` just like the canonical 36-byte call and must be rejected the same way (and a padded `setGuard` ends the Guard's tenure like any other). [GRD-053]
 
 Note the operational trade-off: a buggy Guard can brick the Safe (every tx reverts, including the tx to remove the Guard). This is resolved by the **pre-approval class system** below plus the time-locked emergency de-guard path — together they guarantee the no-brick invariant.
 
@@ -528,9 +529,9 @@ Note the operational trade-off: a buggy Guard can brick the Safe (every tx rever
 
 Safe's default `CompatibilityFallbackHandler` can validate owner ECDSA signatures through `isValidSignature` without creating a Safe transaction, which lets Permit/Permit2 and signature-order protocols bypass the Guard. FermionGuard therefore treats fallback-handler posture as part of enrollment and every checked transaction:
 
-- A guarded Safe has **no** fallback handler. There is no allowlist: curating one would be a global power over every Safe (see "No global powers").
-- `checkTransaction`, `checkModuleTransaction`, and enrollment read the Safe fallback-handler slot and revert if it is nonzero.
-- Remediation is exempt: quantum-approved `setGuard(address(0))` removal and the ADMIN self-call `setFallbackHandler(address(0))` are never blocked; installing any other handler is rejected.
+- [GRD-054] A guarded Safe has **no** fallback handler. There is no allowlist: curating one would be a global power over every Safe (see "No global powers").
+- [GRD-055] `checkTransaction`, `checkModuleTransaction`, and enrollment read the Safe fallback-handler slot and revert if it is nonzero.
+- [GRD-056] Remediation is exempt: quantum-approved `setGuard(address(0))` removal and the ADMIN self-call `setFallbackHandler(address(0))` are never blocked; installing any other handler is rejected.
 - Operators must revoke pre-existing token and Permit2 allowances before enrollment, because allowances created before the Guard was installed cannot be retroactively controlled.
 
 ## Pre-approval classes
@@ -539,37 +540,37 @@ A single transfer-shaped `PreApproval` struct cannot represent admin operations 
 
 | Class | Binds | Covers | Timelock |
 |---|---|---|---|
-| `TRANSFER` (0) | `token`, `recipient`, `amount` | ERC-20 `transfer` fast path | none (validity window only) |
-| `PAYLOAD` (1) | exact payload: `target`, `value`, `keccak256(data)` (the operation is not part of the approval; the dispatch path fixes it) | native currency sends (empty calldata), policy-allowlisted non-transfer calls, and `MultiSendCallOnly` batches (delegatecall, `target` = the pinned MultiSendCallOnly) | none beyond the validity window (min 15 min) |
-| `ADMIN` (2) | exact payload, `target == safe` or `target ==` the Guard | any Safe self-call (`setGuard` incl. `address(0)`, `setFallbackHandler(address(0))`, `setModuleGuard`, `enableModule`/`disableModule`, owner/threshold changes, …) and Guard policy calls (`setSelectorPolicy`) | **mandatory on-chain timelock** (immutable `ADMIN_TIMELOCK`, e.g. 48 h): `validFrom ≥ block.timestamp + ADMIN_TIMELOCK` enforced at creation |
+| `TRANSFER` (0) [GRD-057] | `token`, `recipient`, `amount` | ERC-20 `transfer` fast path | none (validity window only) |
+| `PAYLOAD` (1) [GRD-058] | exact payload: `target`, `value`, `keccak256(data)` (the operation is not part of the approval; the dispatch path fixes it) | native currency sends (empty calldata), policy-allowlisted non-transfer calls, and `MultiSendCallOnly` batches (delegatecall, `target` = the pinned MultiSendCallOnly) | none beyond the validity window (min 15 min) |
+| `ADMIN` (2) [GRD-059] | exact payload, `target == safe` or `target ==` the Guard | any Safe self-call (`setGuard` incl. `address(0)`, `setFallbackHandler(address(0))`, `setModuleGuard`, `enableModule`/`disableModule`, owner/threshold changes, …) and Guard policy calls (`setSelectorPolicy`) | **mandatory on-chain timelock** (immutable `ADMIN_TIMELOCK`, e.g. 48 h): `validFrom ≥ block.timestamp + ADMIN_TIMELOCK` enforced at creation |
 
 `checkTransaction` dispatch order:
 
-1. `operation == DELEGATECALL` → revert (`DelegateCallForbidden`), **unless** `to == MULTISEND_CALL_ONLY` (the immutably-pinned `MultiSendCallOnly` address) → per-leg checks, then a matching `PAYLOAD` approval over the whole batch calldata. No other delegatecall target can ever be authorized.
+1. [GRD-060] `operation == DELEGATECALL` → revert (`DelegateCallForbidden`), **unless** `to == MULTISEND_CALL_ONLY` (the immutably-pinned `MultiSendCallOnly` address) → per-leg checks, then a matching `PAYLOAD` approval over the whole batch calldata. No other delegatecall target can ever be authorized.
 2. `to == safe` or `to ==` the Guard → require a matching, timelock-elapsed `ADMIN` approval.
-3. Empty calldata (any `value`, including zero) → require a matching `PAYLOAD` approval (exact `to` + `value`).
-4. Deny-listed selector (`approve`, `increaseAllowance`, `permit`, `transferFrom`) → revert (`DeniedSelector`).
-5. The selector must be on the Safe's permit-list (`SelectorNotAllowed`) — `transfer` included: it is on the list from enrollment, and a Safe that removed it has no `TRANSFER` fast path. The permit-list is keyed by selector only, not by target; the approval itself binds the exact target.
-6. ERC-20 `transfer` → `value` must be zero (`NativeValueOnTransfer`), calldata must decode canonically, then require a matching `TRANSFER` approval.
-7. Anything else → require a matching `PAYLOAD` approval.
+3. [GRD-061] Empty calldata (any `value`, including zero) → require a matching `PAYLOAD` approval (exact `to` + `value`).
+4. [GRD-062] Deny-listed selector (`approve`, `increaseAllowance`, `permit`, `transferFrom`) → revert (`DeniedSelector`).
+5. [GRD-063] The selector must be on the Safe's permit-list (`SelectorNotAllowed`) — `transfer` included: it is on the list from enrollment, and a Safe that removed it has no `TRANSFER` fast path. The permit-list is keyed by selector only, not by target; the approval itself binds the exact target.
+6. [GRD-064] ERC-20 `transfer` → `value` must be zero (`NativeValueOnTransfer`), calldata must decode canonically, then require a matching `TRANSFER` approval.
+7. [GRD-065] Anything else → require a matching `PAYLOAD` approval.
 
-`ADMIN` approvals emit a distinct, loud `AdminPreApprovalCreated(safe, target, dataHash, executableAt)` event at creation — the timelock exists precisely so owners, watchers, and the dashboard can see a pending guard-removal or owner change and revoke it (`revokePreApproval` works throughout the delay).
+`ADMIN` approvals emit a distinct, loud `AdminPreApprovalCreated(safe, target, dataHash, executableAt)` event at creation [GRD-066] — the timelock exists precisely so owners, watchers, and the dashboard can see a pending guard-removal or owner change and revoke it (`revokePreApproval` works throughout the delay).
 
 **No-brick invariant** (must be test-covered): at any reachable contract state, at least one of these paths can remove the Guard —
-1. `ADMIN` pre-approval for `setGuard(address(0))` + owner-signed Safe transaction, after `ADMIN_TIMELOCK` (works while the Safe is paused);
-2. the emergency de-guard path (Safe-governance-initiated, longer timelock, **no quantum key required**) — for the case where the XMSS key is lost or the verifier itself is buggy;
-3. for a Safe that has **never enrolled** (no key ever registered): `setGuard(address(0))` is always allowed. The Guard protects nothing for such a Safe, and without this a Safe that attached the Guard before enrolling — while it still had a fallback handler or module, so enrollment itself is refused — would be frozen forever.
-None of these paths may depend on any component that the Guard can render unusable (in particular, path 2 must not require a quantum signature, and paths 1 and 2 must work while the Safe is paused; a never-enrolled Safe cannot be paused).
+1. [GRD-067] `ADMIN` pre-approval for `setGuard(address(0))` + owner-signed Safe transaction, after `ADMIN_TIMELOCK` (works while the Safe is paused);
+2. [GRD-068] the emergency de-guard path (Safe-governance-initiated, longer timelock, **no quantum key required**) — for the case where the XMSS key is lost or the verifier itself is buggy;
+3. [GRD-069] for a Safe that has **never enrolled** (no key ever registered): `setGuard(address(0))` is always allowed. The Guard protects nothing for such a Safe, and without this a Safe that attached the Guard before enrolling — while it still had a fallback handler or module, so enrollment itself is refused — would be frozen forever.
+[GRD-070] None of these paths may depend on any component that the Guard can render unusable (in particular, path 2 must not require a quantum signature, and paths 1 and 2 must work while the Safe is paused; a never-enrolled Safe cannot be paused).
 
 ### Emergency de-guard path — mechanism
 
 The fallback (path 2) is implemented **in the Guard itself**, so it requires no external contract and survives every Guard state:
 
-1. `requestEmergencyDeGuard()` — callable only by the enrolled Safe (`msg.sender == safe`), i.e., via a normal owner-threshold Safe transaction. **`checkTransaction` hardcodes an allow** (zero-value `CALL` only, and — like every Safe transaction under this Guard — `gasPrice == 0`), bypassing pause, enrollment and all pre-approval requirements, for this family of calls — the one family the Guard may never block, checked first in `checkTransaction` (only the gas-refund ban comes before it):
-   - Safe → Guard, the owner safety calls: `requestEmergencyDeGuard()`, `cancelEmergencyDeGuard(safe)`, `pauseSafe(safe)`, `requestUnpauseSafe()`, `unpauseSafe()`, `revokePreApproval(id)`, `cancelKeyRevocation(safe)`. Each re-checks its own authority; none can move funds or weaken enforcement.
+1. [GRD-071] `requestEmergencyDeGuard()` — callable only by the enrolled Safe (`msg.sender == safe`), i.e., via a normal owner-threshold Safe transaction. **`checkTransaction` hardcodes an allow** (zero-value `CALL` only, and — like every Safe transaction under this Guard — `gasPrice == 0`), bypassing pause, enrollment and all pre-approval requirements, for this family of calls — the one family the Guard may never block, checked first in `checkTransaction` (only the gas-refund ban comes before it) [GRD-072]:
+   - Safe → Guard, the owner safety calls: `requestEmergencyDeGuard()`, `cancelEmergencyDeGuard(safe)`, `pauseSafe(safe)`, `requestUnpauseSafe()`, `unpauseSafe()`, `revokePreApproval(id)`, `cancelKeyRevocation(safe)`. Each re-checks its own authority; none can move funds or weaken enforcement. [GRD-073]
    - Safe → Safe: `setGuard(address(0))` once the emergency timelock has matured, or at any time for a never-enrolled Safe.
 
-   The check order is **normative** — getting it wrong silently destroys the only no-brick safety net, and the bug is invisible until the exact moment the escape hatch is needed:
+   The check order is **normative** [GRD-074] — getting it wrong silently destroys the only no-brick safety net, and the bug is invisible until the exact moment the escape hatch is needed:
 
    ```solidity
    function checkTransaction(address to, uint256 value, bytes calldata data, Enum.Operation operation, ...) external {
@@ -603,24 +604,24 @@ The fallback (path 2) is implemented **in the Guard itself**, so it requires no 
    ```
 
    A mandatory test (see production checklist) executes `requestEmergencyDeGuard` **while the Safe is paused** and asserts success.
-2. The request starts `EMERGENCY_TIMELOCK` (immutable, materially longer than `ADMIN_TIMELOCK`, e.g., 14 days) and emits `EmergencyDeGuardRequested(safe, executableAt)` — the dashboard treats this as a highest-severity alert to all owners and the Administrator.
-3. During the window, only the Safe itself can cancel: an owner-threshold Safe transaction to `cancelEmergencyDeGuard(safe)` (hardcoded-allowed, no quantum approval needed). The Quantum Administrator's key alone cannot cancel — otherwise a stolen Ledger could veto every emergency removal forever and brick the Safe.
-4. After expiry, `checkTransaction` permits exactly one self-call: `setGuard(address(0))`, with no pre-approval required. Nothing else is unlocked. Any executed `setGuard` (by either path, owner- or module-executed) clears the request in `checkAfterExecution` / `checkAfterModuleExecution`, so a later re-attached Guard starts clean.
+2. [GRD-075] The request starts `EMERGENCY_TIMELOCK` (immutable, materially longer than `ADMIN_TIMELOCK`, e.g., 14 days) and emits `EmergencyDeGuardRequested(safe, executableAt)` — the dashboard treats this as a highest-severity alert to all owners and the Administrator.
+3. [GRD-076] During the window, only the Safe itself can cancel: an owner-threshold Safe transaction to `cancelEmergencyDeGuard(safe)` (hardcoded-allowed, no quantum approval needed). The Quantum Administrator's key alone cannot cancel — otherwise a stolen Ledger could veto every emergency removal forever and brick the Safe.
+4. [GRD-077] After expiry, `checkTransaction` permits exactly one self-call: `setGuard(address(0))`, with no pre-approval required. Nothing else is unlocked. Any executed `setGuard` (by either path, owner- or module-executed) clears the request in `checkAfterExecution` / `checkAfterModuleExecution`, so a later re-attached Guard starts clean. [GRD-078]
 
 Threat trade-off, stated plainly: during an emergency de-guard the classical owner threshold is temporarily the only defense — exactly the pre-quantum status quo. The long timelock plus loud events is the mitigation; institutions that cannot accept it can set `EMERGENCY_TIMELOCK` longer at deployment. The alternative (no fallback) converts a lost XMSS key or a verifier bug into permanently frozen funds, which is strictly worse.
 
 
 ## Gas refund constraints
 
-Safe's refund mechanism (`gasPrice`, `gasToken`, `refundReceiver`) pays out after execution and can drain the Safe if unconstrained. The Guard enforces `gasPrice == 0` (no refunds at all) and reverts with `GasRefundForbidden` otherwise. A future version could instead allow refunds under an explicit policy cap, with `refundReceiver` restricted to an allowlist and `gasToken` restricted to approved tokens; this is not implemented.
+Safe's refund mechanism (`gasPrice`, `gasToken`, `refundReceiver`) pays out after execution and can drain the Safe if unconstrained. The Guard enforces `gasPrice == 0` (no refunds at all) and reverts with `GasRefundForbidden` otherwise. [GRD-079] A future version could instead allow refunds under an explicit policy cap, with `refundReceiver` restricted to an allowlist and `gasToken` restricted to approved tokens; this is not implemented.
 
 ## Safe nonce recomputation quirk
 
-**Cross-chain replay (post-MVP note).** Pre-approval signatures use an EIP-712 domain bound to the Guard address **and `block.chainid`**, so a pre-approval signed for chain A verifies nowhere else — including on a CREATE2 twin of the same Safe at the same address on chain B, and on either fork after a chain split (the fork with a changed chainid rejects old signatures). This is the intended behavior, not a defect: cross-chain approvals must be signed per chain, one Ledger confirmation each. The MVP is single-chain; multi-chain operation multiplies leaf consumption by the number of chains and is a policy decision, not a protocol change.
+**Cross-chain replay (post-MVP note).** Pre-approval signatures use an EIP-712 domain bound to the Guard address **and `block.chainid`**, so a pre-approval signed for chain A verifies nowhere else — including on a CREATE2 twin of the same Safe at the same address on chain B, and on either fork after a chain split (the fork with a changed chainid rejects old signatures). [GRD-080] This is the intended behavior, not a defect: cross-chain approvals must be signed per chain, one Ledger confirmation each. The MVP is single-chain; multi-chain operation multiplies leaf consumption by the number of chains and is a policy decision, not a protocol change.
 
-**Caller identity.** `checkTransaction`/`checkAfterExecution` have no dedicated caller parameter — the calling Safe *is* `msg.sender`. The Guard must treat `msg.sender` as the Safe identity and verify it is an **enrolled** Safe (`safeToQuantumKey[msg.sender]` exists with an `Active` key); calls from unenrolled addresses revert. This is safe precisely because `setGuard` can only be set by the Safe itself, so only a Safe that governance-installed this Guard ever calls these hooks; but the enrollment check still matters — it stops a *different, attacker-controlled* contract from calling `checkTransaction` directly to consume another Safe's field-matched pre-approvals (the commitment includes `safe`, and `safe` is taken from `msg.sender`, never from calldata, in the consumption path). Note the asymmetry with the create/register functions, where `msg.sender` is the relayer and `safe` is explicit calldata: consumption trusts `msg.sender`, creation never does.
+**Caller identity.** `checkTransaction`/`checkAfterExecution` have no dedicated caller parameter — the calling Safe *is* `msg.sender`. The Guard must treat `msg.sender` as the Safe identity and verify it is an **enrolled** Safe (`safeToQuantumKey[msg.sender]` exists with an `Active` key); calls from unenrolled addresses revert. [GRD-081] This is safe precisely because `setGuard` can only be set by the Safe itself, so only a Safe that governance-installed this Guard ever calls these hooks; but the enrollment check still matters — it stops a *different, attacker-controlled* contract from calling `checkTransaction` directly to consume another Safe's field-matched pre-approvals (the commitment includes `safe`, and `safe` is taken from `msg.sender`, never from calldata, in the consumption path) [GRD-082]. Note the asymmetry with the create/register functions, where `msg.sender` is the relayer and `safe` is explicit calldata: consumption trusts `msg.sender`, creation never does.
 
-In `Safe.execTransaction`, the transaction hash is computed with the current `nonce`, then `nonce` is incremented, and only afterwards is the guard's `checkTransaction(...)` called. If the Guard recomputes the safeTxHash to match it against a pre-approval `txHash`, it must use `safe.nonce() - 1`, not the current nonce. Getting this wrong makes every hash comparison fail (or worse, validates the wrong transaction).
+In `Safe.execTransaction`, the transaction hash is computed with the current `nonce`, then `nonce` is incremented, and only afterwards is the guard's `checkTransaction(...)` called. If the Guard recomputes the safeTxHash to match it against a pre-approval `txHash`, it must use `safe.nonce() - 1`, not the current nonce. [GRD-083] Getting this wrong makes every hash comparison fail (or worse, validates the wrong transaction).
 
 **How the Guard recomputes the hash — no forked hasher needed.** This has been raised repeatedly in reviews as a "blocker" on the claim that `getTransactionHash` reads the nonce from storage. That claim is **false**: verified against the deployed source, `safe-global/safe-smart-account` **v1.4.1 `Safe.sol` lines 427–440** (and v1.3.0 `GnosisSafe.sol` equivalently) declare the function with an explicit `uint256 _nonce` as the last parameter — it exists precisely so off-chain signers can compute future hashes. Safe v1.3.0 and v1.4.1 expose exactly the interface required:
 
@@ -644,13 +645,13 @@ bytes32 safeTxHash = ISafe(msg.sender).getTransactionHash(
 );
 ```
 
-This uses the Safe's own hashing (correct domain separator, correct typehash, correct version quirks) with zero local reimplementation. The `nonce() - 1` subtraction cannot underflow in this call path: `checkTransaction` only runs from inside `execTransaction`, after the increment, so `nonce ≥ 1`. A mandatory integration test (see production checklist) deploys a real Safe + Guard, creates a pinned pre-approval for the known future `safeTxHash` at nonce `N`, executes at nonce `N`, and asserts the Guard's recomputed hash matches — this single test catches both the off-by-one and any Safe-version hashing drift.
+This uses the Safe's own hashing (correct domain separator, correct typehash, correct version quirks) with zero local reimplementation. [GRD-084] The `nonce() - 1` subtraction cannot underflow in this call path: `checkTransaction` only runs from inside `execTransaction`, after the increment, so `nonce ≥ 1`. A mandatory integration test (see production checklist) deploys a real Safe + Guard, creates a pinned pre-approval for the known future `safeTxHash` at nonce `N`, executes at nonce `N`, and asserts the Guard's recomputed hash matches — this single test catches both the off-by-one and any Safe-version hashing drift.
 
 ## Pre-approval consumption semantics
 
-- The single-use flag must be set (approval marked `used`) **inside `checkTransaction`**, which is a state-changing CALL from the Safe — this is permitted for guards and is the only safe place to consume the approval atomically with execution.
-- `validatePreApproval` remains a `view` convenience for off-chain checks; it must never be the consumption mechanism.
-- If execution later fails, `checkAfterExecution(hash, success)` may record the failure, but the approval stays consumed — replay after a failed execution requires a fresh pre-approval.
+- [GRD-085] The single-use flag must be set (approval marked `used`) **inside `checkTransaction`**, which is a state-changing CALL from the Safe — this is permitted for guards and is the only safe place to consume the approval atomically with execution.
+- [GRD-086] `validatePreApproval` remains a `view` convenience for off-chain checks; it must never be the consumption mechanism.
+- [GRD-087] If execution later fails, `checkAfterExecution(hash, success)` may record the failure, but the approval stays consumed — replay after a failed execution requires a fresh pre-approval.
 
 ## Best-practice hardening (round 3 virtual security test)
 
@@ -658,36 +659,36 @@ This uses the Safe's own hashing (correct domain separator, correct typehash, co
 
 The target call executed by the Safe can re-enter `Safe.execTransaction`, causing the Guard's `checkTransaction` to run again before the outer `checkAfterExecution` completes. Requirements:
 
-- The Guard tracks execution depth per Safe with a transient counter (`TransientSlot` at a `SlotDerivation` slot keyed by the Safe), incremented in `checkTransaction` and decremented in `checkAfterExecution`.
-- Nested Safe executions of the same Safe are rejected (`NestedSafeTransaction`) when the counter is non-zero. Escape-hatch calls are never rejected, but they also increment the counter, so a nested escape call cannot reset an enclosing transaction's depth.
-- The module path (`checkModuleTransaction`) does not touch the depth counter.
-- All state writes (approval consumption, counters) follow checks-effects-interactions. The Guard's only external calls are read-only: calls to a Safe (`nonce`, `getTransactionHash`, `getModulesPaginated`, `getStorageAt`, `VERSION`, `isOwner`, and the legacy `checkSignatures` during registry ceremonies), the ERC-1271 `isValidSignature` staticcall that `SignatureChecker` makes when `quantumAdmin` is a contract, and the SHA-256 precompile.
+- [GRD-088] The Guard tracks execution depth per Safe with a transient counter (`TransientSlot` at a `SlotDerivation` slot keyed by the Safe), incremented in `checkTransaction` and decremented in `checkAfterExecution`.
+- [GRD-089] Nested Safe executions of the same Safe are rejected (`NestedSafeTransaction`) when the counter is non-zero. Escape-hatch calls are never rejected, but they also increment the counter, so a nested escape call cannot reset an enclosing transaction's depth.
+- [GRD-090] The module path (`checkModuleTransaction`) does not touch the depth counter.
+- [GRD-091] All state writes (approval consumption, counters) follow checks-effects-interactions. The Guard's only external calls are read-only: calls to a Safe (`nonce`, `getTransactionHash`, `getModulesPaginated`, `getStorageAt`, `VERSION`, `isOwner`, and the legacy `checkSignatures` during registry ceremonies), the ERC-1271 `isValidSignature` staticcall that `SignatureChecker` makes when `quantumAdmin` is a contract, and the SHA-256 precompile.
 
 ### Emergency pause (circuit breaker)
 
-- Each Safe has its own deny-all pause (`pauseSafe`) that makes every non-escape `checkTransaction` for that Safe revert. There is no global pause (see "No global powers").
-- Pausing must be fast and low-privilege (any single owner of that Safe, the Safe itself, or its Quantum Administrator) because a compromised key holder can otherwise front-run revocations with an execution.
-- Unpausing must be slow and high-privilege: that Safe's owner threshold plus a time lock. A re-pause must not cancel a pending owner-threshold unpause request; the timer survives and unpause executes at maturity.
-- After unpause, a per-Safe cooldown of `ADMIN_TIMELOCK` blocks single-key actors (individual owners and the Quantum Administrator) from re-pausing. Only the Safe itself, via owner-threshold transaction, may pause during the cooldown.
-- Pausing fails closed — this is the correct failure direction for a security guard.
+- [GRD-092] Each Safe has its own deny-all pause (`pauseSafe`) that makes every non-escape `checkTransaction` for that Safe revert. There is no global pause (see "No global powers").
+- [GRD-093] Pausing must be fast and low-privilege (any single owner of that Safe, the Safe itself, or its Quantum Administrator) because a compromised key holder can otherwise front-run revocations with an execution.
+- [GRD-094] Unpausing must be slow and high-privilege: that Safe's owner threshold plus a time lock. A re-pause must not cancel a pending owner-threshold unpause request; the timer survives and unpause executes at maturity.
+- [GRD-095] After unpause, a per-Safe cooldown of `ADMIN_TIMELOCK` blocks single-key actors (individual owners and the Quantum Administrator) from re-pausing. Only the Safe itself, via owner-threshold transaction, may pause during the cooldown.
+- [GRD-096] Pausing fails closed — this is the correct failure direction for a security guard.
 
 ### Signature storage and verification cost
 
-- The full quantum signature is verified once in `createPreApproval` and only its hash (`signatureHash`) is stored; unbounded `bytes` must not be persisted (gas-griefing and storage-bloat vector).
-- On-chain post-quantum verification (e.g., Dilithium/Falcon) is gas-heavy. The implementation must bound verification gas, and if full PQ verification is infeasible on the target chain, the MVP must use a documented commit-verify scheme (hash commitment on-chain, PQ verification at creation time, with the trust boundary explicitly stated) rather than silently skipping verification.
-- `checkTransaction` itself must be O(1): lookups and comparisons only, no signature re-verification loops (DoS protection, since guard gas is charged to every Safe tx).
+- [GRD-097] The full quantum signature is verified once in `createPreApproval` and only its hash (`signatureHash`) is stored; unbounded `bytes` must not be persisted (gas-griefing and storage-bloat vector).
+- On-chain post-quantum verification (e.g., Dilithium/Falcon) is gas-heavy. The implementation must bound verification gas [GRD-098], and if full PQ verification is infeasible on the target chain, the MVP must use a documented commit-verify scheme (hash commitment on-chain, PQ verification at creation time, with the trust boundary explicitly stated) rather than silently skipping verification.
+- [GRD-099] `checkTransaction` itself must be O(1): lookups and comparisons only, no signature re-verification loops (DoS protection, since guard gas is charged to every Safe tx).
 
 ### ERC-20 selector policy (allowance exfiltration)
 
-The Guard must maintain an explicit selector allowlist and deny everything else. In particular it must **reject** by default:
+The Guard must maintain an explicit selector allowlist and deny everything else. [GRD-100] In particular it must **reject** by default:
 
 - `approve(address,uint256)`, `increaseAllowance(address,uint256)`, `permit(...)` — granting an allowance is a stealth-drain path equivalent to a transfer,
 - `transferFrom(address,address,uint256)` pulling from third parties,
 - any unknown or non-standard selector.
 
-Allowed selectors at the Safe's first enrollment: `transfer(address,uint256)` only, matched against a pre-approval. Each Safe may add selectors to its own permit-list through the ADMIN path — or remove them, `transfer` included, which then blocks `transfer` calls outright; every additional selector is attack surface.
+Allowed selectors at the Safe's first enrollment: `transfer(address,uint256)` only, matched against a pre-approval. [GRD-101] Each Safe may add selectors to its own permit-list through the ADMIN path — or remove them, `transfer` included, which then blocks `transfer` calls outright; every additional selector is attack surface.
 
-**Allowlist storage and governance (resolved):** the deny-list above is **hardcoded** (immutable constants checked first — `approve`, `increaseAllowance`, `permit`, `transferFrom` can never be re-enabled by any governance action, only by a new Guard deployment). The permit-list is per-Safe policy state: `mapping(address safe => mapping(bytes4 selector => bool)) allowedSelectors`, initialized at the Safe's first enrollment to `{transfer}` only (registering a new key after an emergency key revocation does not reset it). Adding or removing a selector is a **policy change**, executed exactly like other policy mutations: an `ADMIN`-class pre-approval (hybrid dual signature + owner threshold + the mandatory `ADMIN_TIMELOCK`) targeting the Guard's `setSelectorPolicy(safe, selector, allowed)`. No EOA or Guard deployer can modify any Safe's allowlist. The permit-list is keyed by selector only (not target + selector); the PAYLOAD approval binds the exact target.
+**Allowlist storage and governance (resolved):** the deny-list above is **hardcoded** (immutable constants checked first — `approve`, `increaseAllowance`, `permit`, `transferFrom` can never be re-enabled by any governance action, only by a new Guard deployment). [GRD-102] The permit-list is per-Safe policy state: `mapping(address safe => mapping(bytes4 selector => bool)) allowedSelectors`, initialized at the Safe's first enrollment to `{transfer}` only (registering a new key after an emergency key revocation does not reset it). [GRD-103] Adding or removing a selector is a **policy change**, executed exactly like other policy mutations: an `ADMIN`-class pre-approval (hybrid dual signature + owner threshold + the mandatory `ADMIN_TIMELOCK`) targeting the Guard's `setSelectorPolicy(safe, selector, allowed)`. No EOA or Guard deployer can modify any Safe's allowlist. [GRD-104] The permit-list is keyed by selector only (not target + selector); the PAYLOAD approval binds the exact target.
 
 **Not yet implemented on-chain:** token and recipient allowlists, amount caps, and a maximum validity window. `policyHash` is signed and stored but not checked against any on-chain policy; these limits are currently enforced only off-chain by the add-on service.
 
@@ -695,39 +696,39 @@ Allowed selectors at the Safe's first enrollment: `transfer(address,uint256)` on
 
 An outright MultiSend ban is unusable for the target audience — a 50-recipient payroll would cost 50 Safe transactions, 50 pre-approvals (~1M gas of XMSS verification each), ~400 Ledger button presses, and 50 leaves, which predictably pushes teams to remove the Guard for batch days. Batching is therefore supported, narrowly:
 
-- **Only `MultiSendCallOnly`, only the pinned address.** The Guard stores one `MultiSendCallOnly` address as an immutable (the deploy script defaults to the v1.4.1 deployment). Safes whose Safe{Wallet} batches through another MultiSendCallOnly version cannot batch through this Guard. It is the sole permitted delegatecall target; `MultiSend` (which allows inner delegatecalls) stays banned forever.
-- **One `PAYLOAD` pre-approval per batch.** `dataHash = keccak256(multiSendCalldata)` binds every leg — order, targets, values, calldata — with a single XMSS signature and a single leaf. Any post-signature mutation changes the hash and the Guard reverts.
-- **On-chain per-leg structural checks.** Even though the hash already binds the batch, `checkTransaction` must decode the `MultiSendCallOnly` payload and enforce, per leg: `operation == CALL` (redundant with `MultiSendCallOnly` but checked anyway), leg target is not the Safe, `address(0)` (which `MultiSendCallOnly` rewrites to the Safe itself), the Guard (which contains the registry), or `MultiSendCallOnly` itself (no admin ops smuggled inside batches — those go through `ADMIN` alone), a leg with calldata carries a selector that is not deny-listed and is on the Safe's permit-list (`transfer` included — it is not exempt), and 1–3-byte leg calldata is malformed. Legs with empty calldata (native value) are allowed; the batch hash binds them. Per-token amount caps are not yet implemented. Decoding N legs is a few hundred gas per leg — noise next to the XMSS verification.
-- **Bounded size.** The immutable `MAX_BATCH_LEGS` (deploy-script default 100) caps decoding so it cannot be gas-griefed.
-- **Strict decoding — malformed batches revert immediately.** `MultiSendCallOnly` legs are packed as `(uint8 operation, address to, uint256 value, uint256 dataLength, bytes data)`. The outer `multiSend(bytes)` argument is decoded with `abi.decode` (the same decoding `MultiSendCallOnly` performs). The Guard's leg decoder must, before touching any leg contents: (1) revert if the remaining bytes are shorter than the 85-byte fixed leg header, (2) revert if `dataLength` overruns the remaining calldata (truncation), (3) revert if, after the last leg, any trailing bytes remain (`offset != data.length` — no smuggled suffix), and (4) revert the moment the leg counter exceeds `MAX_BATCH_LEGS` (`BatchTooLarge`), *before* decoding further legs. Each check is O(1) per leg, so the worst-case adversarial input costs at most `MAX_BATCH_LEGS` header reads before the revert — no unbounded traversal to EOF is possible.
-- **Ledger UX.** The device binds the batch `dataHash` and displays: leg count, per-token totals, and the hash — it cannot render 50 legs. The leg-by-leg review happens in the add-on UI with two-source verification; the on-chain per-leg checks above are the backstop that holds even if the host lies about the legs. One press-sequence, one leaf, whole payroll.
+- **Only `MultiSendCallOnly`, only the pinned address.** The Guard stores one `MultiSendCallOnly` address as an immutable (the deploy script defaults to the v1.4.1 deployment). Safes whose Safe{Wallet} batches through another MultiSendCallOnly version cannot batch through this Guard. It is the sole permitted delegatecall target; `MultiSend` (which allows inner delegatecalls) stays banned forever. [GRD-105]
+- **One `PAYLOAD` pre-approval per batch.** `dataHash = keccak256(multiSendCalldata)` binds every leg — order, targets, values, calldata — with a single XMSS signature and a single leaf. Any post-signature mutation changes the hash and the Guard reverts. [GRD-106]
+- [GRD-107] **On-chain per-leg structural checks.** Even though the hash already binds the batch, `checkTransaction` must decode the `MultiSendCallOnly` payload and enforce, per leg: `operation == CALL` (redundant with `MultiSendCallOnly` but checked anyway), leg target is not the Safe, `address(0)` (which `MultiSendCallOnly` rewrites to the Safe itself), the Guard (which contains the registry), or `MultiSendCallOnly` itself (no admin ops smuggled inside batches — those go through `ADMIN` alone), a leg with calldata carries a selector that is not deny-listed and is on the Safe's permit-list (`transfer` included — it is not exempt), and 1–3-byte leg calldata is malformed. Legs with empty calldata (native value) are allowed; the batch hash binds them. Per-token amount caps are not yet implemented. Decoding N legs is a few hundred gas per leg — noise next to the XMSS verification.
+- [GRD-108] **Bounded size.** The immutable `MAX_BATCH_LEGS` (deploy-script default 100) caps decoding so it cannot be gas-griefed.
+- [GRD-109] **Strict decoding — malformed batches revert immediately.** `MultiSendCallOnly` legs are packed as `(uint8 operation, address to, uint256 value, uint256 dataLength, bytes data)`. The outer `multiSend(bytes)` argument is decoded with `abi.decode` (the same decoding `MultiSendCallOnly` performs). The Guard's leg decoder must, before touching any leg contents: (1) revert if the remaining bytes are shorter than the 85-byte fixed leg header, (2) revert if `dataLength` overruns the remaining calldata (truncation), (3) revert if, after the last leg, any trailing bytes remain (`offset != data.length` — no smuggled suffix), and (4) revert the moment the leg counter exceeds `MAX_BATCH_LEGS` (`BatchTooLarge`), *before* decoding further legs. Each check is O(1) per leg, so the worst-case adversarial input costs at most `MAX_BATCH_LEGS` header reads before the revert — no unbounded traversal to EOF is possible.
+- [GRD-110] **Ledger UX.** The device binds the batch `dataHash` and displays: leg count, per-token totals, and the hash — it cannot render 50 legs. The leg-by-leg review happens in the add-on UI with two-source verification; the on-chain per-leg checks above are the backstop that holds even if the host lies about the legs. One press-sequence, one leaf, whole payroll.
 
 ### Timestamp handling
 
-- `validFrom`/`validTo` rely on `block.timestamp`, which validators can skew by seconds. Approval windows must have a minimum granularity (e.g., ≥ 15 minutes) and must never be used as a sub-minute security boundary.
+- `validFrom`/`validTo` rely on `block.timestamp`, which validators can skew by seconds. Approval windows must have a minimum granularity (e.g., ≥ 15 minutes) and must never be used as a sub-minute security boundary. [GRD-111]
 
 ### Immutability and deployment hygiene
 
-- The Guard must be non-upgradeable: no proxy, no initializer, no `DELEGATECALL`, `SELFDESTRUCT`, `CALLCODE`, `CREATE` or `CREATE2` in its runtime code (enforced by `test_guardBytecodeHasNoUpgradeOrSelfDestructPath`). Fixes ship as a new Guard, set by each Safe's owners.
-- The constructor validates `multiSendCallOnly` (non-zero, has code) and that `emergencyTimelock > adminTimelock`.
-- Use custom errors with explicit reason data for every revert path; every state change emits an event for off-chain monitoring.
+- [GRD-112] The Guard must be non-upgradeable: no proxy, no initializer, no `DELEGATECALL`, `SELFDESTRUCT`, `CALLCODE`, `CREATE` or `CREATE2` in its runtime code (enforced by `test_guardBytecodeHasNoUpgradeOrSelfDestructPath`). Fixes ship as a new Guard, set by each Safe's owners.
+- [GRD-113] The constructor validates `multiSendCallOnly` (non-zero, has code) and that `emergencyTimelock > adminTimelock`.
+- [GRD-114] Use custom errors with explicit reason data for every revert path; every state change emits an event for off-chain monitoring.
 - `tx.origin` must never be used for any authorization decision.
-- Lock the compiler to a recent audited Solidity version; enable overflow checks (default ≥ 0.8) and run static analysis (Slither) plus a professional audit before mainnet.
+- [GRD-115] Lock the compiler to a recent audited Solidity version; enable overflow checks (default ≥ 0.8) and run static analysis (Slither) plus a professional audit before mainnet.
 
 ## Virtual brain test against Safe semantics
 
-The following checks are the minimum correctness review for the FermionGuard guard.
+The following checks are the minimum correctness review for the FermionGuard guard. Each item restates a requirement tagged elsewhere in this document unless it carries an ID of its own.
 
 1. If `Safe.setGuard(address(guard))` is called with a contract that does not implement `ITransactionGuard`, Safe reverts.
 2. If the Guard is set correctly but a transaction is invalid, `checkTransaction` must revert.
 3. If the Guard returns without revert, Safe continues execution.
 4. If `operation == Enum.Operation.DelegateCall`, the Guard must reject the transaction unless the target is the pinned `MultiSendCallOnly` (see 19).
-5. If no live approval matches the transaction — by `safeTxHash` pin, or by the class's field commitment (`token`/`recipient`/`amount`, or `target`/`value`/`dataHash`) — the guard must revert.
-6. If the quantum signature was created for a different Safe, chain ID, or payload hash, the guard must revert.
-7. If `validFrom`/`validTo` are exceeded, or the approval is revoked or already used, the guard must revert.
-8. If `msgSender` is used as trust input, it must be treated as merely the initiating caller and not as proof of a valid quantum authorization.
-9. The guard must not trust the base transaction calldata alone; it must decode and validate the exact target call details.
-10. The guard must not hold the final authority to transfer funds directly. It only decides to allow or reject the Safe transaction.
+5. [GRD-116] If no live approval matches the transaction — by `safeTxHash` pin, or by the class's field commitment (`token`/`recipient`/`amount`, or `target`/`value`/`dataHash`) — the guard must revert.
+6. [GRD-117] If the quantum signature was created for a different Safe, chain ID, or payload hash, the guard must revert.
+7. [GRD-118] If `validFrom`/`validTo` are exceeded, or the approval is revoked or already used, the guard must revert.
+8. [GRD-119] If `msgSender` is used as trust input, it must be treated as merely the initiating caller and not as proof of a valid quantum authorization.
+9. [GRD-120] The guard must not trust the base transaction calldata alone; it must decode and validate the exact target call details.
+10. [GRD-121] The guard must not hold the final authority to transfer funds directly. It only decides to allow or reject the Safe transaction.
 11. If a module is enabled on the Safe, the tx guard is bypassed via `execTransactionFromModule`; the guard must detect enabled modules or a module guard must be installed. `enableModule` must be rejected unless this Guard is already wired as module guard, and remediation calls must remain possible.
 12. If a random address calls `checkTransaction` directly, it must revert (caller is not an enrolled Safe) so approvals cannot be burned by attackers.
 13. If the Safe tx targets the Safe itself (`setGuard`, `enableModule`, owner changes, any other self-call) or the Guard, it must be rejected unless explicitly quantum-authorized as an admin action.
@@ -753,7 +754,7 @@ The Guard must:
 - inspect the Safe transaction before execution,
 - classify the call (batch, admin, native, transfer, allowlisted call) and decode it,
 - find a live pre-approval matching the exact payload (Tier 1 pin or Tier 2 field commitment),
-- confirm the Safe's key is Active (approvals of a Rotated key stay usable; a Revoked key's do not) — signatures were verified once, at creation,
+- [GRD-122] confirm the Safe's key is Active (approvals of a Rotated key stay usable; a Revoked key's do not) — signatures were verified once, at creation,
 - enforce chain binding and domain separation,
 - ensure the approval is within its validity window and unused,
 - enforce fallback-handler and module posture before allowing normal transactions,
@@ -849,20 +850,20 @@ The major problems fixed here are:
 Before production deployment, FermionGuard must ensure:
 
 - real post-quantum or hybrid cryptography is used for the quantum approval path,
-- signatures are bound to chain ID, Safe address, nonce, token, recipient, amount, and policy hash,
-- all approvals are nonce-protected and single-use,
-- key revocation, rotation, and incident-response flows are in place,
+- [GRD-123] signatures are bound to chain ID, Safe address, nonce, token, recipient, amount, and policy hash,
+- [GRD-124] all approvals are nonce-protected and single-use,
+- [GRD-125] key revocation, rotation, and incident-response flows are in place,
 - the Guard rejects unknown selectors and unsupported call patterns,
-- the Safe policy allowlist and amount caps are enforced in the Guard (selector permit-list: done; amount caps, token/recipient allowlists, maximum window: not yet),
-- an integration test exists that deploys a real Safe + Guard, pins a pre-approval to the `safeTxHash` of nonce `N`, executes at nonce `N`, and asserts the Guard's `getTransactionHash(..., nonce() - 1)` recomputation matches (catches the nonce off-by-one and Safe-version hash drift),
-- fuzz/negative tests cover malformed MultiSend batches (truncated leg header, overrunning `dataLength`, trailing bytes, > `MAX_BATCH_LEGS`) — all must revert cheaply,
-- tests assert fallback-handler posture enforcement and the remediation exemptions (`setFallbackHandler(address(0))` and quantum-approved Guard removal),
-- tests assert `enableModule` rejects until the Guard is wired as module guard, while `disableModule`/`setModuleGuard` remediation is not deadlocked,
-- the core flows (enrollment, `setGuard`, Tier 1/Tier 2, MultiSendCallOnly batch, pause and emergency de-guard, fallback-handler ban, module posture, `nonce() - 1`, depth unwinding) run end to end on real Safe v1.3.0 and v1.4.1 singletons, L1 and L2 (`test/LegacySafeIntegration.t.sol`; v1.5.0 in `test/GuardIntegration.t.sol`),
-- tests assert re-pause does not cancel a pending unpause and the post-unpause cooldown blocks single-key pausers,
-- a test asserts the emergency de-guard selector allow executes **before** the pause check (`requestEmergencyDeGuard` succeeds while the Safe is paused),
-- a test asserts the deployed Guard bytecode has no upgrade or self-destruct opcodes,
-- the contract is audited and reviewed under the actual Safe execution semantics before mainnet use.
+- [GRD-126] the Safe policy allowlist and amount caps are enforced in the Guard (selector permit-list: done; amount caps, token/recipient allowlists, maximum window: not yet),
+- [GRD-127] an integration test exists that deploys a real Safe + Guard, pins a pre-approval to the `safeTxHash` of nonce `N`, executes at nonce `N`, and asserts the Guard's `getTransactionHash(..., nonce() - 1)` recomputation matches (catches the nonce off-by-one and Safe-version hash drift),
+- [GRD-128] fuzz/negative tests cover malformed MultiSend batches (truncated leg header, overrunning `dataLength`, trailing bytes, > `MAX_BATCH_LEGS`) — all must revert cheaply,
+- [GRD-129] tests assert fallback-handler posture enforcement and the remediation exemptions (`setFallbackHandler(address(0))` and quantum-approved Guard removal),
+- [GRD-130] tests assert `enableModule` rejects until the Guard is wired as module guard, while `disableModule`/`setModuleGuard` remediation is not deadlocked,
+- [GRD-131] the core flows (enrollment, `setGuard`, Tier 1/Tier 2, MultiSendCallOnly batch, pause and emergency de-guard, fallback-handler ban, module posture, `nonce() - 1`, depth unwinding) run end to end on real Safe v1.3.0 and v1.4.1 singletons, L1 and L2 (`test/LegacySafeIntegration.t.sol`; v1.5.0 in `test/GuardIntegration.t.sol`),
+- [GRD-132] tests assert re-pause does not cancel a pending unpause and the post-unpause cooldown blocks single-key pausers,
+- [GRD-133] a test asserts the emergency de-guard selector allow executes **before** the pause check (`requestEmergencyDeGuard` succeeds while the Safe is paused),
+- [GRD-134] a test asserts the deployed Guard bytecode has no upgrade or self-destruct opcodes,
+- [GRD-135] the contract is audited and reviewed under the actual Safe execution semantics before mainnet use.
 
 ## Summary
 
@@ -876,3 +877,148 @@ The correct design is:
 - If the validation is valid, Safe continues execution normally.
 
 This is the correct integration pattern for a Gnosis Safe wallet and the version of the spec that matches the official Smart Account execution model.
+
+## Requirement index
+
+Every normative requirement in this document carries a stable `[GRD-nnn]` tag.
+`contracts/script/check_requirements.py` cross-references these tags with the
+`Covers:` annotations on the tests, fuzz properties and proofs under
+`contracts/test/`, and reports the requirements that no check discharges yet.
+
+| ID | Requirement |
+|---|---|
+| GRD-001 | Every security primitive is inherited or called from a pinned library, never reimplemented. |
+| GRD-002 | `ITransactionGuard` must not be duplicated locally; the `interfaceId` comes from Safe's package. |
+| GRD-003 | No admin, owner, guardian or role of any kind exists on the Guard. |
+| GRD-004 | No global pause and no governance-curated list. |
+| GRD-005 | No upgrade path: no proxy, no `selfdestruct`, no delegatecall to mutable code. |
+| GRD-006 | Only a Safe's owners can change or remove the Guard attached to that Safe. |
+| GRD-007 | No change may add a power that reaches more than one Safe. |
+| GRD-008 | Hand-written code exists only where no library fits (MultiSend leg loop, XMSS hashing assembly). |
+| GRD-009 | Used XMSS leaves are tracked in a bitmap keyed by `(quantumKeyId, leafIndex)`; reuse reverts. |
+| GRD-010 | The Ledger app commits its leaf counter before releasing any signature. |
+| GRD-011 | A pre-approval is valid only if both the XMSS and the classical signature verify. |
+| GRD-012 | An HMAC is never presented as a quantum-safe signature. |
+| GRD-013 | No local `ITransactionGuard` / `BaseTransactionGuard` / `Enum` / `IERC165`. |
+| GRD-014 | No local `ecrecover` wrapper, HMAC, or "quantum signature" function. |
+| GRD-015 | No global pause flag or role mapping (per-Safe pause and depth counter excepted). |
+| GRD-016 | No local EIP-712 domain separator or Safe tx hasher. |
+| GRD-017 | No local nonce counter or used-bit mapping where `Nonces` / `BitMaps` fit. |
+| GRD-018 | No upgradeable-proxy scaffolding. |
+| GRD-019 | No `tx.origin` check anywhere. |
+| GRD-020 | `supportsInterface` reports exactly Safe's `ITransactionGuard`, `IModuleGuard` and ERC-165 IDs. |
+| GRD-021 | The contract implements Safe's official `ITransactionGuard` exactly. |
+| GRD-022 | `checkTransaction(...)` carries the exact Safe parameter list and types. |
+| GRD-023 | `checkAfterExecution(bytes32,bool)` is implemented. |
+| GRD-024 | `supportsInterface(bytes4)` is implemented so Safe can validate the Guard at `setGuard`. |
+| GRD-025 | No fake execution entrypoint (`executeTransaction`, `exec`, or any signer-like function). |
+| GRD-026 | `checkTransaction` reverts to deny and returns to allow. |
+| GRD-027 | `checkAfterExecution` is bookkeeping only, never the primary authorization gate. |
+| GRD-028 | `checkTransaction` requires `msg.sender` to be an enrolled Safe. |
+| GRD-029 | `registerQuantumKey` takes `safe` explicitly; `msg.sender` never infers the Safe. |
+| GRD-030 | Registration verifies owner co-signatures over an EIP-712 struct binding root, admin, safe, chain, nonce and deadline. |
+| GRD-031 | Registration verifies that `ledgerAttestation` is signed by `quantumAdmin`. |
+| GRD-032 | Registration rejects an existing Active key and same-Safe root reuse (cross-Safe allowed) and bumps `registryNonce`. |
+| GRD-033 | `rotateQuantumKey` additionally verifies an old-key XMSS signature over the rotation digest and supersedes a pending revocation. |
+| GRD-034 | Emergency revocation: owner signatures are single-use, only the Safe cancels, execution revokes only the named key. |
+| GRD-035 | `revokePreApproval` is callable by the Safe, the key's `quantumAdmin`, or any single owner — except ADMIN approvals. |
+| GRD-036 | Creation verifies both hybrid halves before storing; a missing or invalid ECDSA half reverts. |
+| GRD-037 | Enrollment verifies Safe posture: no fallback handler and no unguarded modules. |
+| GRD-038 | Operators revoke pre-existing token and Permit2 allowances before enrollment. |
+| GRD-039 | The Safe must have no enabled modules, verified at enrollment and re-checked in `checkTransaction`. |
+| GRD-040 | On Safe ≥ 1.5.0 the same Guard must be installed as the Safe's `IModuleGuard` with the same policy checks. |
+| GRD-041 | A module transaction with `operation == DELEGATECALL` is always rejected. |
+| GRD-042 | Module transactions match Tier 2 only. |
+| GRD-043 | A module can never install a fallback handler. |
+| GRD-044 | A module-executed `setGuard` clears any emergency de-guard request. |
+| GRD-045 | The Safe's pause applies to module transactions too. |
+| GRD-046 | On Safe < 1.5.0 `enableModule` is rejected outright and enrollment enforces the no-modules rule. |
+| GRD-047 | "Wired" requires both the module-guard slot and a parseable `VERSION()` ≥ 1.5.0; otherwise unwired (fail closed). |
+| GRD-048 | With an unguarded module, every owner transaction fails closed until the approved `disableModule`. |
+| GRD-049 | `enableModule` is rejected with `ModuleGuardNotWired` unless this Guard is already the module guard. |
+| GRD-050 | Every remediation self-call is exempt from both posture checks. |
+| GRD-051 | Any transaction to the Safe itself or to the Guard needs a matching, timelock-elapsed ADMIN approval. |
+| GRD-052 | `setFallbackHandler` to a non-zero handler is rejected even with an approval. |
+| GRD-053 | `setGuard` / `setFallbackHandler` are recognised by selector and first argument word, not calldata length. |
+| GRD-054 | A guarded Safe has no fallback handler, and there is no handler allowlist. |
+| GRD-055 | `checkTransaction`, `checkModuleTransaction` and enrollment revert on a nonzero fallback-handler slot. |
+| GRD-056 | Handler remediation is never blocked: approved `setGuard(0)` and `setFallbackHandler(0)` always pass. |
+| GRD-057 | TRANSFER binds token, recipient and amount. |
+| GRD-058 | PAYLOAD binds target, value and `keccak256(data)`. |
+| GRD-059 | ADMIN binds the exact payload, targets only the Safe or the Guard, and carries the mandatory `ADMIN_TIMELOCK`. |
+| GRD-060 | DELEGATECALL reverts unless the target is the pinned `MultiSendCallOnly`. |
+| GRD-061 | Empty calldata requires a matching PAYLOAD approval for the exact `to` and `value`. |
+| GRD-062 | A deny-listed selector reverts with `DeniedSelector`. |
+| GRD-063 | The selector must be on the Safe's permit-list, `transfer` included; the list is keyed by selector only. |
+| GRD-064 | An ERC-20 `transfer` must carry zero value and decode canonically before matching a TRANSFER approval. |
+| GRD-065 | Anything else requires a matching PAYLOAD approval. |
+| GRD-066 | ADMIN creation emits the loud `AdminPreApprovalCreated` event. |
+| GRD-067 | No-brick path 1: an ADMIN `setGuard(address(0))` after `ADMIN_TIMELOCK`, working while paused. |
+| GRD-068 | No-brick path 2: the emergency de-guard path, with no quantum key required. |
+| GRD-069 | No-brick path 3: a never-enrolled Safe may always `setGuard(address(0))`. |
+| GRD-070 | No removal path may depend on a component the Guard can render unusable. |
+| GRD-071 | `requestEmergencyDeGuard` is callable only by the enrolled Safe itself. |
+| GRD-072 | The escape-hatch family is hardcoded-allowed (zero value, CALL, `gasPrice == 0`), bypassing pause and enrollment. |
+| GRD-073 | Each escape call re-checks its own authority; none can move funds or weaken enforcement. |
+| GRD-074 | The check order is normative: gas-refund ban, escape hatch, pause, then everything else. |
+| GRD-075 | `EMERGENCY_TIMELOCK` is immutable, materially longer than `ADMIN_TIMELOCK`, and the request emits an event. |
+| GRD-076 | During the emergency window only the Safe itself can cancel. |
+| GRD-077 | After expiry exactly one self-call is unlocked: `setGuard(address(0))`. |
+| GRD-078 | Any executed `setGuard`, owner- or module-executed, clears the pending emergency request. |
+| GRD-079 | `gasPrice` must be zero; otherwise `GasRefundForbidden`. |
+| GRD-080 | The EIP-712 domain binds the Guard address and `block.chainid`, so approvals never replay across chains. |
+| GRD-081 | `msg.sender` is the Safe identity and must be an enrolled Safe with an Active key. |
+| GRD-082 | In the consumption path `safe` comes from `msg.sender`, never from calldata. |
+| GRD-083 | The safeTxHash is recomputed with `nonce() - 1`. |
+| GRD-084 | The Safe's own `getTransactionHash` is used; no local hasher. |
+| GRD-085 | The approval is marked used inside `checkTransaction`. |
+| GRD-086 | `validatePreApproval` stays a view helper and is never the consumption mechanism. |
+| GRD-087 | A failed execution leaves the approval consumed. |
+| GRD-088 | Execution depth is tracked per Safe in a transient counter, up in `checkTransaction`, down in `checkAfterExecution`. |
+| GRD-089 | Nested Safe executions are rejected; escape calls are allowed but still increment the counter. |
+| GRD-090 | The module path does not touch the depth counter. |
+| GRD-091 | State writes follow checks-effects-interactions; the Guard's only external calls are read-only. |
+| GRD-092 | Each Safe has its own deny-all pause; there is no global pause. |
+| GRD-093 | Pausing is fast and low-privilege: any single owner, the Safe, or the Quantum Administrator. |
+| GRD-094 | Unpausing needs the owner threshold plus a time lock, and a re-pause never cancels a pending unpause. |
+| GRD-095 | After an unpause a cooldown of `ADMIN_TIMELOCK` blocks single-key actors from re-pausing. |
+| GRD-096 | Pausing fails closed. |
+| GRD-097 | Only the signature hash is stored; unbounded signature bytes are never persisted. |
+| GRD-098 | Verification gas must be bounded. |
+| GRD-099 | `checkTransaction` must be O(1). |
+| GRD-100 | The Guard maintains an explicit selector allowlist and denies everything else. |
+| GRD-101 | At first enrollment only `transfer` is allowed; each Safe may add or remove selectors, `transfer` included. |
+| GRD-102 | The deny-list is hardcoded and can never be re-enabled by any governance action. |
+| GRD-103 | A re-registration after key revocation does not reset the permit-list. |
+| GRD-104 | A selector-policy change is an ADMIN pre-approval; no EOA or deployer can change any Safe's allowlist. |
+| GRD-105 | Only the pinned `MultiSendCallOnly` is a delegatecall target; `MultiSend` stays banned forever. |
+| GRD-106 | One PAYLOAD approval per batch whose `dataHash` binds every leg; any mutation reverts. |
+| GRD-107 | Per-leg structural checks on target, operation and selector policy. |
+| GRD-108 | `MAX_BATCH_LEGS` bounds batch decoding. |
+| GRD-109 | Strict batch decoding: short header, `dataLength` overrun, trailing bytes and the leg cap all revert. |
+| GRD-110 | The Ledger shows leg count, per-token totals and the batch hash. |
+| GRD-111 | Approval windows have a minimum granularity and are never a sub-minute security boundary. |
+| GRD-112 | The runtime bytecode contains no upgrade or self-destruct opcode. |
+| GRD-113 | The constructor validates `multiSendCallOnly` and `emergencyTimelock > adminTimelock`. |
+| GRD-114 | Custom errors on every revert path; an event on every state change. |
+| GRD-115 | Locked compiler, overflow checks, Slither and a professional audit before mainnet. |
+| GRD-116 | A transaction with no matching live approval reverts. |
+| GRD-117 | A signature made for another Safe, chain ID or payload hash is rejected. |
+| GRD-118 | An expired, revoked or already-used approval is rejected at execution. |
+| GRD-119 | `msgSender` is context only, never proof of quantum authorization. |
+| GRD-120 | The Guard decodes and validates the exact target call, never trusting the raw calldata. |
+| GRD-121 | The Guard never holds authority to move funds; it only allows or rejects. |
+| GRD-122 | Execution confirms the key state: Rotated approvals stay usable, a Revoked key's do not. |
+| GRD-123 | Signatures are bound to chain ID, Safe, nonce, token, recipient, amount and policy hash. |
+| GRD-124 | All approvals are nonce-protected and single-use. |
+| GRD-125 | Key revocation, rotation and incident-response flows exist. |
+| GRD-126 | The Safe policy allowlist and amount caps are enforced in the Guard (amount caps not yet implemented). |
+| GRD-127 | An integration test pins a pre-approval to the `safeTxHash` of nonce N on a real Safe and executes it. |
+| GRD-128 | Fuzz and negative tests cover malformed MultiSend batches. |
+| GRD-129 | Tests assert fallback-handler posture enforcement and its remediation exemptions. |
+| GRD-130 | Tests assert `enableModule` gating and non-deadlocked module remediation. |
+| GRD-131 | The core flows run end to end on real Safe v1.3.0 and v1.4.1 singletons. |
+| GRD-132 | Tests assert re-pause/unpause semantics and the post-unpause cooldown. |
+| GRD-133 | A test asserts the escape-hatch allow runs before the pause check. |
+| GRD-134 | A test asserts the deployed bytecode has no upgrade or self-destruct opcodes. |
+| GRD-135 | The contract is audited under real Safe execution semantics before mainnet. |

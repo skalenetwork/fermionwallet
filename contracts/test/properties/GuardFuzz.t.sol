@@ -84,6 +84,7 @@ contract GuardFuzzTest is PropertyBase {
     /// spec-listed escape-hatch call (and then consumes nothing), or it consumed exactly
     /// one approval.
     /// forge-config: default.fuzz.runs = 1024
+    /// Covers: [GRD-054], [GRD-072], [GRD-116]
     function testFuzz_NothingExecutesWithoutConsumingAnApproval(
         uint8 toSel,
         address rnd,
@@ -220,6 +221,7 @@ contract GuardFuzzTest is PropertyBase {
     /// execution path). Executes iff the approval's binding is untouched; on success
     /// exactly that approval is consumed and exactly the approved effect happens.
     /// forge-config: default.fuzz.runs = 1024
+    /// Covers: [GRD-057], [GRD-058], [GRD-117], [GRD-120], [ENG-036]
     function testFuzz_MatchingIsExact(uint8 base, uint8 mutation, uint256 delta, address other, bytes calldata junk, bool viaModule)
         public
     {
@@ -316,6 +318,7 @@ contract GuardFuzzTest is PropertyBase {
     /// here with MultiSend's own lenient loop — is a permitted CALL. Completeness: every
     /// well-formed, policy-clean batch within the leg cap passes.
     /// forge-config: default.fuzz.runs = 2048
+    /// Covers: [GRD-106], [GRD-107], [GRD-108], [GRD-109], [GRD-128]
     function testFuzz_BatchDecoderSoundAndComplete(uint256 seed, uint8 nLegs, uint8 corruption, uint8 k) public {
         uint256 n = nLegs % 7;
         bytes memory packed;
@@ -449,6 +452,7 @@ contract GuardFuzzTest is PropertyBase {
     /// Execution at time t succeeds iff validFrom <= t <= validTo (both inclusive) — for
     /// a Tier-2 approval (owner and module path) and a Tier-1 pinned one.
     /// forge-config: default.fuzz.runs = 512
+    /// Covers: [GRD-118], [ENG-034]
     function testFuzz_ValidityWindowEnforcedAtBoundaries(uint8 pick, uint64 rnd, uint8 path) public {
         uint64[6] memory probes = [W_FROM - 1, W_FROM, W_TO, W_TO + 1, T0 + (rnd % 3 days), W_FROM + (rnd % 1 days)];
         uint64 t = probes[pick % 6];
@@ -466,6 +470,7 @@ contract GuardFuzzTest is PropertyBase {
     /// now). Checked before any signature work, so a garbage signature isolates them:
     /// a request passing every time rule dies on the ECDSA half instead.
     /// forge-config: default.fuzz.runs = 1024
+    /// Covers: [GRD-059], [GRD-111], [ENG-026], [ENG-029]
     function testFuzz_CreationTimeRules(uint64 from, uint64 to_, uint32 nowOffset, uint8 class_) public {
         vm.warp(uint256(T0) + nowOffset);
         uint64 nowTs = uint64(vm.getBlockTimestamp());
@@ -507,6 +512,7 @@ contract GuardFuzzTest is PropertyBase {
     /// Unpause executes iff at least ADMIN_TIMELOCK elapsed since the (latest) request;
     /// single-key re-pauses in between never cancel or shorten the pending request.
     /// forge-config: default.fuzz.runs = 512
+    /// Covers: [GRD-093], [GRD-094], [GRD-095], [GRD-132]
     function testFuzz_UnpauseTimelock(uint32 d1, uint32 d2, bool ownerRepauses, bool rerequest, uint32 d3) public {
         d1 = uint32(bound(d1, 0, 3 * ADMIN_TIMELOCK));
         d2 = uint32(bound(d2, 0, 3 * ADMIN_TIMELOCK));
@@ -551,6 +557,7 @@ contract GuardFuzzTest is PropertyBase {
     /// The owner-only Guard removal unlocks iff EMERGENCY_TIMELOCK elapsed since the
     /// latest request; re-requests only ever push the unlock later.
     /// forge-config: default.fuzz.runs = 512
+    /// Covers: [GRD-075], [GRD-077], [GRD-078]
     function testFuzz_EmergencyDeGuardTimelock(uint32 d, uint32 gap, bool rerequest) public {
         d = uint32(bound(d, 0, 3 * EMERGENCY_TIMELOCK));
         gap = uint32(bound(gap, 0, EMERGENCY_TIMELOCK));
@@ -573,6 +580,7 @@ contract GuardFuzzTest is PropertyBase {
 
     /// Emergency key revocation executes iff EMERGENCY_ROTATION_TIMELOCK elapsed.
     /// forge-config: default.fuzz.runs = 256
+    /// Covers: [GRD-122], [QKR-020], [QKR-023], [ENG-035]
     function testFuzz_KeyRevocationTimelock(uint32 d) public {
         d = uint32(bound(d, 0, 3 * EMERGENCY_TIMELOCK));
         uint256 validUntil = vm.getBlockTimestamp() + 1 days;
@@ -594,6 +602,7 @@ contract GuardFuzzTest is PropertyBase {
 
     /// Gas refunds are refused for every transaction, escape calls included.
     /// forge-config: default.fuzz.runs = 256
+    /// Covers: [GRD-074], [GRD-079]
     function testFuzz_GasRefundAlwaysRejected(uint256 gasPrice, uint256 baseGas, bool escapeCall, bool refundInToken) public {
         gasPrice = bound(gasPrice, 1, 1e30);
         baseGas = bound(baseGas, 0, 1e6);
@@ -615,6 +624,7 @@ contract GuardFuzzTest is PropertyBase {
     /// whatever trails the argument (Safe's ABI decoder ignores trailing calldata), on the
     /// owner path and the module path alike.
     /// forge-config: default.fuzz.runs = 512
+    /// Covers: [GRD-043], [GRD-052], [GRD-053], [GRD-055]
     function testFuzz_FallbackHandlerInstallRejectedBeforeMatching(address handler, bytes calldata tail, bool viaModule)
         public
     {
@@ -633,6 +643,7 @@ contract GuardFuzzTest is PropertyBase {
 
     /// End to end: even a matching, timelock-elapsed ADMIN approval cannot install a
     /// handler by padding the calldata the Guard pattern-matches on.
+    /// Covers: [GRD-052], [GRD-053]
     function test_PaddedSetFallbackHandler_WithAdminApproval_Rejected() public {
         address handler = makeAddr("compatHandler");
         bytes memory data =
@@ -649,6 +660,7 @@ contract GuardFuzzTest is PropertyBase {
 
     /// End to end: a padded ADMIN-approved `setGuard(other)` still ends this Guard's
     /// tenure, so a pending emergency de-guard request must not survive it.
+    /// Covers: [GRD-053], [GRD-078]
     function test_PaddedSetGuard_ClearsPendingEmergencyRequest() public {
         FermionGuardHarness other =
             new FermionGuardHarness(address(msco), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, MAX_BATCH_LEGS, MAX_QUEUE);
