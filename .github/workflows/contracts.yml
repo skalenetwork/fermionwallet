@@ -66,3 +66,13 @@ jobs:
         run: |
           grep -qE 'XMSS\.verify\(digest, sig, XMSS\.PublicKey\(\{root: k\.xmssRoot, seed: k\.xmssSeed\}\), k\.treeHeight\)' src/QuantumKeyRegistry.sol \
             || { echo "QuantumKeyRegistry must call the four-argument XMSS.verify with the registered treeHeight"; exit 1; }
+
+      - name: The device's signing flow still satisfies its specification
+        # demo/ledger-proof/device_spec.py is ledger-xmss-app.md's Flow 2 as a state
+        # machine; prove_device.py enumerates every reachable state of it and checks
+        # fourteen invariants, then plants five bugs and requires each to be caught. The
+        # counter-before-signature rule is the one that matters: a signature released
+        # before the leaf counter commits is a leaf that can sign twice. --no-sim skips
+        # the refinement against demo/ledger_sim.py, which needs Foundry's `cast`; the
+        # model check alone needs nothing and runs in seconds.
+        run: python3 demo/ledger-proof/prove_device.py --no-sim
