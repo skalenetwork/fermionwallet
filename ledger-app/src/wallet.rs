@@ -65,14 +65,24 @@ pub const SW_WRONG_BINDING: u16 = 0x6A81;
 
 // ── The binding: one key slot, one verifying contract ────────────────────────
 
-/// `kind ‖ verifyingContract(20)`. Atomic storage for the same reason the leaf
-/// counter uses it: a power loss during the write leaves the old value or the new
-/// one, never half of each.
+/// `kind(1) ‖ chainId(32) ‖ verifyingContract(20)`. Atomic storage for the same reason
+/// the leaf counter uses it: a power loss during the write leaves the old value or the
+/// new one, never half of each.
+///
+/// The chain id is part of the binding, not decoration. FWL-031 recommends deploying
+/// through a CREATE2 factory, which puts the *same* wallet address on every chain — and
+/// two wallets at one address on two chains are two contracts with two separate
+/// used-leaf bitmaps. Binding on the address alone would let one leaf be spent on each,
+/// which is the condition this binding exists to prevent. The same argument applies to
+/// a deterministically deployed Guard.
+const BINDING_LEN: usize = 53;
+
 #[link_section = ".nvm_data"]
-static mut BINDING: NVMData<AtomicStorage<[u8; 21]>> = NVMData::new(AtomicStorage::new(&[0u8; 21]));
+static mut BINDING: NVMData<AtomicStorage<[u8; BINDING_LEN]>> =
+    NVMData::new(AtomicStorage::new(&[0u8; BINDING_LEN]));
 
 #[allow(static_mut_refs)]
-fn binding() -> [u8; 21] {
+fn binding() -> [u8; BINDING_LEN] {
     unsafe { *BINDING.get_mut().get_ref() }
 }
 
@@ -81,34 +91,47 @@ pub fn bound_kind() -> u8 {
     binding()[0]
 }
 
-pub fn bound_contract() -> [u8; 20] {
-    let mut out = [0u8; 20];
-    out.copy_from_slice(&binding()[1..]);
+pub fn bound_chain() -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&binding()[1..33]);
     out
 }
 
-/// May this slot sign for `(kind, contract)`? Called before a single screen is drawn:
-/// a refusal the human never sees is a refusal they cannot be talked past.
-pub fn check_binding(kind: u8, contract: &[u8; 20]) -> Result<(), Reply> {
-    match bound_kind() {
-        KIND_UNBOUND => Ok(()),
-        k if k == kind && bound_contract() == *contract => Ok(()),
-        _ => Err(Reply(SW_WRONG_BINDING)),
+pub fn bound_contract() -> [u8; 20] {
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&binding()[33..]);
+    out
+}
+
+fn encode_binding(kind: u8, chain_id: &[u8; 32], contract: &[u8; 20]) -> [u8; BINDING_LEN] {
+    let mut value = [0u8; BINDING_LEN];
+    value[0] = kind;
+    value[1..33].copy_from_slice(chain_id);
+    value[33..].copy_from_slice(contract);
+    value
+}
+
+/// May this slot sign for `(kind, chain, contract)`? Called before a single screen is
+/// drawn: a refusal the human never sees is a refusal they cannot be talked past.
+pub fn check_binding(kind: u8, chain_id: &[u8; 32], contract: &[u8; 20]) -> Result<(), Reply> {
+    if bound_kind() == KIND_UNBOUND {
+        return Ok(());
     }
+    if binding() == encode_binding(kind, chain_id, contract) {
+        return Ok(());
+    }
+    Err(Reply(SW_WRONG_BINDING))
 }
 
 /// Record the binding durably. Called with the leaf commit, *before* the signatures
 /// are released, for the same reason: a signature that escaped before the state it
 /// depends on was written is a signature the state cannot account for.
 #[allow(static_mut_refs)]
-pub fn commit_binding(kind: u8, contract: &[u8; 20]) {
+pub fn commit_binding(kind: u8, chain_id: &[u8; 32], contract: &[u8; 20]) {
     if bound_kind() != KIND_UNBOUND {
         return;
     }
-    let mut value = [0u8; 21];
-    value[0] = kind;
-    value[1..].copy_from_slice(contract);
-    unsafe { BINDING.get_mut().update(&value) }
+    unsafe { BINDING.get_mut().update(&encode_binding(kind, chain_id, contract)) }
 }
 
 // ── The streamed fields ─────────────────────────────────────────────────────

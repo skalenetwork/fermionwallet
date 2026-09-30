@@ -467,7 +467,7 @@ fn handle(comm: &mut Comm, ins: Ins) -> Result<(), Reply> {
 /// unequal, so no new APDU command is needed and the pre-approval wire format is
 /// untouched [FWL-033].
 #[allow(static_mut_refs)]
-fn review_and_digest(leaf: u32) -> Result<([u8; 32], u8, [u8; 20]), Reply> {
+fn review_and_digest(leaf: u32) -> Result<([u8; 32], u8, [u8; 32], [u8; 20]), Reply> {
     let payload = unsafe { &PAYLOAD };
     match unsafe { PAYLOAD_LEN } {
         eip712::PAYLOAD_LEN => {
@@ -478,12 +478,12 @@ fn review_and_digest(leaf: u32) -> Result<([u8; 32], u8, [u8; 20]), Reply> {
                 return Err(Reply(SW_BAD_FIELDS));
             }
             let contract = *fields.verifying_contract();
-            wallet::check_binding(wallet::KIND_GUARD, &contract)?;
+            wallet::check_binding(wallet::KIND_GUARD, fields.chain_id(), &contract)?;
             let digest = eip712::digest(&fields, leaf);
             if !review_pre_approval(&fields, leaf) {
                 return Err(StatusWords::UserCancelled.into());
             }
-            Ok((digest, wallet::KIND_GUARD, contract))
+            Ok((digest, wallet::KIND_GUARD, *fields.chain_id(), contract))
         }
         wallet::PAYLOAD_LEN => {
             let head: &[u8; wallet::PAYLOAD_LEN] =
@@ -495,12 +495,12 @@ fn review_and_digest(leaf: u32) -> Result<([u8; 32], u8, [u8; 20]), Reply> {
                 return Err(Reply(SW_BAD_FIELDS));
             }
             let contract = *fields.wallet();
-            wallet::check_binding(wallet::KIND_WALLET, &contract)?;
+            wallet::check_binding(wallet::KIND_WALLET, fields.chain_id(), &contract)?;
             let digest = wallet::digest(&fields, leaf);
             if !wallet::review(&fields, leaf, total_leaves(), &APP_ICON) {
                 return Err(StatusWords::UserCancelled.into());
             }
-            Ok((digest, wallet::KIND_WALLET, contract))
+            Ok((digest, wallet::KIND_WALLET, *fields.chain_id(), contract))
         }
         _ => Err(StatusWords::BadLen.into()),
     }
@@ -551,13 +551,13 @@ fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
     if leaf >= total_leaves() {
         return Err(Reply(SW_EXHAUSTED));
     }
-    let (digest, kind, contract) = review_and_digest(leaf)?;
+    let (digest, kind, chain_id, contract) = review_and_digest(leaf)?;
 
     // Counter and binding first, durably, then the signatures — never the other way
     // round. The binding is state a released signature depends on just as the counter
     // is, so it is written under the same rule.
     consume_leaf(leaf);
-    wallet::commit_binding(kind, &contract);
+    wallet::commit_binding(kind, &chain_id, &contract);
     SingleMessage::new("Signing...").show();
 
     let ecdsa = sign_ecdsa(&digest).ok_or::<Reply>(StatusWords::Unknown.into())?;
@@ -603,15 +603,13 @@ fn home(comm: &mut Comm) -> Ins {
 
     // Which contract this key is committed to, if any. Invisible state that decides
     // whether a signature will be refused belongs on the home screen [FWL-023].
-    let mut bound = fmt::Buf::<64>::new();
+    let mut bound = fmt::Buf::<128>::new();
     match wallet::bound_kind() {
-        wallet::KIND_GUARD => {
-            bound.push_str("Safe guard ");
+        k @ (wallet::KIND_GUARD | wallet::KIND_WALLET) => {
+            bound.push_str(if k == wallet::KIND_GUARD { "Safe guard " } else { "Wallet " });
             push_address(&mut bound, &wallet::bound_contract());
-        }
-        wallet::KIND_WALLET => {
-            bound.push_str("Wallet ");
-            push_address(&mut bound, &wallet::bound_contract());
+            bound.push_str(" on chain ");
+            bound.push_amount(&wallet::bound_chain(), 0);
         }
         _ => {
             bound.push_str("not used yet");

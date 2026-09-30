@@ -256,6 +256,23 @@ def main():
                   "the device asked for approval instead of refusing it unseen")
         check("and consumed no leaf", device.next_leaf() == before, str(device.next_leaf()))
 
+        # ── 4b. the same wallet address on another chain: also refused ────────
+        #
+        # FWL-031 recommends a CREATE2 factory, which puts the same wallet address on
+        # every chain. Two such wallets are two contracts with two used-leaf bitmaps, so
+        # a binding that ignored the chain id would let one leaf be spent on each.
+        try:
+            sign_transfer(device, WALLET, TRANSFER, CHAIN_ID + 1, chunks=1, timeout=8)
+            check("the same wallet address on another chain is refused", False,
+                  "it signed anyway")
+        except ld.DeviceError as e:
+            check("the same wallet address on another chain is refused [FWL-023]",
+                  "belongs to a different contract" in str(e), str(e))
+        except (TimeoutError, OSError):
+            check("the same wallet address on another chain is refused [FWL-023]", False,
+                  "the device asked for approval instead of refusing it unseen")
+        check("and consumed no leaf", device.next_leaf() == before, str(device.next_leaf()))
+
         # ── 5. a Safe pre-approval on a wallet-bound key: refused ─────────────
         try:
             device.sign_preapproval(FIELDS, CHAIN_ID, GUARD, timeout=8)
