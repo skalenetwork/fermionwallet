@@ -75,6 +75,14 @@ jobs:
           grep -qE 'XMSS\.verify\(digest, sig, XMSS\.PublicKey\(\{root: xmssRoot, seed: xmssSeed\}\), treeHeight\)' src/FermionWallet.sol \
             || { echo "FermionWallet must call the four-argument XMSS.verify with its immutable treeHeight"; exit 1; }
 
+      - name: The app, the host and the relayer agree about the wire
+        # The APDU numbers and the signature blob's layout live in five places in three
+        # languages, and nothing links them. Both times they drifted today the failure
+        # was late and expensive: a blob the relayer could not decode, discovered after
+        # the device had already spent a one-time leaf, and a renumbering that left a
+        # host answering `refused (0x6e01)`.
+        run: python3 demo/check_wire_protocol.py
+
       - name: The device's signing flow still satisfies its specification
         # demo/ledger-proof/device_spec.py is ledger-xmss-app.md's Flow 2 as a state
         # machine; prove_device.py enumerates every reachable state of it and checks
