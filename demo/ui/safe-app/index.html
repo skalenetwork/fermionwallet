@@ -235,7 +235,17 @@ function renderStatus(s) {
     return;
   }
   const k = s.key;
-  if (s.protected && k && k.status === 'active' && k.leavesLeft <= 0) {
+  if (s.protected && s.paused) {
+    // Any single owner can pause, and the Guard then refuses everything but the owners'
+    // safety calls — including transactions that already hold a valid pre-approval.
+    p.className = 'pill bad'; p.textContent = 'Paused';
+    $('c-protection').textContent = 'Paused by an owner';
+    banner('This Safe is paused. The Guard refuses every transaction except the owners’ safety '
+      + 'calls, whatever approvals exist, so nothing in the queue can execute. Any single owner can '
+      + 'pause; unpausing needs the owner threshold and a timelock (requestUnpauseSafe, then '
+      + 'unpauseSafe on the Guard). Approvals already granted keep running down their validity '
+      + 'windows while it is paused.', true);
+  } else if (s.protected && k && k.status === 'active' && k.leavesLeft <= 0) {
     p.className = 'pill bad'; p.textContent = 'Key exhausted';
     $('c-protection').textContent = 'Guard active, key exhausted';
     banner('The quantum key has used all ' + k.leavesTotal.toLocaleString() + ' of its one-time '
@@ -302,16 +312,20 @@ const STATUS = {
   waiting: ['info', 'Approved · waiting for earlier nonce'],
   unsupported: ['muted', 'Not supported'],
   blocked: ['bad', 'Blocked by the Guard — cannot ever execute'],
+  paused: ['bad', 'Safe paused — nothing can execute'],
   free: ['ok', 'No quantum approval needed'],
   mismatch: ['bad', 'Hash mismatch — do not sign'],
 };
 function protectedWithKey() {
-  return status && status.protected && status.key && status.key.status === 'active' && status.key.leavesLeft > 0;
+  return status && status.protected && !status.paused && status.key &&
+    status.key.status === 'active' && status.key.leavesLeft > 0;
 }
 // Why the Review button is not on a row that plainly needs approval.
 function cannotApprove() {
   if (!status) return '';
   if (!status.protected) return '';
+  if (status.paused) return 'This Safe is paused, so nothing can execute and approving would only '
+    + 'spend a one-time signature against a running clock.';
   if (!status.key) return 'No quantum key is registered for this Safe, so nothing can be approved.';
   if (status.key.status !== 'active') return 'This Safe’s quantum key is ' + status.key.status +
     ', so nothing can be approved. Register or rotate a key.';
@@ -347,7 +361,9 @@ function renderQueue(q) {
     let actions = '';
     if (t.status === 'needs_approval' && protectedWithKey()) {
       actions = '<button class="btn" data-review="' + t.safeTxHash + '">' + (reviewOpen.has(t.safeTxHash) ? 'Close' : 'Review') + '</button>';
-    } else if ((t.status === 'approved' || t.status === 'waiting') && a) {
+    } else if (a && (a.status === 'active' || a.status === 'scheduled')) {
+      // Revoking is an escape call, so it works even while the Safe is paused — which is
+      // exactly when someone is most likely to want it.
       actions = '<button class="btn danger" data-revoke="' + a.id + '">Revoke</button>';
     }
     let extra = '';

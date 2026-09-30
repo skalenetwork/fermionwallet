@@ -33,6 +33,7 @@ MIN_VALIDITY = 15 * 60  # PreApprovalEngine.MIN_WINDOW
 MAX_VALIDITY = 7 * 24 * 3600
 
 SEL_SAFE_TO_KEY = "0xe056ccae"
+SEL_SAFE_PAUSED = "0xfa309153"
 SEL_GET_KEY = "0x12aaac70"
 SEL_APPROVAL_BY_TX = "0xaf879722"
 SEL_GET_PRE_APPROVAL = "0xafd36a71"
@@ -148,6 +149,11 @@ def safe_status(host, safe):
     }
     if not out["isContract"]:
         return out
+    # Any single owner can pause the Safe, and while it is paused the Guard reverts
+    # everything except the owners' escape calls — including transactions that already
+    # hold a valid pre-approval. A UI that does not read this says "Ready to execute"
+    # about a transaction that cannot execute.
+    out["paused"] = host.as_int(host.eth_call(guard, SEL_SAFE_PAUSED + _pad(safe))) == 1
     out["nonce"] = host.as_int(host.eth_call(safe, host.SEL_NONCE))
     out["threshold"] = host.as_int(host.eth_call(safe, host.SEL_THRESHOLD))
     # getOwners() returns (offset, length, addresses...): word 1 is the count.
@@ -300,6 +306,7 @@ def queue(host, safe):
     now = _now(host)
     guard_word = host.rpc("eth_getStorageAt", [safe, host.GUARD_SLOT, "latest"])
     protected = _addr(guard_word[2:].rjust(64, "0")).lower() == guard.lower()
+    paused = protected and host.as_int(host.eth_call(guard, SEL_SAFE_PAUSED + _pad(safe))) == 1
     rows = []
     for tx in page["results"]:
         h = tx["safeTxHash"]
@@ -332,6 +339,14 @@ def queue(host, safe):
             row["status"] = "free"
             row["reason"] = ("This Safe is not protected by the FermionGuard, so its transactions "
                              "need only owner signatures.")
+        elif paused:
+            row["status"] = "paused"
+            row["reason"] = ("This Safe is paused, so the Guard refuses every transaction that is "
+                             "not an owner safety call — a valid pre-approval does not change that. "
+                             "The owner threshold must request unpausing and wait out the timelock."
+                             + (" The pre-approval on this transaction stays valid meanwhile, but "
+                                "its validity window keeps running." if a and
+                                a["status"] in ("active", "scheduled") else ""))
         elif a and a["status"] in ("active", "scheduled"):
             row["status"] = "approved" if row["nonce"] == first_pending_nonce else "waiting"
         elif row["kind"] == "denied":
@@ -360,7 +375,8 @@ def queue(host, safe):
                              "Guard requires a quantum pre-approval for this transaction too." + STUCK_NONCE)
         else:
             row["status"] = "needs_approval"
-    return {"nonce": nonce, "protected": protected, "transactions": rows, "now": now}
+    return {"nonce": nonce, "protected": protected, "paused": paused,
+            "transactions": rows, "now": now}
 
 
 # ── relay failures ───────────────────────────────────────────────────────────
