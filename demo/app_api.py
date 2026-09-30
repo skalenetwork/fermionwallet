@@ -43,6 +43,26 @@ SEL_TRANSFER = "0xa9059cbb"
 TOPIC_CREATED = "0x9e2110e875f92d6f08f314952b1b81b9a05679b3703fab77c11266ccef3ec705"
 KEY_STATUS = {0: "none", 1: "active", 2: "rotated", 3: "revoked"}
 
+# FermionGuard._isDeniedSelector: allowance grants, refused for every Safe, for ever —
+# they can never be added to a permit-list, so no approval could ever make them execute.
+DENIED_SELECTORS = {
+    "0x095ea7b3": "approve",
+    "0x23b872dd": "transferFrom",
+    "0x39509351": "increaseAllowance",
+    "0xd505accf": "permit",
+}
+# FermionGuard._isEmergencyEscapeCall, branch (a): a zero-value call from the Safe to the
+# Guard, which the Guard may never block — no quantum approval, no pause, no enrollment.
+GUARD_ESCAPE_CALLS = {
+    "0x4745760e": "Revoke a quantum pre-approval",
+    "0xedb69aa6": "Pause this Safe",
+    "0x95156b37": "Request unpausing this Safe",
+    "0xa2580fbd": "Unpause this Safe",
+    "0x13acd71f": "Start the 14-day emergency Guard removal",
+    "0x7d26d7c8": "Cancel the emergency Guard removal",
+    "0xe17a4885": "Cancel a pending key revocation",
+}
+
 _token_cache = {}
 
 
@@ -130,6 +150,8 @@ def safe_status(host, safe):
         return out
     out["nonce"] = host.as_int(host.eth_call(safe, host.SEL_NONCE))
     out["threshold"] = host.as_int(host.eth_call(safe, host.SEL_THRESHOLD))
+    # getOwners() returns (offset, length, addresses...): word 1 is the count.
+    out["ownerCount"] = host.as_int(host.eth_call(safe, host.SEL_GET_OWNERS)[2 + 64:2 + 128])
     kid = host.eth_call(guard, SEL_SAFE_TO_KEY + _pad(safe))
     if int(kid, 16) == 0:
         return out
@@ -213,6 +235,18 @@ def approvals(host, safe):
     return {"approvals": out, "now": now}
 
 
+# A Safe executes strictly in nonce order, so a transaction that can never execute holds
+# every later one behind it — and Safe{Wallet}'s own "on-chain rejection" is an ordinary
+# Safe transaction, which the Guard blocks for exactly the same reason. Saying "just
+# reject it" would be wrong: on a guarded Safe that does not work.
+STUCK_NONCE = (
+    " Until it is cleared it holds every higher nonce behind it, and Safe{Wallet}'s on-chain "
+    "rejection cannot clear it: that rejection is itself an ordinary Safe transaction, which the "
+    "Guard blocks without a pre-approval of its own. Clearing this nonce needs a pre-approval of a "
+    "class this app does not sign yet."
+)
+
+
 # ── queue ────────────────────────────────────────────────────────────────────
 
 def _onchain_tx_hash(host, safe, tx):
@@ -228,10 +262,22 @@ def _onchain_tx_hash(host, safe, tx):
     return host.eth_call(safe, SEL_GET_TX_HASH + enc)
 
 
-def decode(host, tx):
+def decode(host, tx, guard=None, safe=None):
     data = (tx.get("data") or "0x").lower()
     if int(tx["operation"]) != 0:
         return {"kind": "delegatecall", "summary": "Delegate call to " + tx["to"]}
+    if (guard and tx["to"].lower() == guard.lower() and int(tx["value"]) == 0
+            and data[:10] in GUARD_ESCAPE_CALLS):
+        # The Guard's own safety calls. It lets these through whatever else is true of
+        # the Safe — that is the property that stops a Safe locking itself out.
+        return {"kind": "guard_escape", "summary": GUARD_ESCAPE_CALLS[data[:10]]}
+    if data[:10] in DENIED_SELECTORS:
+        return {"kind": "denied", "selector": data[:10], "method": DENIED_SELECTORS[data[:10]],
+                "summary": DENIED_SELECTORS[data[:10]] + "() on " + tx["to"]}
+    if safe and tx["to"].lower() == safe.lower() and data in ("0x", "") and int(tx["value"]) == 0:
+        # Safe{Wallet}'s "on-chain rejection": a zero-value self-call with no calldata,
+        # queued to burn a nonce. It is not an escape call, so the Guard blocks it too.
+        return {"kind": "rejection", "summary": "On-chain rejection of Safe transaction #" + str(tx["nonce"])}
     if data.startswith(SEL_TRANSFER) and len(data) == 2 + 8 + 128 and int(tx["value"]) == 0:
         tok = token_info(host, tx["to"])
         recipient = _addr(data[10:74])
@@ -252,6 +298,8 @@ def queue(host, safe):
     page = txs_get(f"/api/v1/safes/{safe}/multisig-transactions/?executed=false&nonce__gte={nonce}"
                    "&ordering=nonce&limit=50") or {"results": []}
     now = _now(host)
+    guard_word = host.rpc("eth_getStorageAt", [safe, host.GUARD_SLOT, "latest"])
+    protected = _addr(guard_word[2:].rjust(64, "0")).lower() == guard.lower()
     rows = []
     for tx in page["results"]:
         h = tx["safeTxHash"]
@@ -264,7 +312,7 @@ def queue(host, safe):
             "confirmationsRequired": tx.get("confirmationsRequired"),
             "submitted": tx.get("submissionDate"),
             "gasPrice": tx.get("gasPrice") or "0",
-            **decode(host, tx),
+            **decode(host, tx, guard=guard, safe=safe),
         }
         row["verified"] = _onchain_tx_hash(host, safe, tx).lower() == h.lower()
         aid = host.eth_call(guard, SEL_APPROVAL_BY_TX + _pad(safe) + _pad(h))
@@ -276,17 +324,128 @@ def queue(host, safe):
         a = row["approval"]
         if not row["verified"]:
             row["status"] = "mismatch"
+        elif row["kind"] == "guard_escape":
+            # Never blocked by the Guard, whatever else is true of this Safe.
+            row["status"] = "free"
+            row["reason"] = "The Guard always lets this through: it needs owner signatures only."
+        elif not protected:
+            row["status"] = "free"
+            row["reason"] = ("This Safe is not protected by the FermionGuard, so its transactions "
+                             "need only owner signatures.")
         elif a and a["status"] in ("active", "scheduled"):
             row["status"] = "approved" if row["nonce"] == first_pending_nonce else "waiting"
+        elif row["kind"] == "denied":
+            row["status"] = "blocked"
+            row["reason"] = (f"The Guard refuses {row['method']}() for every Safe, always: an allowance "
+                             "lets funds move later with no second authorization. No approval can make "
+                             "this execute." + STUCK_NONCE)
+        elif int(row["gasPrice"]) != 0:
+            row["status"] = "blocked"
+            row["reason"] = ("The Guard refuses any transaction that pays a gas refund, always. "
+                             "Re-create this payment in Safe{Wallet} with a zero gas price." + STUCK_NONCE)
+        elif row["kind"] == "delegatecall":
+            row["status"] = "blocked"
+            row["reason"] = ("The Guard refuses delegate calls, always. No approval can make this "
+                             "execute." + STUCK_NONCE)
+        elif row["kind"] == "rejection":
+            row["status"] = "unsupported"
+            row["reason"] = (
+                "Safe{Wallet}'s on-chain rejection is an ordinary Safe transaction, so the Guard "
+                "requires a quantum pre-approval for it as well — and this version of the app "
+                "signs only ERC-20 transfers. It cannot execute, and neither can the transaction "
+                "it was meant to cancel.")
         elif row["kind"] != "transfer":
             row["status"] = "unsupported"
-            row["reason"] = "Only ERC-20 transfers can be approved from this app."
-        elif int(row["gasPrice"]) != 0:
-            row["status"] = "unsupported"
-            row["reason"] = "Transactions with a gas refund are always blocked by the Guard."
+            row["reason"] = ("This version of the app signs single ERC-20 transfers only, and the "
+                             "Guard requires a quantum pre-approval for this transaction too." + STUCK_NONCE)
         else:
             row["status"] = "needs_approval"
-    return {"nonce": nonce, "transactions": rows, "now": now}
+    return {"nonce": nonce, "protected": protected, "transactions": rows, "now": now}
+
+
+# ── relay failures ───────────────────────────────────────────────────────────
+
+# What each Guard revert means for the person who just approved on the device, and what
+# they should do next. `forge` prints custom errors by name, so the name is what we match;
+# an unlisted one is still shown by name and with its arguments rather than swallowed,
+# because "the Guard refused it" with no reason is not something anyone can act on.
+RELAY_ERRORS = {
+    "LeafAlreadyUsed":
+        "The chain has already recorded an approval signed with that one-time signature. The "
+        "device's counter and the chain disagree — which is also what a cloned or stolen key "
+        "looks like. Do not retry: check the Key tab and treat the key as possibly compromised.",
+    "InvalidXmssSignature":
+        "The post-quantum half of the signature did not verify against the key registered for "
+        "this Safe. The device that signed is not the enrolled Quantum Administrator device.",
+    "InvalidEcdsaSignature":
+        "The classical half of the signature did not verify against the registered Quantum "
+        "Administrator address. The device that signed is not the enrolled one.",
+    "LeafIndexDoesNotMatchSignature":
+        "The one-time signature the device released does not carry the leaf index it declared. "
+        "Do not retry; report this — it should be impossible.",
+    "LeafIndexMismatch":
+        "The device signed with a leaf index the registry did not expect. Do not retry; report it.",
+    "WrongQuantumKey":
+        "The approval was signed under a key that is no longer this Safe's active key — it was "
+        "rotated or revoked while you were reviewing. Reload the app and approve again.",
+    "NoActiveKey":
+        "This Safe no longer has an active quantum key, so no approval can be recorded for it. "
+        "Register or rotate a key first.",
+    "TxHashAlreadyPinned":
+        "Another live pre-approval is already pinned to this exact Safe transaction. Revoke it, "
+        "or execute it — one Safe transaction carries one pin at a time.",
+    "ApprovalExists":
+        "An identical pre-approval already exists on-chain.",
+    "InvalidWindow":
+        "The Guard rejected the validity window: it must be at least 15 minutes long and must "
+        "still end in the future when it lands on-chain. Approve again with a longer window.",
+    "AdminTimelockNotRespected":
+        "An administrative approval must start no sooner than the Guard's timelock allows.",
+    "CommitmentQueueFull":
+        "The Guard already holds the maximum number of pending pre-approvals for this exact "
+        "transfer. Execute or revoke one of them before approving another.",
+    "ZeroAddress":
+        "The Guard rejected a zero address in the approval. Reload the app and try again.",
+    "NonZeroClassFields":
+        "The approval carried fields that do not belong to a transfer. Reload the app and try again.",
+}
+# The Guard may also refuse the relayer's own transaction before it reaches the Guard.
+RELAY_PREFIXES = (
+    ("insufficient funds",
+     "The relayer account that submits approvals has no funds left to pay gas. The signature is "
+     "spent; top the relayer up and the approval must be created again."),
+    ("Failed to get EIP-1559 fees",
+     "The service could not reach the chain to submit the approval. The signature is spent; check "
+     "the chain connection and approve again."),
+    ("nonce too low",
+     "Two approvals were submitted at once and this one lost the race. The signature is spent; "
+     "approve again."),
+)
+
+
+def relay_error(out):
+    """Turn a failed `forge script` run into one sentence a treasury operator can act on."""
+    m = re.search(r"script failed:\s*([A-Za-z_][A-Za-z0-9_]*)\(([^\n)]*)\)", out)
+    if not m:
+        matches = re.findall(r"\[Revert\]\s*([A-Za-z_][A-Za-z0-9_]*)\(([^\n)]*)\)", out)
+        m = matches[-1] if matches else None
+        name, args = m if m else (None, None)
+    else:
+        name, args = m.group(1), m.group(2)
+    if name:
+        known = RELAY_ERRORS.get(name)
+        detail = f"The Guard reported {name}({args.strip()})."
+        return f"{known} ({detail.rstrip('.')})" if known else (
+            detail + " No remedy is known for this one — report it with the Safe transaction hash.")
+    # Not a contract revert: the relayer or the chain refused the transaction itself.
+    for needle, text in RELAY_PREFIXES:
+        if needle in out:
+            return text
+    plain = re.search(r"execution reverted:?\s*(.+)", out)
+    if plain:
+        return "The Guard reported: " + plain.group(1).strip()[:200]
+    return ("The service could not record the approval on-chain and reported no reason. Check the "
+            "Approvals tab before approving again: the signature may or may not have landed.")
 
 
 # ── create (Ledger signs, relayer submits) ───────────────────────────────────
@@ -345,7 +504,13 @@ def create_approval(host, safe, payload):
         "validFrom": now, "validTo": now + valid_for, "nonce": "0x" + secrets.token_hex(32),
         "quantumKeyId": key["id"], "policyHash": host.DEMO_POLICY_HASH, "txHash": h,
     }
-    res = host.sign_on_device(fields, key["root"], guard)
+    try:
+        res = host.sign_on_device(fields, key["root"], guard)
+    except OSError as e:  # the device did not answer at all (urllib raises URLError/OSError)
+        raise ApiError(
+            "The FermionGuard Ledger did not answer, so nothing was signed and no one-time "
+            "signature was spent. Check that the device is connected and the FermionGuard app "
+            f"is open on it, then try again. ({e})") from None
     if res.get("status") != "approved":
         return {"ok": True, "outcome": "rejected", "reason": res.get("status", "rejected")}
 
@@ -365,5 +530,7 @@ def create_approval(host, safe, payload):
     if code == 0 and m:
         return {"ok": True, "outcome": "approved", "approvalId": m.group(1), "leaf": res["leaf"],
                 "digest": res["digest"], "validTo": fields["validTo"]}
-    return host.failure(out, f"The Ledger signed with leaf #{res['leaf']} (now spent — the device commits its "
-                             "counter before signing), but the Guard refused the approval: ")
+    return {"ok": False, "outcome": "relay_failed", "leaf": res["leaf"],
+            "error": (f"The Ledger signed with one-time signature #{res['leaf']} — which is now spent, "
+                      "because the device commits its counter before it releases a signature — but the "
+                      "Guard refused to record the approval. " + relay_error(out))}

@@ -43,9 +43,16 @@
   .list { display:flex; flex-direction:column; gap:8px; }
   .row { background:var(--panel); border:1px solid var(--border); border-radius:12px; }
   .row-head { display:grid; grid-template-columns:56px 1fr auto auto; gap:12px; align-items:center; padding:12px 16px; }
-  @media (max-width:640px){ .row-head{grid-template-columns:44px 1fr; } .row-head .right{grid-column:2;} }
+  @media (max-width:640px){
+    .row-head{grid-template-columns:44px 1fr; } .row-head .right{grid-column:2;}
+    /* A status label is long enough to set the row's minimum width on a phone and push
+       the page into a horizontal scroll, so let it wrap here. */
+    .row-head .pill{ white-space:normal; }
+  }
   .nonce { font-weight:700; color:var(--muted); }
-  .title { font-weight:600; }
+  /* A summary can carry a bare 42-character address, which would otherwise set the
+     row's minimum width and push the whole page into a horizontal scroll on a phone. */
+  .title { font-weight:600; overflow-wrap:anywhere; }
   .sub { color:var(--muted); font-size:12.5px; overflow-wrap:anywhere; }
   .right { display:flex; gap:8px; align-items:center; justify-content:flex-end; flex-wrap:wrap; }
   button.btn { background:var(--accent); color:var(--on-accent); border:0; border-radius:8px; padding:8px 14px;
@@ -73,6 +80,11 @@
   @media (max-width:760px){ .hide-sm{display:none;} }
   .banner { margin-bottom:14px; padding:12px 14px; border-radius:10px; border:1px solid rgba(251,191,36,.4); color:var(--warn); background:rgba(251,191,36,.06); }
   .banner.bad { border-color:rgba(248,113,113,.4); color:var(--bad); background:rgba(248,113,113,.06); }
+  .banner.info { border-color:rgba(96,165,250,.4); color:var(--info); background:rgba(96,165,250,.06); }
+  .banner .dismiss { float:right; margin-left:12px; background:none; border:0; color:inherit;
+                     font:600 13px system-ui,sans-serif; cursor:pointer; }
+  /* The default focus ring is a dark hairline, invisible on this dark surface. */
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:6px; }
   [hidden] { display:none !important; }
 </style>
 </head>
@@ -84,7 +96,8 @@
     <span class="pill muted" id="protection">Loading…</span>
   </header>
 
-  <div class="banner" id="banner" hidden></div>
+  <div class="banner" id="banner" role="status" hidden></div>
+  <div class="banner info" id="notice" role="status" hidden></div>
 
   <section id="main" hidden>
     <div class="cards">
@@ -106,19 +119,22 @@
       </div>
     </div>
 
-    <nav class="tabs" role="tablist">
-      <button role="tab" id="tab-queue" aria-selected="true">Queue<span class="count" id="n-queue">0</span></button>
-      <button role="tab" id="tab-approvals" aria-selected="false">Approvals</button>
-      <button role="tab" id="tab-key" aria-selected="false">Key</button>
+    <nav class="tabs" role="tablist" aria-label="FermionGuard sections">
+      <button role="tab" id="tab-queue" aria-selected="true" aria-controls="view-queue"
+              tabindex="0">Queue<span class="count" id="n-queue">0</span></button>
+      <button role="tab" id="tab-approvals" aria-selected="false" aria-controls="view-approvals"
+              tabindex="-1">Approvals</button>
+      <button role="tab" id="tab-key" aria-selected="false" aria-controls="view-key"
+              tabindex="-1">Key</button>
     </nav>
 
-    <div id="view-queue" role="tabpanel">
-      <div class="list" id="queue"></div>
+    <div id="view-queue" role="tabpanel" aria-labelledby="tab-queue" tabindex="0">
+      <div class="list" id="queue" aria-live="polite"><div class="empty">Loading the queue…</div></div>
     </div>
-    <div id="view-approvals" role="tabpanel" hidden>
+    <div id="view-approvals" role="tabpanel" aria-labelledby="tab-approvals" tabindex="0" hidden>
       <div id="approvals"></div>
     </div>
-    <div id="view-key" role="tabpanel" hidden>
+    <div id="view-key" role="tabpanel" aria-labelledby="tab-key" tabindex="0" hidden>
       <div class="card"><dl class="fields" id="key"></dl></div>
     </div>
   </section>
@@ -128,7 +144,17 @@
 const $ = id => document.getElementById(id);
 const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 const short = a => a ? a.slice(0, 6) + '…' + a.slice(-4) : '—';
-const when = ts => new Date(ts * 1000).toLocaleString();
+// Every time in this app is UTC, in the Ledger's own format, because the whole point of
+// the device screen is that you compare it with what the app shows. A local-time string
+// here and "30 Sep 2026 18:23 UTC" on the device is a comparison nobody can make.
+// Built by hand rather than with Intl, so the month is the device's three-letter form
+// ("Sep", not the locale-dependent "Sept"/"sept.") and the strings compare character for
+// character with the Ledger screen.
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const pad2 = n => String(n).padStart(2, '0');
+const when = ts => { const d = new Date(ts * 1000); return pad2(d.getUTCDate()) + ' ' +
+  MONTHS[d.getUTCMonth()] + ' ' + d.getUTCFullYear() + ' ' + pad2(d.getUTCHours()) + ':' +
+  pad2(d.getUTCMinutes()) + ' UTC'; };
 
 // ── Safe Apps protocol (what @safe-global/safe-apps-sdk sends over postMessage) ──
 const SDK_VERSION = '9.1.0';
@@ -162,6 +188,16 @@ function banner(text, bad) {
   $('banner').hidden = !text;
 }
 
+// A separate slot for messages about something the operator just did. The banner above
+// describes the Safe's state and is rewritten on every 4-second poll, which used to wipe
+// "Revocation created…" a second or two after it appeared.
+function notice(text) {
+  $('notice').innerHTML = text
+    ? '<button class="dismiss" data-dismiss="1" aria-label="Dismiss this message">Dismiss</button>' + esc(text)
+    : '';
+  $('notice').hidden = !text;
+}
+
 // ── connection to Safe{Wallet} (retried: Safe{Wallet} can be slow to answer) ──
 let retry = 1000;
 async function connect() {
@@ -178,7 +214,13 @@ async function connect() {
     await refresh();
     setInterval(refresh, 4000);
   } catch (e) {
-    banner('Waiting for Safe{Wallet}…');
+    // Distinguish "Safe{Wallet} has not answered yet" from "Safe{Wallet} answered with an
+    // error": the second one does not get better by waiting, and its text is the only clue.
+    banner(e.message === 'timeout'
+      ? 'Waiting for Safe{Wallet}… If this does not clear, reload the app from Apps → FermionGuard.'
+      : 'Safe{Wallet} could not tell FermionGuard which Safe this is: ' + e.message +
+        '. Retrying; if it does not clear, reopen the app from Apps → FermionGuard.',
+      e.message !== 'timeout');
     setTimeout(connect, retry);
     retry = Math.min(retry * 2, 8000);
   }
@@ -193,14 +235,33 @@ function renderStatus(s) {
     return;
   }
   const k = s.key;
-  if (s.protected && k && k.status === 'active') {
+  if (s.protected && k && k.status === 'active' && k.leavesLeft <= 0) {
+    p.className = 'pill bad'; p.textContent = 'Key exhausted';
+    $('c-protection').textContent = 'Guard active, key exhausted';
+    banner('The quantum key has used all ' + k.leavesTotal.toLocaleString() + ' of its one-time '
+      + 'signatures. Nothing in the queue can be approved until the key is rotated, so every '
+      + 'transfer this Safe has queued is held.', true);
+  } else if (s.protected && k && k.status === 'active') {
     p.className = 'pill ok'; p.textContent = 'Protected';
     $('c-protection').textContent = 'Guard active';
-    banner('');
+    const pct = k.leavesUsed / k.leavesTotal;
+    banner(pct >= .95
+      ? 'The quantum key has only ' + k.leavesLeft.toLocaleString() + ' one-time signatures left of '
+        + k.leavesTotal.toLocaleString() + '. Rotate it now: approvals stop entirely at zero.'
+      : pct >= .8
+        ? 'The quantum key has used ' + Math.round(100 * pct) + '% of its one-time signatures ('
+          + k.leavesLeft.toLocaleString() + ' left). Plan a rotation.'
+        : '');
   } else if (s.protected) {
     p.className = 'pill warn'; p.textContent = 'No active key';
     $('c-protection').textContent = 'Guard active, no key';
-    banner('The FermionGuard is installed but this Safe has no active quantum key, so every transaction is blocked. Register or rotate a key.', true);
+    // Not *every* transaction: the Guard can never block the owners' safety calls
+    // (revoke, pause, and the emergency Guard removal) — that is what stops a Safe
+    // with a lost key from being bricked. Everything that moves money is blocked.
+    banner('The FermionGuard is installed but this Safe has no active quantum key, so every '
+      + 'transaction that moves funds is blocked. Register or rotate a key. The owners’ safety '
+      + 'calls — revoking an approval, pausing the Safe, and starting the emergency Guard '
+      + 'removal — still go through.', true);
   } else {
     p.className = 'pill bad'; p.textContent = 'Not protected';
     $('c-protection').textContent = 'Not protected';
@@ -219,7 +280,8 @@ function renderStatus(s) {
     $('c-leaves').textContent = 'No key';
     $('c-admin').textContent = 'No quantum key registered for this Safe';
   }
-  $('c-safe-nonce').textContent = 'Nonce ' + s.nonce + ' · ' + s.threshold + ' of owners';
+  $('c-safe-nonce').textContent = 'Nonce ' + s.nonce + ' · ' + s.threshold +
+    (s.ownerCount ? ' of ' + s.ownerCount : '') + ' owner signatures';
   $('c-safe').textContent = s.safe;
   $('key').innerHTML = k ? [
     ['Status', esc(k.status)],
@@ -239,13 +301,37 @@ const STATUS = {
   approved: ['ok', 'Ready to execute'],
   waiting: ['info', 'Approved · waiting for earlier nonce'],
   unsupported: ['muted', 'Not supported'],
+  blocked: ['bad', 'Blocked by the Guard — cannot ever execute'],
+  free: ['ok', 'No quantum approval needed'],
   mismatch: ['bad', 'Hash mismatch — do not sign'],
 };
 function protectedWithKey() {
   return status && status.protected && status.key && status.key.status === 'active' && status.key.leavesLeft > 0;
 }
+// Why the Review button is not on a row that plainly needs approval.
+function cannotApprove() {
+  if (!status) return '';
+  if (!status.protected) return '';
+  if (!status.key) return 'No quantum key is registered for this Safe, so nothing can be approved.';
+  if (status.key.status !== 'active') return 'This Safe’s quantum key is ' + status.key.status +
+    ', so nothing can be approved. Register or rotate a key.';
+  if (status.key.leavesLeft <= 0) return 'The quantum key has no one-time signatures left, so nothing '
+    + 'can be approved. Rotate the key.';
+  return '';
+}
+// The queue is re-rendered every 4 seconds. Without this, a keyboard user could never
+// keep focus on a row control long enough to press it.
+function focusKey() {
+  const a = document.activeElement;
+  if (!a || !$('queue').contains(a)) return null;
+  return a.id ? '#' + CSS.escape(a.id)
+    : a.dataset.review ? '[data-review="' + a.dataset.review + '"]'
+    : a.dataset.sign ? '[data-sign="' + a.dataset.sign + '"]'
+    : a.dataset.revoke ? '[data-revoke="' + a.dataset.revoke + '"]' : null;
+}
 function renderQueue(q) {
   if (!q) return;
+  const refocus = focusKey();
   $('n-queue').textContent = q.transactions.length;
   if (!q.transactions.length) {
     $('queue').innerHTML = '<div class="empty">No pending transactions.<br>Create a transaction in Safe{Wallet} and sign it. ' +
@@ -253,6 +339,7 @@ function renderQueue(q) {
     return;
   }
   const firstNeeding = q.transactions.find(t => t.status === 'needs_approval');
+  const blocker = cannotApprove();
   $('queue').innerHTML = q.transactions.map(t => {
     const [cls, label] = STATUS[t.status] || ['muted', t.status];
     const who = t.kind === 'transfer' ? 'to <span class="mono">' + esc(t.recipient) + '</span>' : '';
@@ -263,9 +350,26 @@ function renderQueue(q) {
     } else if ((t.status === 'approved' || t.status === 'waiting') && a) {
       actions = '<button class="btn danger" data-revoke="' + a.id + '">Revoke</button>';
     }
-    const extra = t.status === 'unsupported' && t.reason ? '<div class="sub">' + esc(t.reason) + '</div>'
-      : a && (t.status === 'approved' || t.status === 'waiting')
-        ? '<div class="sub">Approved until ' + esc(when(a.validTo)) + ' · execute it in Safe{Wallet} → Transactions</div>' : '';
+    let extra = '';
+    if (t.reason) extra += '<div class="sub">' + esc(t.reason) + '</div>';
+    if (t.status === 'needs_approval' && blocker) extra += '<div class="sub">' + esc(blocker) + '</div>';
+    // An approval that ran out, or was revoked, is the most expensive thing that can
+    // happen quietly: the one-time signature is gone either way. Say so on the row.
+    if (t.status === 'needs_approval' && a && (a.status === 'expired' || a.status === 'revoked')) {
+      extra += '<div class="sub">A previous approval (one-time signature #' + a.leaf + ') ' +
+        (a.status === 'expired' ? 'expired at ' + esc(when(a.validTo)) + ' without being executed'
+                                : 'was revoked') +
+        '. That signature is spent and cannot be recovered; approving again spends another one.</div>';
+    }
+    if (a && t.status === 'approved') {
+      extra += '<div class="sub">Approved until ' + esc(when(a.validTo)) +
+        ' · execute it in Safe{Wallet} → Transactions</div>';
+    }
+    if (a && t.status === 'waiting') {
+      extra += '<div class="sub">Approved until ' + esc(when(a.validTo)) +
+        ' · it cannot execute until every lower nonce has, and if the window runs out first the ' +
+        'one-time signature is spent for nothing</div>';
+    }
     const b = busy.get(t.safeTxHash);
     return '<div class="row" data-row="' + t.safeTxHash + '"><div class="row-head">' +
       '<div class="nonce">#' + t.nonce + '</div>' +
@@ -274,9 +378,13 @@ function renderQueue(q) {
       '<span class="sub">' + t.confirmations + '/' + (t.confirmationsRequired ?? '?') + ' signed</span></div>' +
       '<div class="right">' + actions + '</div></div>' +
       (reviewOpen.has(t.safeTxHash) ? reviewPanel(t, firstNeeding, q)
-        : b ? '<div class="review"><div class="msg ' + b.cls + '">' + esc(b.text) + '</div></div>' : '') +
+        : b ? '<div class="review"><div class="msg ' + b.cls + '" role="status">' + esc(b.text) + '</div></div>' : '') +
       '</div>';
   }).join('');
+  if (refocus) {
+    const again = $('queue').querySelector(refocus);
+    if (again) again.focus();
+  }
 }
 
 function reviewPanel(t, firstNeeding, q) {
@@ -292,14 +400,25 @@ function reviewPanel(t, firstNeeding, q) {
     '<dt>Safe nonce</dt><dd>' + t.nonce + (ahead > 0 ? ' <span class="muted">(' + ahead + ' earlier transaction' + (ahead > 1 ? 's' : '') + ' must execute first)</span>' : '') + '</dd>' +
     '<dt>Safe transaction hash</dt><dd class="mono">' + esc(t.safeTxHash) + '</dd>' +
     '</dl>' +
-    '<p class="check">✓ Verified from two sources: the Safe Transaction Service record hashes on-chain to this transaction hash.</p>' +
-    (firstNeeding && firstNeeding.safeTxHash !== t.safeTxHash ? '<p class="msg">Transaction #' + firstNeeding.nonce + ' is still waiting for approval. This one cannot execute before it; choose a validity window long enough for it to clear.</p>' : '') +
+    // One source, checked against the chain — not two. The Transaction Service supplies
+    // the fields; the Safe contract is asked whether they really produce this hash. That
+    // is what makes the displayed fields the ones the owners signed and the ones the
+    // approval will be pinned to. It does not independently confirm that the transaction
+    // exists: the app has no second feed of the queue.
+    '<p class="check">✓ The Safe itself confirms these fields: the Safe Transaction Service supplied ' +
+    'them, and the Safe contract hashes them, on-chain, to exactly this transaction hash. The approval ' +
+    'will be pinned to that hash, so it can authorize no other transaction than the one shown here.</p>' +
+    (firstNeeding && firstNeeding.safeTxHash !== t.safeTxHash ? '<p class="msg">Transaction #' + firstNeeding.nonce + ' is still waiting for approval. This one cannot execute before it; choose a validity window long enough for it to clear, or the one-time signature you are about to spend will expire unused.</p>' : '') +
     '<div class="controls">' +
     '<label class="muted" for="w-' + t.safeTxHash + '">Valid for</label>' +
     '<select id="w-' + t.safeTxHash + '">' +
     [[3600, '1 hour'], [6 * 3600, '6 hours'], [86400, '24 hours'], [3 * 86400, '3 days'], [7 * 86400, '7 days']]
       .map(([s, l]) => '<option value="' + s + '"' + (s === chosen ? ' selected' : '') + '>' + l + '</option>').join('') +
     '</select>' +
+    // The Ledger shows absolute UTC times, so the app must too — otherwise there is
+    // nothing on this screen to compare the device's "To …" line against.
+    '<span class="muted">until about <b>' + esc(when((q.now || Math.floor(Date.now() / 1000)) + chosen)) +
+    '</b>, which is what the Ledger will show</span>' +
     '<button class="btn" data-sign="' + t.safeTxHash + '"' + (b && b.cls === 'wait' ? ' disabled' : '') + '>Sign on Ledger</button>' +
     '</div>' +
     (b ? '<div class="msg ' + b.cls + '">' + esc(b.text) + '</div>' : '') +
@@ -332,7 +451,16 @@ async function sign(hash) {
 async function revoke(id) {
   try {
     await safeCall('sendTransactions', {txs: [{to: status.guard, value: '0', data: '0x4745760e' + id.slice(2)}]});
-    banner('Revocation created. It takes effect once the Safe transaction executes; it needs no quantum approval.');
+    // The Guard never blocks this call, but Safe{Wallet} still queues it as an ordinary
+    // Safe transaction — which means it lands *behind* everything already queued,
+    // including the transfer it is meant to cancel. Say so: a revocation the operator
+    // believes is in force, sitting behind the payment, is the worst outcome here.
+    notice('A revocation has been created in Safe{Wallet}. It needs no quantum approval, but it is '
+      + 'an ordinary Safe transaction, so Safe{Wallet} gives it the next free nonce and it takes '
+      + 'effect only when it executes — after every transaction already queued ahead of it, '
+      + 'including the one it revokes. To stop that payment now, execute the revocation first by '
+      + 'rejecting or executing the earlier nonces, or have the Quantum Administrator or any owner '
+      + 'call revokePreApproval on the Guard directly from their own address.');
   } catch (e) {
     // closed or rejected in Safe{Wallet}: nothing to do
   }
@@ -381,16 +509,33 @@ async function refresh() {
       if (!a.error) renderApprovals(a);
     }
   } catch (e) {
-    banner('Could not reach the FermionGuard service: ' + e.message, true);
+    banner('Could not reach the FermionGuard service: ' + e.message +
+      '. Nothing below is being updated; retrying every few seconds.', true);
+    // Without this the panel is simply blank, which reads as "nothing to approve".
+    if (!queueData) $('queue').innerHTML = '<div class="empty">The queue could not be loaded.<br>' +
+      esc(e.message) + '</div>';
   } finally {
     refreshing = false;
   }
 }
 
+const TABS = ['queue', 'approvals', 'key'];
+function selectTab(name, moveFocus) {
+  for (const n of TABS) {
+    const on = n === name;
+    $('tab-' + n).setAttribute('aria-selected', String(on));
+    $('tab-' + n).tabIndex = on ? 0 : -1;   // one stop for the whole tab strip (ARIA tabs)
+    $('view-' + n).hidden = !on;
+  }
+  if (moveFocus) $('tab-' + name).focus();
+}
+
 document.addEventListener('click', e => {
   const t = e.target.closest('button');
   if (!t) return;
-  if (t.dataset.review) {
+  if (t.dataset.dismiss) {
+    notice('');
+  } else if (t.dataset.review) {
     const h = t.dataset.review;
     reviewOpen.has(h) ? reviewOpen.delete(h) : reviewOpen.add(h);
     renderQueue(queueData);
@@ -399,11 +544,25 @@ document.addEventListener('click', e => {
   } else if (t.dataset.revoke) {
     revoke(t.dataset.revoke);
   } else if (t.getAttribute('role') === 'tab') {
-    for (const name of ['queue', 'approvals', 'key']) {
-      $('tab-' + name).setAttribute('aria-selected', String(t.id === 'tab-' + name));
-      $('view-' + name).hidden = t.id !== 'tab-' + name;
-    }
+    selectTab(t.id.slice(4));
   }
+});
+
+// Keep the "until about …" line honest while the picker is being changed.
+document.addEventListener('change', e => {
+  if (e.target.tagName === 'SELECT') renderQueue(queueData);
+});
+
+// ARIA tabs: the strip is one tab stop, and the arrow keys move between the tabs.
+$('tab-queue').parentElement.addEventListener('keydown', e => {
+  const i = TABS.indexOf(document.activeElement.id.slice(4));
+  if (i < 0) return;
+  const to = e.key === 'ArrowRight' ? (i + 1) % TABS.length
+    : e.key === 'ArrowLeft' ? (i + TABS.length - 1) % TABS.length
+    : e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : -1;
+  if (to < 0) return;
+  e.preventDefault();
+  selectTab(TABS[to], true);
 });
 
 connect();

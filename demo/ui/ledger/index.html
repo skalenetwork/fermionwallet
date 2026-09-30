@@ -47,9 +47,10 @@
       </div>
     </div>
   </div>
-  <p class="hint">Device simulator: the FermionGuard Ledger app is not released yet, so this window plays
-  the hardware. It holds the Quantum Administrator's keys, shows every signed field, and signs only after
-  you page through all screens and press Approve. 60 s idle on the last screen rejects.</p>
+  <p class="hint" id="hint">This window shows the Quantum Administrator's FermionGuard Ledger. When no
+  device is attached it stands in for one: it holds the keys, shows every field that will be signed, and
+  signs only after you page through all screens and press Approve. Rejecting, or leaving the decision
+  screen 60 s, signs nothing and spends no one-time signature.</p>
 <script>
 const $ = id => document.getElementById(id);
 const esc = t => String(t).replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
@@ -76,7 +77,14 @@ async function refresh() {
     $('approve').disabled = !d.canApprove;
     $('reject').disabled = false;
   } catch (e) {
-    $('lcd').textContent = 'Device not connected: ' + e.message;
+    // e.message here is whatever the transport failed with — a Python urlopen error, for
+    // instance. That is not something to put in front of the person holding the device.
+    $('lcd').innerHTML = '<div class="t"><span>FermionGuard XMSS</span></div>' +
+      '<div class="l warn">No device</div>' +
+      '<div class="l">The FermionGuard Ledger is not answering. Check that it is connected and ' +
+      'that the FermionGuard app is open on it. Nothing can be signed until it is.</div>' +
+      '<div class="l" style="opacity:.6">' + esc(e.message) + '</div>';
+    ['prev', 'next', 'approve', 'reject'].forEach(id => { $(id).disabled = true; });
   }
 }
 async function press(button) {
