@@ -145,9 +145,12 @@ abstract contract QuantumKeyRegistry is EIP712, Nonces {
     /// and `safe` is only self-authenticated (its own `checkSignatures`), so an
     /// attacker contract with a no-op `checkSignatures` could claim any root first
     /// and permanently DoS the victim's enrollment and rotation for one tx of gas.
-    /// Cross-Safe root reuse harms only the reuser (desynced leaf bitmaps), and every
-    /// hybrid pre-approval digest binds the Safe address, so a squatted root under an
-    /// attacker's fake Safe is useless against the legitimate one.
+    /// Cross-Safe root reuse is safe because the *leaf* accounting above is global:
+    /// two Safes sharing one physical key share one bitmap, so a leaf spent on either
+    /// is spent on both. And every hybrid pre-approval digest binds the Safe address,
+    /// so a squatted root under an attacker's fake Safe is useless against the
+    /// legitimate one. Nor can a squatter poison the shared bitmap: setting a bit takes
+    /// a valid XMSS signature, which takes the key.
     mapping(address safe => mapping(bytes32 xmssRoot => bool)) public rootRegistered;
 
     constructor(uint64 emergencyRotationTimelock) {
