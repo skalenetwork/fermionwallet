@@ -32,15 +32,16 @@ The intent page names the flow; then the first three fields are the Ethereum app
 ![Signing screens 5–8](./assets/ui/ledger/ledger-sign-2.svg)
 
 5. **`Safe`** — the Safe address, full EIP-55.
-6. **`Valid from` / `Valid until`** — absolute UTC times, never durations.
-7. **`Safe tx`** — the binding read from the signed `txHash`, as the full 32-byte hash. When it is zero the review is preceded by a warning page and the field reads `Not pinned — any matching transfer`. No Safe nonce: it is not in the signed payload.
-8. **`Policy hash`** — the full 32-byte `policyHash`, not an abbreviation: it is one of the values this signature binds, and Ledger's guidance reserves shortened or hidden fields for data that does not affect the user's funds.
-9. **`Key`** — `Key 2 · orbit velvet`, so a host cannot switch keys unnoticed.
-10. **`Leaf`** — `184,203 of 1,048,576`. The odometer: a number that jumped since last time is the host trying to burn leaves.
+6. **`Guard`** — the `verifyingContract` from the signed EIP-712 domain, full EIP-55, beside the chain it belongs to. This page exists because approving a payload is what **marries this key slot to that contract on that chain, permanently**: the binding is written to NVM with the leaf counter, the app holds one key, and there is no retire or key-generation command to undo it. A stale or wrong Guard address here costs the key and every unused leaf on it, and a buggy host does that as easily as an attacker — so the one field that decides it must not be the one field the review never draws.
+7. **`Valid from` / `Valid until`** — absolute UTC times, never durations. A timestamp the device cannot render honestly is refused before the review opens rather than drawn: the year is carried as 64 bits and a value past the last representable second answers `0x6A80` with no page and no human involved, because a wrapped year would render as a plausible near date and the validity window is the only control over how long a signed transfer stays relayable.
+8. **`Safe tx`** — the binding read from the signed `txHash`, as the full 32-byte hash. When it is zero the review is preceded by a warning page and the field reads `Not pinned — any matching transfer`. No Safe nonce: it is not in the signed payload.
+9. **`Policy hash`** — the full 32-byte `policyHash`, not an abbreviation: it is one of the values this signature binds, and Ledger's guidance reserves shortened or hidden fields for data that does not affect the user's funds.
+10. **`Key`** — `Key 2 · orbit velvet`, so a host cannot switch keys unnoticed.
+11. **`Leaf`** — `184,203 of 1,048,576`. The odometer: a number that jumped since last time is the host trying to burn leaves.
 
 Then **`Sign approval?`** with **Hold to sign**. On approve, the counter commits in secure-element NVRAM *before* the hybrid signature — the ECDSA half and the XMSS half over the same digest — is buffered for the host to page out with `GET_SIGNATURE_CHUNK`, XMSS bytes first and the ECDSA half last, so the host can never hold the classical half alone. Rejecting, or 60 s idle on the confirmation page, consumes no leaf.
 
-**PAYLOAD/ADMIN classes** reuse this flow with fields 1–3 replaced by `To`, `Value` and `Data hash` (full 32 bytes); an `ADMIN` payload opens on a warning page, which then puts the warning icon on the intent and confirmation pages. A **batch** shows `Legs`, per-token totals (informational) and the binding batch `dataHash` in full — legs are reviewed in the app, the hash is verified on the device:
+**PAYLOAD/ADMIN classes** reuse this flow with fields 1–3 replaced by `To`, `Value` and `Data hash` (full 32 bytes). The three fields a class does not use must be zero, and the device refuses the payload before any screen if they are not: the engine's commitment hashes only the fields its own class uses, so a non-zero value in the others would be signed, undrawn and unenforced at once; an `ADMIN` payload opens on a warning page, which then puts the warning icon on the intent and confirmation pages. A **batch** shows `Legs`, per-token totals (informational) and the binding batch `dataHash` in full — legs are reviewed in the app, the hash is verified on the device:
 
 ![Batch signing screens](./assets/ui/ledger/ledger-batch.svg)
 
