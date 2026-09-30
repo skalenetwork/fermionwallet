@@ -63,12 +63,15 @@ Review and confirm on the device itself; the demo's device window says so rather
 
 The spec's command table lists the commands but not their framing, because an APDU carries at most 255 bytes while a signature is about 2.3 KB. The concrete framing, implemented by `ledger_device.py` and documented in full in its module docstring:
 
-- **CLA** `0xE0`, key slot in **P2**.
-- `0x02` `GET_XMSS_ROOT` → root ‖ seed ‖ treeHeight ‖ parameterSet.
-- `0x04` `GET_LEAF_INDEX` → next unused leaf, 4 bytes.
-- `0x0E` `GET_ADMIN_ADDRESS` → 20 bytes.
-- `0x06` `SIGN_PREAPPROVAL` streams the **fields**, never a hash: P1 is `0x00` first chunk, `0x80` more follow, `0x81` last. The response to the last chunk arrives only when the human decides: `0x9000` with leaf ‖ digest ‖ total length, or `0x6985` for a rejection.
-- `0x18` `GET_SIGNATURE_CHUNK` with P1 the chunk index, until the whole `ecdsa(65) ‖ r(32) ‖ wotsSig(67×32) ‖ auth(h×32)` blob has arrived.
+- **CLA** `0xE0`, key slot in **P2**. The instruction numbers are the Ethereum app's: a command with an Ethereum analogue keeps that app's own number, and the FermionGuard-specific ones start at `0x40`, above its highest assignment.
+- `0x02` `GET_ADMIN_ADDRESS` → 20 bytes (the Ethereum app's GET ETH PUBLIC ADDRESS).
+- `0x04` `SIGN_PREAPPROVAL` streams the **fields**, never a hash: P1 is `0x00` first chunk, `0x80` more follow, `0x81` last. The response to the last chunk arrives only when the human decides: `0x9000` with leaf ‖ digest ‖ total length, or `0x6985` for a rejection.
+- `0x06` `GET_APP_CONFIG` → what the ceremony preflight checks the device against.
+- `0x44` `GET_XMSS_ROOT` → root ‖ seed ‖ treeHeight ‖ parameterSet.
+- `0x46` `GET_LEAF_INDEX` → next unused leaf, 4 bytes.
+- `0x50` `GET_SIGNATURE_CHUNK` with P1 `0x00` for the first chunk and `0x80` for each next one, until the whole `r(32) ‖ wotsSig(67×32) ‖ auth(h×32) ‖ ecdsa(65)` blob has arrived. The ECDSA half is last, so a host that reads only the first chunk holds neither half whole.
+
+The two halves keep their own lengths if they swap places, so a blob in the wrong order is the right size and only fails on-chain, as `InvalidEcdsaSignature` — which reads like a wrong `quantumAdmin` key, after a one-time leaf has already been spent. `ledger_device.py` therefore checks the split itself: the ECDSA half must carry a real recovery id and must recover to the Administrator address the device reports, or the host refuses to relay and says the blob is not in the order it expects.
 
 The device recomputes the EIP-712 digest from the fields it displayed, so a host that lies about what it is asking for gets a signature the Guard rejects.
 

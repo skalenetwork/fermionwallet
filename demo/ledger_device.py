@@ -8,19 +8,27 @@ host-side digest check; USB additionally needs `hid`, Speculos needs nothing.
 
 Wire protocol (the concrete framing the spec's command table leaves open)
 ------------------------------------------------------------------------
-CLA is 0xE0. Every command carries the key slot in P2. Commands:
+CLA is 0xE0. Every command carries the key slot in P2. The instruction numbers are
+the Ethereum app's: a command with an Ethereum analogue keeps that app's own number,
+and the FermionGuard-specific ones start at 0x40, above its highest assignment, so no
+number means two different things in two apps (ledger-xmss-app.md). Commands:
 
-  INS 0x02  GET_XMSS_ROOT        -> root(32) ‖ seed(32) ‖ treeHeight(1) ‖ parameterSet(32)
-  INS 0x04  GET_LEAF_INDEX       -> nextLeaf(4, big-endian)
-  INS 0x0E  GET_ADMIN_ADDRESS    -> address(20)
-  INS 0x06  SIGN_PREAPPROVAL     streams the payload, P1 = 0x00 first chunk,
+  INS 0x02  GET_ADMIN_ADDRESS    -> address(20)   [GET ETH PUBLIC ADDRESS]
+  INS 0x04  SIGN_PREAPPROVAL     streams the payload, P1 = 0x00 first chunk,
                                  0x80 more follow, 0x81 last chunk. The device
                                  shows every field, and the response to the LAST
                                  chunk arrives only once the human decides:
                                    0x9000 -> leaf(4) ‖ digest(32) ‖ totalLen(2)
                                    0x6985 -> rejected on the device
-  INS 0x18  GET_SIGNATURE_CHUNK  P1 = chunk index -> up to 255 bytes of
-                                 ecdsa(65) ‖ r(32) ‖ wotsSig(67*32) ‖ auth(h*32)
+  INS 0x06  GET_APP_CONFIG       -> what the ceremony preflight checks
+  INS 0x44  GET_XMSS_ROOT        -> root(32) ‖ seed(32) ‖ treeHeight(1) ‖ parameterSet(32)
+  INS 0x46  GET_LEAF_INDEX       -> nextLeaf(4, big-endian)
+  INS 0x50  GET_SIGNATURE_CHUNK  P1 = 0x00 first chunk, 0x80 each next one ->
+                                 up to 255 bytes of
+                                 r(32) ‖ wotsSig(67*32) ‖ auth(h*32) ‖ ecdsa(65)
+
+The ECDSA half is LAST: a host that reads only the first chunk has neither half
+whole, so the classical signature cannot leave the device ahead of the quantum one.
 
 The signed payload is streamed as the fields themselves, never a host-supplied
 hash: the device recomputes the EIP-712 digest from what it displayed.
@@ -42,11 +50,12 @@ import sys
 import urllib.request
 
 CLA = 0xE0
-INS_GET_XMSS_ROOT = 0x02
-INS_GET_LEAF_INDEX = 0x04
-INS_SIGN_PREAPPROVAL = 0x06
-INS_GET_ADMIN_ADDRESS = 0x0E
-INS_GET_SIGNATURE_CHUNK = 0x18
+INS_GET_ADMIN_ADDRESS = 0x02
+INS_SIGN_PREAPPROVAL = 0x04
+INS_GET_APP_CONFIG = 0x06
+INS_GET_XMSS_ROOT = 0x44
+INS_GET_LEAF_INDEX = 0x46
+INS_GET_SIGNATURE_CHUNK = 0x50
 
 P1_FIRST, P1_MORE, P1_LAST = 0x00, 0x80, 0x81
 SW_OK = 0x9000
@@ -54,6 +63,7 @@ SW_DENIED = 0x6985  # the human pressed Reject, or the decision screen timed out
 SW_BUSY = 0x6986  # another signing session is in flight
 SW_EXHAUSTED = 0x6A84  # no one-time leaves left on this key
 SW_WRONG_BINDING = 0x6A81  # this key slot belongs to another contract (fermionwallet.md, FWL-023)
+SW_BAD_INS = 0x6E01  # the app's dispatcher does not know this instruction number
 
 CHUNK = 200  # payload bytes per APDU; well inside the 255-byte limit
 
@@ -70,6 +80,11 @@ def _sw_message(sw):
         SW_WRONG_BINDING: (
             "This Ledger key already belongs to a different contract, and one key signs for "
             "exactly one. Use another key slot, or the contract it is bound to."
+        ),
+        SW_BAD_INS: (
+            "The Ledger app does not know that command number — this host and the app on the "
+            "device disagree about the APDU numbering. Load an app built from this "
+            "ledger-app/ (the numbers are the Ethereum app's: 0x02, 0x04, 0x06, then 0x40 up)."
         ),
     }.get(sw, f"The Ledger refused the command (status 0x{sw:04x}).")
 
@@ -244,6 +259,48 @@ def expected_digest(fields, leaf, chain_id, verifying_contract):
     return _keccak("0x1901" + domain[2:] + struct[2:])
 
 
+def _check_blob_order(xmss_half, ecdsa_half, digest, admin, leaf):
+    """Check the split before either half is relayed, and refuse it if it is wrong.
+
+    Two checks on the piece taken off the end. The recovery id is nearly free and
+    catches most of it; recovering that piece to the device's own Administrator
+    address settles it, because it is the very check the Guard would fail.
+
+    This exists because the swap is otherwise invisible. The two halves keep their
+    own lengths when they change places, so a device that still puts the ECDSA half
+    first hands back a blob of exactly the right size with exactly the right-sized
+    pieces — `require(blob.length == ...)` passes, and the mismatch surfaces only
+    on-chain, as `InvalidEcdsaSignature()`. That reads like a wrong `quantumAdmin`
+    key and sends the reader into the key ceremony, long after the device has spent a
+    one-time leaf. One check here turns that into a sentence naming the real cause.
+    """
+    wrong_order = (
+        "The Ledger's signature blob is not in the order this host expects "
+        "(XMSS first, ECDSA last — r | wotsSig | authPath | ecdsa). "
+        f"Leaf {leaf} was already spent; the signatures are discarded rather than "
+        "relayed, because on-chain this would revert as InvalidEcdsaSignature and read "
+        "like a wrong quantumAdmin key. Check the app's GET_SIGNATURE_CHUNK layout "
+        "against demo/ledger_device.py."
+    )
+    if len(xmss_half) % 32 != 0 or not xmss_half:
+        raise DeviceError(
+            f"{wrong_order} (the XMSS half is {len(xmss_half)} bytes, not a whole number "
+            "of 32-byte words.)"
+        )
+    if ecdsa_half[64] not in (0, 1, 27, 28):
+        raise DeviceError(f"{wrong_order} (recovery id 0x{ecdsa_half[64]:02x} is not a v byte.)")
+    out = subprocess.run(
+        ["cast", "wallet", "verify", "--address", admin, "--no-hash", digest,
+         "0x" + ecdsa_half.hex()],
+        capture_output=True, text=True, timeout=30,
+    )
+    if out.returncode != 0:
+        raise DeviceError(
+            f"{wrong_order} (its last 65 bytes do not recover to the device's own "
+            f"quantumAdmin {admin}.)"
+        )
+
+
 def encode_payload(fields, chain_id, verifying_contract):
     """The signed fields, in the order the device parses and displays them."""
     return b"".join([
@@ -299,6 +356,9 @@ class Device:
         """
         payload = encode_payload(fields, chain_id, verifying_contract)
         chunks = [payload[i:i + CHUNK] for i in range(0, len(payload), CHUNK)] or [b""]
+        # Read the Administrator address before streaming anything, so the APDU
+        # sequence after the signature is exactly the readout and nothing else.
+        admin = self.admin_address()
         try:
             for i, chunk in enumerate(chunks):
                 first, last = i == 0, i == len(chunks) - 1
@@ -325,14 +385,17 @@ class Device:
 
         blob = b""
         while len(blob) < total:
-            blob += self._send(INS_GET_SIGNATURE_CHUNK, p1=len(blob) // 255)
+            blob += self._send(INS_GET_SIGNATURE_CHUNK, p1=P1_FIRST if not blob else P1_MORE)
         blob = blob[:total]
+        # XMSS first, ECDSA last (see the module docstring).
+        xmss_half, ecdsa_half = blob[:-65], blob[-65:]
+        _check_blob_order(xmss_half, ecdsa_half, digest, admin, leaf)
         return {
             "status": "approved",
             "leaf": leaf,
             "digest": digest,
-            "ecdsaSignature": "0x" + blob[:65].hex(),
-            "xmssSignature": "0x" + blob[65:].hex(),
+            "ecdsaSignature": "0x" + ecdsa_half.hex(),
+            "xmssSignature": "0x" + xmss_half.hex(),
         }
 
 

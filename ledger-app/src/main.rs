@@ -64,26 +64,31 @@ const P1_FIRST: u8 = 0x00;
 const P1_MORE: u8 = 0x80;
 const P1_LAST: u8 = 0x81;
 
-/// `ecdsa(65) ‖ r(32) ‖ wotsSig(67×32) ‖ auth(h×32)` — the blob
+/// `r(32) ‖ wotsSig(67×32) ‖ auth(h×32) ‖ ecdsa(65)` — the blob
 /// `GET_SIGNATURE_CHUNK` hands back. No public key: the root and SEED are already
 /// on-chain from registration, and `contracts/script/Demo.s.sol::_decodeXmss`
-/// parses exactly this after the ECDSA half.
-const BLOB_LEN: usize = 65 + xmss::SIG_LEN;
+/// parses exactly this once the host has taken the ECDSA half off the end.
+///
+/// The ECDSA half is **last** so that a host which reads only the first chunk holds
+/// neither half whole: the classical signature cannot leave the device until the
+/// quantum one has been paged out in full.
+const BLOB_LEN: usize = xmss::SIG_LEN + 65;
 const CHUNK: usize = 255;
 
 enum Ins {
-    /// 0x02 — root ‖ seed ‖ treeHeight ‖ parameterSet of the slot's key.
+    /// 0x44 — root ‖ seed ‖ treeHeight ‖ parameterSet of the slot's key.
     GetXmssRoot,
-    /// 0x04 — the next unused leaf, 4 bytes big-endian.
+    /// 0x46 — the next unused leaf, 4 bytes big-endian.
     GetLeafIndex,
-    /// 0x06 — stream the pre-approval fields; the last chunk waits for the human.
+    /// 0x04 — stream the pre-approval fields; the last chunk waits for the human.
     SignPreApproval { chunk: u8 },
-    /// 0x08 — what the ceremony preflight checks the device against.
+    /// 0x06 — what the ceremony preflight checks the device against.
     GetAppConfig,
-    /// 0x0E — the `quantumAdmin` address, 20 bytes.
+    /// 0x02 — the `quantumAdmin` address, 20 bytes.
     GetAdminAddress { display: bool },
-    /// 0x18 — 255-byte slice `index` of the blob the last signature produced.
-    GetSignatureChunk { index: u8 },
+    /// 0x50 — the next 255 bytes of the blob the last signature produced:
+    /// `P1 = 0x00` restarts from the first chunk, `P1 = 0x80` continues.
+    GetSignatureChunk { first: bool },
 }
 
 impl TryFrom<ApduHeader> for Ins {
@@ -92,18 +97,24 @@ impl TryFrom<ApduHeader> for Ins {
     fn try_from(h: ApduHeader) -> Result<Self, Self::Error> {
         // Every command names the key slot in P2; this build has exactly one.
         let slot_ok = h.p2 == SLOT;
+        // The numbering is the Ethereum app's: the commands with an Ethereum analogue
+        // keep its own number (0x02 GET ETH PUBLIC ADDRESS, 0x04 SIGN, 0x06 GET APP
+        // CONFIGURATION), and everything FermionGuard-specific sits at 0x40 and above,
+        // clear of the Ethereum app's highest assignment (ledger-xmss-app.md).
         match (h.ins, h.p1, slot_ok) {
-            (0x02, 0, true) => Ok(Ins::GetXmssRoot),
-            (0x04, 0, true) => Ok(Ins::GetLeafIndex),
-            (0x06, p1 @ (P1_FIRST | P1_MORE | P1_LAST), true) => {
+            (0x44, 0, true) => Ok(Ins::GetXmssRoot),
+            (0x46, 0, true) => Ok(Ins::GetLeafIndex),
+            (0x04, p1 @ (P1_FIRST | P1_MORE | P1_LAST), true) => {
                 Ok(Ins::SignPreApproval { chunk: p1 })
             }
-            (0x08, 0, _) => Ok(Ins::GetAppConfig),
-            (0x0E, p1 @ (0 | 1), true) => Ok(Ins::GetAdminAddress { display: p1 == 1 }),
-            (0x18, index, true) => Ok(Ins::GetSignatureChunk { index }),
+            (0x06, 0, _) => Ok(Ins::GetAppConfig),
+            (0x02, p1 @ (0 | 1), true) => Ok(Ins::GetAdminAddress { display: p1 == 1 }),
+            (0x50, p1 @ (P1_FIRST | P1_MORE), true) => {
+                Ok(Ins::GetSignatureChunk { first: p1 == P1_FIRST })
+            }
             // A known command with impossible parameters is a host bug, not an
             // unknown command: say which of the two it is.
-            (0x02 | 0x04 | 0x06 | 0x0E | 0x18, _, _) => Err(StatusWords::BadP1P2),
+            (0x02 | 0x04 | 0x06 | 0x44 | 0x46 | 0x50, _, _) => Err(StatusWords::BadP1P2),
             _ => Err(StatusWords::BadIns),
         }
     }
@@ -124,6 +135,10 @@ static mut PAYLOAD_LEN: usize = 0;
 static mut STREAMING: bool = false;
 static mut BLOB: [u8; BLOB_LEN] = [0; BLOB_LEN];
 static mut BLOB_READY: bool = false;
+/// How far `GET_SIGNATURE_CHUNK` has paged the blob out. `P1 = 0x00` puts it back to
+/// zero, so the host names its place in the stream rather than indexing into the
+/// buffer — the Ethereum app's `P1_FIRST`/`P1_MORE` convention, on the way out.
+static mut BLOB_CURSOR: usize = 0;
 static mut CHUNK_BUF: [u8; 255] = [0; 255];
 
 #[allow(static_mut_refs)]
@@ -505,17 +520,21 @@ fn handle(comm: &mut Comm, ins: Ins) -> Result<(), Reply> {
             Ok(())
         }
         Ins::SignPreApproval { chunk } => sign_pre_approval(comm, chunk),
-        Ins::GetSignatureChunk { index } => {
+        Ins::GetSignatureChunk { first } => {
             // Nothing to fetch until an approval has produced a blob.
             if !unsafe { BLOB_READY } {
                 return Err(StatusWords::CmdNotAccepted.into());
             }
-            let start = index as usize * CHUNK;
+            let start = if first { 0 } else { unsafe { BLOB_CURSOR } };
             if start >= BLOB_LEN {
+                // `P1 = 0x80` past the end of the buffer: the host asked for a chunk
+                // that does not exist. `P1 = 0x00` always restarts, so it never lands
+                // here.
                 return Err(StatusWords::BadP1P2.into());
             }
             let end = core::cmp::min(start + CHUNK, BLOB_LEN);
             comm.append(unsafe { &BLOB[start..end] });
+            unsafe { BLOB_CURSOR = end };
             Ok(())
         }
     }
@@ -594,6 +613,7 @@ fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
         if chunk == P1_FIRST || (chunk == P1_LAST && !STREAMING) {
             PAYLOAD_LEN = 0;
             BLOB_READY = false;
+            BLOB_CURSOR = 0;
         } else if !STREAMING {
             // A continuation with nothing to continue.
             return Err(StatusWords::CmdNotAccepted.into());
@@ -627,9 +647,12 @@ fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
     let ecdsa = sign_ecdsa(&digest).ok_or::<Reply>(StatusWords::Unknown.into())?;
     let key = xmss_key();
     unsafe {
-        BLOB[..65].copy_from_slice(&ecdsa);
-        xmss::sign(&key, leaf, &digest, &mut BLOB[65..]);
+        // XMSS first, ECDSA last: the host cannot hold the classical half without
+        // having already taken delivery of the whole quantum one.
+        xmss::sign(&key, leaf, &digest, &mut BLOB[..xmss::SIG_LEN]);
+        BLOB[xmss::SIG_LEN..].copy_from_slice(&ecdsa);
         BLOB_READY = true;
+        BLOB_CURSOR = 0;
     }
 
     comm.append(&leaf.to_be_bytes());

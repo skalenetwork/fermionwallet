@@ -107,8 +107,8 @@ class Emulator:
 
 
 # The app's APDU surface (demo/ledger_device.py documents the framing).
-INS_SIGN = 0x06
-INS_CHUNK = 0x18
+INS_SIGN = 0x04
+INS_CHUNK = 0x50
 P1_FIRST, P1_MORE, P1_LAST = 0x00, 0x80, 0x81
 SW_WRONG_BINDING = 0x6A81
 
@@ -162,16 +162,17 @@ def sign_transfer(device, wallet, fields, chain_id, chunks=1, timeout=30):
     total = int.from_bytes(out[36:38], "big")
     blob = b""
     while len(blob) < total:
-        blob += device._send(INS_CHUNK, p1=len(blob) // 255)
+        blob += device._send(INS_CHUNK, p1=P1_FIRST if not blob else P1_MORE)
     return {"leaf": leaf, "digest": digest, "blob": blob[:total]}
 
 
 def split_blob(blob, height):
-    """`ecdsa(65) ‖ r(32) ‖ wotsSig(67×32) ‖ auth(h×32)` — the wire format
-    `demo/ledger_device.py` documents. The public key is deliberately absent: the root
+    """`r(32) ‖ wotsSig(67×32) ‖ auth(h×32) ‖ ecdsa(65)` — the wire format
+    `demo/ledger_device.py` documents, ECDSA last so no host can hold the classical
+    half without the whole quantum one. The public key is deliberately absent: the root
     and SEED are on-chain from registration and come from `GET_XMSS_ROOT` here, so a
     device that published one key and signed under another would be caught."""
-    ecdsa, rest = blob[:65], blob[65:]
+    rest, ecdsa = blob[:-65], blob[-65:]
     expected = 32 * (1 + 67 + height)
     assert len(rest) == expected, f"signature is {len(rest)} bytes, expected {expected}"
     r, rest = rest[:32], rest[32:]

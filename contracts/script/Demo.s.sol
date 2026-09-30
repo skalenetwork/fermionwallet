@@ -260,11 +260,13 @@ contract Demo is Script {
         encodedSig = _decodeXmss(leaf, blob, 2);
     }
 
-    /// A signature as the Ledger app puts it on the wire: `r | wotsSig[67] | authPath[H]`,
+    /// The XMSS half as the Ledger app puts it on the wire: `r | wotsSig[67] | authPath[H]`,
     /// 32-byte words, no public key — the root and SEED are already on-chain from
     /// registration, so the device does not resend them (demo/ledger_device.py, and the
-    /// simulator matches it). `firstWord` skips a prefix: `sign_digest.py` returns the
-    /// same signature behind `root | seed`, so the FFI path passes 2 and the device path 0.
+    /// simulator matches it). This is the front of the device's signature blob; the
+    /// ECDSA half follows it there and the host takes it off the end before relaying.
+    /// `firstWord` skips a prefix: `sign_digest.py` returns the same signature behind
+    /// `root | seed`, so the FFI path passes 2 and the device path 0.
     function _decodeXmss(uint32 leaf, bytes memory blob) internal pure returns (bytes memory) {
         return _decodeXmss(leaf, blob, 0);
     }

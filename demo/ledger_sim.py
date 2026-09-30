@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Simulated FermionGuard Ledger device for the demo.
 
-The FermionGuard XMSS Ledger app is specified (ledger-xmss-app.md) but not yet
-built, so Ledger's Speculos emulator has no binary to run. This process stands in
-for the device and follows the spec's behaviour for the commands the demo uses:
+The real app exists now (`ledger-app/`, run in Speculos with
+`LEDGER_TRANSPORT=speculos`), so this is no longer the only device the demo can
+drive. It remains the default because it needs no build and no emulator: it is the
+transport that lets the demo run from a bare checkout. It stands in for the device
+and follows the spec's behaviour for the commands the demo uses:
 
 - the device holds the key: an XMSS key slot with its own monotonic leaf counter,
   and the `quantumAdmin` ECDSA key (demo test keys — never use them for real funds);
@@ -283,9 +285,11 @@ def sign_preapproval(req):
 
     ecdsa = cast("wallet", "sign", "--no-hash", "--private-key", ADMIN_PK, digest)
     r, sig_ots, auth = xmss_ref.sign(bytes.fromhex(digest[2:]), leaf, _levels, _sk_seed, _sk_prf, _seed)
-    # Exactly what the real app returns from GET_SIGNATURE_CHUNK: r | wotsSig | authPath.
-    # No root/SEED prefix — they are on-chain already, and a simulator that sent more than
-    # the device does would let a format mismatch hide until someone plugged in hardware.
+    # The XMSS half exactly as the real app pages it out of GET_SIGNATURE_CHUNK:
+    # r | wotsSig | authPath, with the ECDSA half after it on the wire and returned
+    # separately here. No root/SEED prefix — they are on-chain already, and a simulator
+    # that sent more than the device does would let a format mismatch hide until
+    # someone plugged in hardware.
     blob = r + b"".join(sig_ots) + b"".join(auth)
     return {"status": "approved", "leaf": leaf, "digest": digest,
             "ecdsaSignature": ecdsa, "xmssSignature": "0x" + blob.hex()}
