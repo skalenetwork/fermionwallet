@@ -156,8 +156,8 @@ The FAQ must answer at least: whether assets move; what happens if the Ledger is
 
 ## 8. Build and deployment
 
-- Source: `site/index.html` plus `assets/fermionguard-logo.svg`, `assets/fermionguard-icon.svg` (favicon, and the Safe App's `logo.svg`), `assets/og-image.png` and `assets/ui/`.
-- Workflow: [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) assembles `_site/` (page, logo, icon, social preview image, UI mockups, the custom Safe App from `app/` served at `/app/`, `.nojekyll`) and deploys with `actions/upload-pages-artifact` and `actions/deploy-pages`.
+- Source: `site/index.html` plus `assets/fermionguard-logo.svg`, `assets/fermionguard-icon.svg` (favicon, and the Safe App's `logo.svg`), `assets/og-image.png`, `assets/fermionguard-demo.gif` and `assets/ui/`.
+- Workflow: [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) assembles `_site/` (page, logo, icon, social preview image, the demo recording, UI mockups, the custom Safe App from `app/` served at `/app/`, `.nojekyll`) and deploys with `actions/upload-pages-artifact` and `actions/deploy-pages`. It copies assets by name, not wholesale: a new file under `assets/` that the page references must be added to that `cp` or the deployed page will 404 it.
 - Triggers: manual (`workflow_dispatch`) and any push to `main` that changes `site/**`, `app/**`, `assets/**` or the workflow itself.
 - Repository setting: **Settings → Pages → Source: GitHub Actions**.
 - A deployment is complete when the live URL serves the new version (for example, grep the new headline).
