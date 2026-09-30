@@ -21,21 +21,31 @@ follow [semantic versioning](https://semver.org/spec/v2.0.0.html) once there is 
   halves over a digest it recomputes on-device, and is driven end to end in Speculos by
   the demo. It is a subset of `ledger-xmss-app.md` and must not hold real funds;
   `ledger-app/README.md` lists every gap.
-- **Two more proofs.** The Guard and the pre-approval engine have eighteen properties
+- **Two more proofs.** The Guard and the pre-approval engine have twenty-eight properties
   proven against an executable specification with Halmos (`contracts/test/guard-proof/`),
   and the device's signing flow is model-checked exhaustively with the simulator proven
-  to refine it (`demo/ledger-proof/`). Each names what it does not cover.
+  to refine it (`demo/ledger-proof/`). Each names what it does not cover, and each
+  records its planted-bug run: twenty mutations for the Guard, of which the two that
+  survive name the single unit test that catches each instead.
 - **The specifications as ERC drafts.** `eips/ERCS/` holds three Standards Track drafts —
   XMSS verification, the key registry, hybrid pre-approvals — with `eips/check_eips.py`
   requiring every error, event, type string and constant in them to exist in the Solidity
   byte for byte, and running the published test vector rather than only linking it.
 - **A security policy.** `SECURITY.md`, with the known weaknesses stated up front rather
   than behind a reporting form.
+- **The device's counter-before-signature ordering is a compile-time property.** A new
+  `session.rs` makes `commit` the only source of a `Committed` token and `publish` take
+  it by value, so releasing a signature before the leaf counter lands is not expressible;
+  writing them in the wrong order is `error[E0425]`. It had been guarded by code review
+  alone, and both device test suites claimed to check it while passing against a build
+  with the ordering inverted.
 - **Checks that keep the documentation honest.** `contracts/script/check_requirements.py`
   (every cited requirement ID exists, coverage reported),
   `contracts/script/check_doc_links.py` (every link, anchor and backticked path resolves),
   and `contracts/script/describe_spec.py` (the registry specification rendered back into
-  English, regenerated or CI fails).
+  English, regenerated or CI fails). Plus `demo/check_wire_protocol.py`: the APDU numbers
+  and the signature blob's layout live in five places in three languages, and both times
+  they drifted the failure was a burned one-time leaf.
 
 ### Fixed
 
@@ -60,6 +70,12 @@ follow [semantic versioning](https://semver.org/spec/v2.0.0.html) once there is 
   *approved* branch asserted the warning was absent — so "the gas estimate has not
   arrived" was indistinguishable from "no warning".
 
+- **The Safe App tells an operator what happened.** The Guard's reverts are decoded with
+  a meaning and a remedy instead of "Flow failed — see log"; expiry, an exhausted key, a
+  paused Safe and a hash mismatch are all distinct states with words; a permanently
+  denied selector says so rather than reading as unsupported; and keyboard focus survives
+  the four-second queue refresh, which it did not.
+
 ### Changed
 
 - **What this project claims about its proofs.** "Formally verified" is gone from every
@@ -73,6 +89,12 @@ follow [semantic versioning](https://semver.org/spec/v2.0.0.html) once there is 
 - The Ledger app specification is now a dialect of Ledger's own Ethereum app — CLA, INS
   numbering, P1/P2 conventions, status words, screen idioms — with every borrowed claim
   cited to its primary source, and the deliberate deviations tabled with reasons.
+- **Halmos is pinned to z3 wherever it runs.** Its bundled default does not terminate on
+  some queries here, which with assertion timeouts disabled is indistinguishable from a
+  proof in progress: one lemma was abandoned as diverging after fifty-five minutes and
+  passes in 0.43 seconds under z3. A run that hangs rather than fails is no result and no
+  signal, and a solver that gives up reads exactly like "no counterexample found" — which
+  reads as a mutation the proof missed.
 - The threat model's mitigations were re-checked against the contracts rather than against
   other prose. Three named something that does not exist, including a recovery path that
   cannot exist: a wiped Administrator Ledger cannot rotate, because rotation needs the old
