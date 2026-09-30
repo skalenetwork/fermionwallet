@@ -111,6 +111,35 @@ contract RegistryHarness is QuantumKeyRegistry {
     }
 }
 
+/// A registry whose XMSS possession proof is STUBBED: `_verifyAndConsumeXmss` accepts
+/// every signature and consumes no leaf. Read every claim proven against this harness as
+/// "GIVEN that a valid old-key signature was supplied" — it proves nothing whatever about
+/// XMSS verification, about leaf-reuse protection, or about the possession proof being
+/// required at all.
+///
+/// It exists for one reason: a valid XMSS signature does not exist under symbolic
+/// execution (Halmos models SHA-256 as uninterpreted even on concrete input, so the 67
+/// WOTS+ chains fork forever), so without this seam the *effects* of a succeeding
+/// rotation are unreachable and deleting `oldKey.status = KeyStatus.Rotated` passes
+/// every lemma.
+///
+/// This is NOT interchangeable with `RegistryHarness`, and the pair of rotation lemmas
+/// is worthless if the two are ever conflated. `check_rotate` runs against
+/// `RegistryHarness`, whose `_verifyAndConsumeXmss` is the real one, and proves the
+/// registry reaches the possession proof exactly when its state preconditions hold —
+/// that the gate is in the right place. `check_rotateEffects` runs against this one and
+/// proves what happens on the other side of the gate. Neither covers the proof itself;
+/// that is `lib/xmss-solidity/PROOF.md`'s job. Do not move this override into
+/// `RegistryHarness`: `check_rotate` earns its meaning by hitting the real
+/// `LeafIndexMismatch` revert, and would silently stop proving anything.
+contract StubbedProofHarness is RegistryHarness {
+    constructor(uint64 timelock) RegistryHarness(timelock) {}
+
+    function _verifyAndConsumeXmss(bytes32, bytes32, bytes calldata) internal override returns (uint32) {
+        return 0;
+    }
+}
+
 /// @title QuantumKeyRegistry proven equal to its specification
 /// @notice `check_*` functions are symbolic proofs run by Halmos: a PASS means the
 ///         property holds for ALL inputs, including the caller, the block timestamp,
@@ -569,5 +598,90 @@ contract RegistryEquivalence is Test {
         RegistrySpec.SafeState memory want =
             ok ? RegistrySpec.afterRequestRevocation(scratch, nowTs, timelock) : before;
         assertTrue(RegistrySpec.eq(registry.stateOf(safe), want), "the deadline is now + the immutable");
+    }
+
+    // ── Lemma 10: what a rotation actually does, once it is allowed to happen ──
+
+    /// **This lemma stubs the old-key possession proof** (`StubbedProofHarness`), so it
+    /// says what a rotation does GIVEN a valid old-key signature — never that the
+    /// signature was checked. Its sibling `check_rotate` proves the other half against
+    /// the real verifier: that the registry refuses to get this far unless every state
+    /// precondition holds. Only the two together say anything useful.
+    ///
+    /// With the proof assumed, a rotation succeeds exactly when `canRotate` allows and
+    /// leaves exactly `afterRotate`'s state: the new key Active, the old key Rotated
+    /// rather than left Active or marked Revoked, any pending revocation cancelled, the
+    /// nonce advanced and the new root spent.
+    /// Covers: [QKR-008], [QKR-011], [QKR-012], [QKR-017]
+    function check_rotateEffects(
+        address caller,
+        bytes32 newRoot,
+        bytes32 newSeed,
+        uint32 height,
+        bytes32 paramSet,
+        uint256 validUntil,
+        uint64 nowTs,
+        bytes32 pKey,
+        bool pEnrolled,
+        uint64 pRevAt,
+        bytes32 pRevKey,
+        uint32 pHeight
+    ) public {
+        StubbedProofHarness reg = new StubbedProofHarness(14 days);
+        vm.assume(pKey != bytes32(0));
+        vm.assume(pHeight >= 1 && pHeight <= XMSS.MAX_HEIGHT);
+        vm.warp(nowTs);
+        // Active is not an extra assumption: `invariant` already forces it for a
+        // non-zero key id, and the non-Active case is `check_activeKeyStatusIsEnforced`.
+        reg.primeState(
+            safe,
+            pKey,
+            uint8(QuantumKeyRegistry.KeyStatus.Active),
+            pEnrolled,
+            pRevAt,
+            pRevKey,
+            PRIMED_ROOT,
+            PRIMED_SEED,
+            pHeight,
+            bytes32(0)
+        );
+        RegistrySpec.SafeState memory before = reg.stateOf(safe);
+        vm.assume(RegistrySpec.invariant(before));
+        RegistrySpec.SafeState memory scratch = reg.stateOf(safe);
+        // A primed id that collides with the id the rotation is about to mint is an
+        // artifact of priming, not a reachable state: `keyId` is a keccak image and the
+        // registry never mints one that already exists.
+        vm.assume(pKey != RegistrySpec.keyId(safe, newRoot, before.nonce));
+
+        bool paramsOk =
+            RegistrySpec.paramsValid(safe, address(admin), newRoot, newSeed, height, paramSet, XMSS.MAX_HEIGHT);
+        bool rootUsed = reg.rootRegistered(safe, newRoot);
+        bool allowed = RegistrySpec.canRotate(before, rootUsed, paramsOk, nowTs, validUntil);
+
+        XMSS.Signature memory sig;
+        vm.prank(caller);
+        bool ok;
+        try reg.rotateQuantumKey(
+            safe, address(admin), newRoot, newSeed, height, paramSet, validUntil, abi.encode(sig), "", ""
+        ) {
+            ok = true;
+        } catch {
+            ok = false;
+        }
+
+        assertEq(ok, allowed, "with the proof assumed, a rotation succeeds exactly when the specification allows");
+        RegistrySpec.SafeState memory got = reg.stateOf(safe);
+        RegistrySpec.SafeState memory want = ok ? RegistrySpec.afterRotate(scratch, safe, newRoot) : before;
+        assertTrue(RegistrySpec.eq(got, want), "state after the rotation");
+        if (ok) {
+            assertEq(
+                uint256(reg.getKey(pKey).status),
+                uint256(RegistrySpec.statusOfRetiredKey(false)),
+                "the old key is Rotated, not left Active and not Revoked"
+            );
+            assertTrue(reg.rootRegistered(safe, newRoot), "the new root is spent");
+            assertEq(reg.getKey(got.activeKeyId).treeHeight, height, "the new key's height is recorded");
+            assertTrue(RegistrySpec.invariant(got), "the invariant is preserved");
+        }
     }
 }
