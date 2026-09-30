@@ -79,8 +79,15 @@ contract RegistryHarness is QuantumKeyRegistry {
         bytes32 revocationKeyId,
         bytes32 root,
         bytes32 seed,
-        uint32 treeHeight
+        uint32 treeHeight,
+        bytes32 spentRoot
     ) external {
+        // A root the Safe has already used, marked INDEPENDENTLY of whether a key is
+        // Active. The two must not be coupled: "this root is spent and the Safe has no
+        // Active key" is exactly the post-revocation state that makes a root one-shot
+        // ([QKR-009]), and coupling them hid the deletion of the `RootAlreadyRegistered`
+        // check from `registerQuantumKey` from every lemma in this file.
+        if (spentRoot != bytes32(0)) rootRegistered[safe][spentRoot] = true;
         if (activeKeyId != bytes32(0)) {
             _keys[activeKeyId] = KeyRegistration({
                 quantumKeyId: activeKeyId,
@@ -137,13 +144,20 @@ contract RegistryEquivalence is Test {
     }
 
     /// Install an arbitrary invariant-satisfying pre-state and return it.
-    function _prime(bytes32 keyId, uint8 status, bool enrolled, uint64 revAt, bytes32 revKeyId, uint32 height)
-        internal
-        returns (RegistrySpec.SafeState memory before)
-    {
+    function _prime(
+        bytes32 keyId,
+        uint8 status,
+        bool enrolled,
+        uint64 revAt,
+        bytes32 revKeyId,
+        uint32 height,
+        bytes32 spentRoot
+    ) internal returns (RegistrySpec.SafeState memory before) {
         vm.assume(status <= uint8(type(QuantumKeyRegistry.KeyStatus).max));
         vm.assume(height >= 1 && height <= XMSS.MAX_HEIGHT);
-        registry.primeState(safe, keyId, status, enrolled, revAt, revKeyId, PRIMED_ROOT, PRIMED_SEED, height);
+        registry.primeState(
+            safe, keyId, status, enrolled, revAt, revKeyId, PRIMED_ROOT, PRIMED_SEED, height, spentRoot
+        );
         before = registry.stateOf(safe);
         vm.assume(RegistrySpec.invariant(before));
     }
@@ -183,6 +197,7 @@ contract RegistryEquivalence is Test {
         uint256 validUntil,
         uint64 nowTs,
         bool postureOk,
+        bool pRootSpent,
         bytes32 pKey,
         uint8 pStatus,
         bool pEnrolled,
@@ -191,7 +206,8 @@ contract RegistryEquivalence is Test {
         uint32 pHeight
     ) public {
         vm.warp(nowTs);
-        RegistrySpec.SafeState memory before = _prime(pKey, pStatus, pEnrolled, pRevAt, pRevKey, pHeight);
+        RegistrySpec.SafeState memory before =
+            _prime(pKey, pStatus, pEnrolled, pRevAt, pRevKey, pHeight, pRootSpent ? root : bytes32(0));
         RegistrySpec.SafeState memory scratch = _scratch();
         registry.setPostureOk(postureOk);
         bool paramsOk =
@@ -242,6 +258,7 @@ contract RegistryEquivalence is Test {
         bytes32 paramSet,
         uint256 validUntil,
         uint64 nowTs,
+        bool pRootSpent,
         bytes32 pKey,
         uint8 pStatus,
         bool pEnrolled,
@@ -250,7 +267,8 @@ contract RegistryEquivalence is Test {
         uint32 pHeight
     ) public {
         vm.warp(nowTs);
-        RegistrySpec.SafeState memory before = _prime(pKey, pStatus, pEnrolled, pRevAt, pRevKey, pHeight);
+        RegistrySpec.SafeState memory before =
+            _prime(pKey, pStatus, pEnrolled, pRevAt, pRevKey, pHeight, pRootSpent ? newRoot : bytes32(0));
         bool paramsOk =
             RegistrySpec.paramsValid(safe, address(admin), newRoot, newSeed, height, paramSet, XMSS.MAX_HEIGHT);
         bool rootUsed = registry.rootRegistered(safe, newRoot);
@@ -291,7 +309,8 @@ contract RegistryEquivalence is Test {
         uint32 pHeight
     ) public {
         vm.warp(nowTs);
-        RegistrySpec.SafeState memory before = _prime(pKey, pStatus, pEnrolled, pRevAt, pRevKey, pHeight);
+        RegistrySpec.SafeState memory before =
+            _prime(pKey, pStatus, pEnrolled, pRevAt, pRevKey, pHeight, bytes32(0));
         RegistrySpec.SafeState memory scratch = _scratch();
         bool allowed = RegistrySpec.canRequestRevocation(before, nowTs, validUntil, timelock);
 
@@ -328,7 +347,7 @@ contract RegistryEquivalence is Test {
     ) public {
         vm.assume(firstAt <= secondAt);
         vm.assume(uint256(secondAt) + timelock <= RegistrySpec.MAX_TIMESTAMP);
-        _prime(pKey, pStatus, pEnrolled, 0, bytes32(0), pHeight);
+        _prime(pKey, pStatus, pEnrolled, 0, bytes32(0), pHeight, bytes32(0));
         vm.warp(firstAt);
         if (!_tryRequest(validUntil)) return;
         uint64 first = registry.keyRevocationExecutableAt(safe);
@@ -360,7 +379,8 @@ contract RegistryEquivalence is Test {
         uint32 pHeight
     ) public {
         vm.warp(nowTs);
-        RegistrySpec.SafeState memory before = _prime(pKey, pStatus, pEnrolled, pRevAt, pRevKey, pHeight);
+        RegistrySpec.SafeState memory before =
+            _prime(pKey, pStatus, pEnrolled, pRevAt, pRevKey, pHeight, bytes32(0));
         RegistrySpec.SafeState memory scratch = _scratch();
         bool allowed = RegistrySpec.canCancelRevocation(before, caller, safe);
 
@@ -395,7 +415,8 @@ contract RegistryEquivalence is Test {
         uint32 pHeight
     ) public {
         vm.warp(nowTs);
-        RegistrySpec.SafeState memory before = _prime(pKey, pStatus, pEnrolled, pRevAt, pRevKey, pHeight);
+        RegistrySpec.SafeState memory before =
+            _prime(pKey, pStatus, pEnrolled, pRevAt, pRevKey, pHeight, bytes32(0));
         RegistrySpec.SafeState memory scratch = _scratch();
         bool allowed = RegistrySpec.canExecuteRevocation(before, nowTs);
 
@@ -441,7 +462,94 @@ contract RegistryEquivalence is Test {
         assertEq(registry.safeToQuantumKey(safe), firstKey, "the Active key is unchanged");
     }
 
-    // ── Lemma 7: the time lock is the immutable, for every value of it ─────
+    // ── Lemma 7: a root stays spent after its key is revoked ───────────────
+
+    /// A root is one-shot per Safe even once the key it registered is gone. Lemma 6
+    /// re-registers while the first key is still Active, so `SafeAlreadyEnrolled` fires
+    /// first and hides whether the root check works at all; this lemma drives the Safe
+    /// all the way through an executed revocation, so that when it re-registers the
+    /// only thing standing in the way IS the spent root.
+    /// Covers: [QKR-008], [QKR-009], [QKR-009a], [QKR-024]
+    function check_rootStaysSpentAcrossRevocation(
+        bytes32 root,
+        bytes32 seed,
+        uint32 height,
+        bytes32 paramSet,
+        uint64 nowTs
+    ) public {
+        vm.assume(uint256(nowTs) + timelock <= RegistrySpec.MAX_TIMESTAMP);
+        vm.warp(nowTs);
+        if (!_register(root, seed, height, paramSet, type(uint256).max)) return;
+        if (!_tryRequest(type(uint256).max)) return;
+        vm.warp(uint256(nowTs) + timelock);
+        registry.executeKeyRevocation(safe);
+
+        assertEq(registry.safeToQuantumKey(safe), bytes32(0), "the revocation left no Active key");
+        assertTrue(registry.enrolledSafe(safe), "enrollment is sticky across revocation");
+        assertTrue(registry.rootRegistered(safe, root), "the root is still recorded as spent");
+        // Nothing is Active now, so `SafeAlreadyEnrolled` cannot mask the root check.
+        assertFalse(
+            _register(root, seed, height, paramSet, type(uint256).max),
+            "a spent root cannot be registered again once its key has been revoked"
+        );
+    }
+
+    // ── Lemma 8: the registry's own defence against a broken state ─────────
+
+    /// `_activeKey` refuses a key whose record is not Active. Every other lemma assumes
+    /// `RegistrySpec.invariant`, which says no reachable state has a non-Active key sitting
+    /// in `safeToQuantumKey` — so under that assumption the `activeKeyStatus == Status.Active`
+    /// clauses of `canRotate`, `canRequestRevocation` and `canCancelRevocation` are implied by
+    /// the assumption instead of proven against the contract, and deleting the status check
+    /// in `_activeKey` changes nothing any of them can see. This lemma is the one that
+    /// deliberately does NOT assume the invariant: it installs the broken state and proves
+    /// all three consumers still refuse. Defence in depth, proven to be there.
+    /// Covers: [QKR-008], [QKR-011]
+    function check_activeKeyStatusIsEnforced(
+        bytes32 pKey,
+        uint8 pStatus,
+        uint32 pHeight,
+        uint64 nowTs,
+        uint256 validUntil,
+        bytes32 newRoot,
+        bytes32 newSeed,
+        uint32 height,
+        bytes32 paramSet
+    ) public {
+        vm.assume(pStatus <= uint8(type(QuantumKeyRegistry.KeyStatus).max));
+        vm.assume(pStatus != uint8(QuantumKeyRegistry.KeyStatus.Active));
+        vm.assume(pKey != bytes32(0));
+        vm.assume(pHeight >= 1 && pHeight <= XMSS.MAX_HEIGHT);
+        vm.warp(nowTs);
+        // A pending revocation is primed too, so that the status check is the ONLY thing
+        // left for `cancelKeyRevocation` to trip over.
+        registry.primeState(safe, pKey, pStatus, true, 1, pKey, PRIMED_ROOT, PRIMED_SEED, pHeight, bytes32(0));
+
+        assertFalse(_tryRequest(validUntil), "no revocation can be requested against a key that is not Active");
+
+        vm.prank(safe);
+        bool cancelled;
+        try registry.cancelKeyRevocation(safe) {
+            cancelled = true;
+        } catch {
+            cancelled = false;
+        }
+        assertFalse(cancelled, "even the Safe cannot cancel against a key that is not Active");
+
+        XMSS.Signature memory sig;
+        bool reachedProof;
+        try registry.rotateQuantumKey(
+            safe, address(admin), newRoot, newSeed, height, paramSet, validUntil, abi.encode(sig), "", ""
+        ) {
+            reachedProof = true;
+        } catch (bytes memory reason) {
+            reachedProof =
+                reason.length >= 4 && bytes4(reason) == QuantumKeyRegistry.LeafIndexMismatch.selector;
+        }
+        assertFalse(reachedProof, "no rotation out of a key that is not Active");
+    }
+
+    // ── Lemma 9: the time lock is the immutable, for every value of it ─────
 
     /// `EMERGENCY_ROTATION_TIMELOCK` is what arms the deadline — not the 14 days this
     /// suite happens to deploy with. Proven for every constructor value.
@@ -453,7 +561,7 @@ contract RegistryEquivalence is Test {
         timelock = registry.EMERGENCY_ROTATION_TIMELOCK();
         assertEq(timelock, anyTimelock, "the constructor argument is the immutable");
         vm.warp(nowTs);
-        RegistrySpec.SafeState memory before = _prime(pKey, pStatus, true, 0, bytes32(0), pHeight);
+        RegistrySpec.SafeState memory before = _prime(pKey, pStatus, true, 0, bytes32(0), pHeight, bytes32(0));
         RegistrySpec.SafeState memory scratch = _scratch();
         bool allowed = RegistrySpec.canRequestRevocation(before, nowTs, validUntil, timelock);
         bool ok = _tryRequest(validUntil);

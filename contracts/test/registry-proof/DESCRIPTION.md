@@ -36,32 +36,39 @@ invariant.
 > the proofs range over the whole abstract state space rather than over whatever a
 > genesis-to-here call sequence happens to reach, and every successful transition is
 > proven to preserve `invariant` again. The all-zero genesis state satisfies it, so
-> induction covers every reachable state. Deliberately abstracted, and why: - Owner-
-> threshold signatures and the Ledger attestation: the `PermissiveSafe` and
-> `PermissiveSigner` stubs in `RegistryEquivalence.t.sol` accept every signature, so the
-> lemmas say what the registry does GIVEN that both authorizations succeeded. See
-> "Security notes" in `contracts/README.md`. - The Guard's enrollment posture check
-> ([QKR-006]: a fallback handler or unguarded enabled modules) lives in
-> `FermionGuard._afterEnrollment`, not here. It is NOT silently missing: it enters this
-> specification as the `postureOk` parameter of `canRegister`, and the harness's hook
-> refuses whenever it is false — so the proof does cover that a hook refusal vetoes the
-> whole registration atomically. What the posture check itself *is* belongs to the
-> Guard's own proof, not to the registry's. - XMSS verification. `rotateQuantumKey`
-> consumes one leaf of the old key as a possession proof, and a valid XMSS signature is
-> out of reach inside the symbolic model: Halmos treats SHA-256 as an uninterpreted
-> function even on concrete input, so the 67 WOTS+ chain lengths stay symbolic and the
-> chains fork (`lib/xmss-solidity/PROOF.md`: at h = 2 with a symbolic message the solver
-> did not finish in 40 minutes). `canRotate` therefore states the preconditions that are
-> about registry STATE, and `check_rotate` proves the registry reaches the possession
-> proof exactly when they hold. The effects of a SUCCEEDING rotation — `afterRotate`,
-> and the old key turning Rotated — are unreachable for Halmos and are covered by the
-> concrete-vector Foundry tests instead (`GuardIntegration.t.sol`, `DocExamples.t.sol`),
-> so `invariant` preservation across `Rotate` is assumed, not proven. - Used-leaf
-> accounting (the per-root bitmap) is not a `SafeState` field, so "the rotation leaf is
-> unused" is outside `canRotate` as well. Note for callers: every `after*` function
-> writes the transition's effects THROUGH its `SafeState memory` argument (that is how
-> Solidity passes memory structs) and returns the same struct. Never hand one a pre-
-> state you still need afterwards — see `_scratch` in `RegistryEquivalence.t.sol`.
+> induction covers every reachable state. Assuming `invariant` is what makes the
+> transition lemmas tractable, and it is also what would make the `activeKeyStatus ==
+> Status.Active` clauses below vacuous, since the invariant already rules out a non-
+> Active key sitting in `activeKeyId`. `check_activeKeyStatusIsEnforced` is the one
+> lemma that does NOT assume the invariant: it installs that broken state on purpose and
+> proves the registry still refuses to rotate, request or cancel from it. Read those
+> clauses as proven by that lemma, not by the ones that assume them away. Deliberately
+> abstracted, and why: - Owner-threshold signatures and the Ledger attestation: the
+> `PermissiveSafe` and `PermissiveSigner` stubs in `RegistryEquivalence.t.sol` accept
+> every signature, so the lemmas say what the registry does GIVEN that both
+> authorizations succeeded. See "Security notes" in `contracts/README.md`. - The Guard's
+> enrollment posture check ([QKR-006]: a fallback handler or unguarded enabled modules)
+> lives in `FermionGuard._afterEnrollment`, not here. It is NOT silently missing: it
+> enters this specification as the `postureOk` parameter of `canRegister`, and the
+> harness's hook refuses whenever it is false — so the proof does cover that a hook
+> refusal vetoes the whole registration atomically. What the posture check itself *is*
+> belongs to the Guard's own proof, not to the registry's. - XMSS verification.
+> `rotateQuantumKey` consumes one leaf of the old key as a possession proof, and a valid
+> XMSS signature is out of reach inside the symbolic model: Halmos treats SHA-256 as an
+> uninterpreted function even on concrete input, so the 67 WOTS+ chain lengths stay
+> symbolic and the chains fork (`lib/xmss-solidity/PROOF.md`: at h = 2 with a symbolic
+> message the solver did not finish in 40 minutes). `canRotate` therefore states the
+> preconditions that are about registry STATE, and `check_rotate` proves the registry
+> reaches the possession proof exactly when they hold. The effects of a SUCCEEDING
+> rotation — `afterRotate`, and the old key turning Rotated — are unreachable for Halmos
+> and are covered by the concrete-vector Foundry tests instead
+> (`GuardIntegration.t.sol`, `DocExamples.t.sol`), so `invariant` preservation across
+> `Rotate` is assumed, not proven. - Used-leaf accounting (the per-root bitmap) is not a
+> `SafeState` field, so "the rotation leaf is unused" is outside `canRotate` as well.
+> Note for callers: every `after*` function writes the transition's effects THROUGH its
+> `SafeState memory` argument (that is how Solidity passes memory structs) and returns
+> the same struct. Never hand one a pre-state you still need afterwards — see `_scratch`
+> in `RegistryEquivalence.t.sol`.
 
 ## The state of one Safe
 

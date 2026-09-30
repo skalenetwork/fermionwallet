@@ -18,6 +18,14 @@ pragma solidity ^0.8.24;
 ///         preserve `invariant` again. The all-zero genesis state satisfies it, so
 ///         induction covers every reachable state.
 ///
+///         Assuming `invariant` is what makes the transition lemmas tractable, and it
+///         is also what would make the `activeKeyStatus == Status.Active` clauses below
+///         vacuous, since the invariant already rules out a non-Active key sitting in
+///         `activeKeyId`. `check_activeKeyStatusIsEnforced` is the one lemma that does
+///         NOT assume the invariant: it installs that broken state on purpose and proves
+///         the registry still refuses to rotate, request or cancel from it. Read those
+///         clauses as proven by that lemma, not by the ones that assume them away.
+///
 ///         Deliberately abstracted, and why:
 ///         - Owner-threshold signatures and the Ledger attestation: the `PermissiveSafe`
 ///           and `PermissiveSigner` stubs in `RegistryEquivalence.t.sol` accept every
