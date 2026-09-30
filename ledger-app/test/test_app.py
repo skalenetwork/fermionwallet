@@ -186,7 +186,7 @@ def stream_raw(transport, payload, timeout=30):
     return out, sw
 
 
-def decide(transport, decision, seen=None):
+def decide(transport, decision, seen=None, stop=None):
     """Walk the review to the end and press Approve or Reject, like a human would.
 
     Runs in a thread because the device answers the last chunk only once the human
@@ -194,15 +194,23 @@ def decide(transport, decision, seen=None):
     appear and stops the moment it is gone: pressing both buttons on the home
     screen's Quit page would close the app, which looks exactly like a firmware
     crash in the next exchange.
+
+    `stop` is for the checks that expect *no* review: a payload refused before any
+    screen draws nothing for the walker to find, so without a way to call it off it
+    waits out its whole deadline, outlives the emulator, and prints a connection error
+    that reads like a device crash.
     """
+    stop = stop or threading.Event()
+
     def home(text):
         return not text or any(p in text for p in HOME_PAGES)
 
     def run():
         deadline = time.time() + 120
-        while time.time() < deadline and home(" ".join(transport.screen())):
+        while time.time() < deadline and not stop.is_set() \
+                and home(" ".join(transport.screen())):
             time.sleep(0.1)
-        while time.time() < deadline:
+        while time.time() < deadline and not stop.is_set():
             lines = transport.screen()
             text = " ".join(lines)
             if home(text):
@@ -345,7 +353,13 @@ def main():
         for name, value in (("target", "0x" + "11" * 20), ("value", str(10**18)),
                             ("dataHash", "0x" + "22" * 32)):
             payload = ld.encode_payload(dict(FIELDS, **{name: value}), CHAIN_ID, GUARD)
-            _, sw = stream_raw(transport, payload)
+            # A walker stands by to reject, so that a build which draws a review here
+            # instead of refusing fails this check rather than hanging on it.
+            stop = threading.Event()
+            presser = decide(transport, "reject", stop=stop)
+            _, sw = stream_raw(transport, payload, timeout=60)
+            stop.set()
+            presser.join(timeout=10)
             check(f"a class-0 approval with a non-zero {name} is refused before any screen",
                   sw == ld.SW_BAD_FIELDS, f"0x{sw:04x}")
         check("and none of the three cost a leaf", device.next_leaf() == leaf,

@@ -89,12 +89,22 @@ touched.
 
 The device checks are falsified differently now that they read the gate rather than
 the marker: mutating `fmt.rs` alone no longer reaches them, because the payload is
-refused before `push_utc` is ever called. Build an app with the two
-`fmt::utc_renderable` clauses removed from `main.rs::review_and_digest` and point
+refused before `push_utc` is ever called. Build an app with the gate removed and point
 `FMT_UTC_ELF` at it — D1a/D1b/D1c, D3a/D3c and D5b/D5c must all go red, because that
 app draws the review and answers `0x6985` when the walker rejects it. That is the
 build this suite's device half was first written against, and it is exactly what the
 gate is there to prevent.
+
+There are **two** gates to remove, and removing one is not enough. Dropping the two
+`fmt::utc_renderable` clauses from `main.rs::review_and_digest` leaves all seven green,
+because the review-wide `Buf::overflowed` check that both review functions now end
+their field-building with catches the same payloads one layer further in — `push_utc`
+taints the buffer, so the review refuses itself with the same `0x6A80`. Measured, not
+assumed. They are redundant on purpose and the redundancy is worth having: the
+`utc_renderable` clause refuses before the digest is computed and without drawing
+anything, while the overflow check draws the "cannot display" screen and waits for a
+button. Take out the clauses *and* the two `if buf.overflowed()` blocks (`main.rs` and
+`wallet.rs`) and the seven go red.
 """
 import argparse
 import datetime
