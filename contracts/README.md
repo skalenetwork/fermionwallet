@@ -156,3 +156,33 @@ forge test -vv                 # run the Guard, registry and engine tests
 The XMSS library's own tests, gas benchmarks and formal proofs run in its
 repository (`cd lib/xmss-solidity && forge test`; the proofs with Halmos, see
 its README).
+
+### Everything that has to pass
+
+CI runs all of these, and so should you before asking anyone to read a change. The
+first four are seconds; the proofs are minutes and are deliberately not CI gates.
+
+```shell
+cd contracts
+forge test                                                   # the whole suite
+python3 script/check_requirements.py                         # every cited [XXX-nnn] exists; prints coverage
+python3 script/describe_spec.py --check \
+        test/registry-proof/DESCRIPTION.md                   # the rendered spec is not stale
+cd .. && python3 eips/check_eips.py                          # the ERC drafts still describe the contracts
+python3 contracts/script/check_doc_links.py                  # every link, anchor and cited path resolves
+python3 demo/ledger-proof/prove_device.py --no-sim           # the device's signing flow, model-checked
+```
+
+The proofs, offline. Halmos needs an AST build first, and needs its solver pinned —
+the bundled default does not terminate on some queries here, and with assertion
+timeouts disabled that means a run that hangs rather than fails:
+
+```shell
+cd contracts && forge clean && forge build --ast --force
+halmos --match-contract RegistryEquivalence --loop 32 --solver z3 --solver-timeout-assertion 0
+halmos --match-contract GuardEquivalence    --loop 32 --solver z3 --solver-timeout-assertion 0
+```
+
+And the two that need more than a checkout: `demo/ledger-proof/prove_device.py`
+without `--no-sim` drives the simulator and needs Foundry's `cast`;
+`ledger-app/test/` needs a built app and Speculos (`./ledger-app/build.sh`).

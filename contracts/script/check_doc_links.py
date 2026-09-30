@@ -148,7 +148,8 @@ def check(root, verbose=False):
             p = m.group("path")
             if p in RUNTIME_PATHS or p in EXTERNAL_PATHS or p.startswith(REMAPPED_PREFIXES):
                 continue
-            bare = re.sub(r"^(?:\.\./)+", "", p)   # "../fermionguard-module.md" names a real file
+            # "../fermionguard-module.md" and "./ledger-app/build.sh" both name real files.
+            bare = re.sub(r"^(?:\.\.?/)+", "", p)
             line = text[: m.start()].count("\n") + 1
             # Prose names a file the way a reader would say it aloud: `contracts/README.md`
             # writes `src/FermionGuard.sol`, and `py/xmss_ref.py` for a file in the
