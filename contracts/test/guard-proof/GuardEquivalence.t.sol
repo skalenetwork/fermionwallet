@@ -488,6 +488,40 @@ contract GuardEquivalence is Test {
         }
     }
 
+    /// Once dead, always dead — and both verdicts come from the CONTRACT: the engine
+    /// itself diagnoses the approval as permanently dead at `t1` (any refusal other than
+    /// "not yet valid"), and the engine itself is asked again at any later `t2`.
+    ///
+    /// Needs `--solver z3`. Halmos 0.3.3's bundled default, yices-smt2, does not
+    /// terminate on this lemma's queries — it ran 55 minutes here without an answer,
+    /// which is indistinguishable from a proof in progress. z3 answers in under a
+    /// second. The same applies to the whole file; see README.md.
+    function check_deadIsMonotone(
+        uint64 validFrom,
+        uint64 validTo,
+        bool used,
+        bool revoked,
+        uint8 keyStatusRaw,
+        uint64 t1,
+        uint64 t2
+    ) public {
+        vm.assume(keyStatusRaw < 4);
+        vm.assume(t1 <= t2);
+        bytes32 id = keccak256("fermionguard.proof.monotone");
+        bytes32 keyId = keccak256("key");
+        guard.seedKey(safe, keyId, address(0xA11CE), QuantumKeyRegistry.KeyStatus(keyStatusRaw));
+        guard.seedApproval(id, safe, PreApprovalEngine.ApprovalClass.TRANSFER, keyId, validFrom, validTo, used, revoked);
+
+        vm.warp(t1);
+        (bool validAtT1, string memory why) = guard.validatePreApproval(id);
+        // "not yet valid" is the one refusal a later block can undo; every other refusal
+        // the engine gives — used, revoked, expired, key revoked — must be permanent.
+        bool permanentlyDead = !validAtT1 && keccak256(bytes(why)) != keccak256(bytes("not yet valid"));
+        vm.warp(t2);
+        (bool validAtT2,) = guard.validatePreApproval(id);
+        if (permanentlyDead) assertFalse(validAtT2, "an approval the engine called dead became valid later");
+    }
+
     /// Revocation authorization: the Safe, the key's Administrator, or any single
     /// owner — and never a single owner against an ADMIN approval.
     function check_revokeAuthorization(bytes32 id, uint8 classRaw, bool used, bool revoked, uint64 validFrom, uint64 validTo, bool callerIsSafe, bool callerIsAdmin)
@@ -884,6 +918,11 @@ contract GuardEquivalence is Test {
         else if (shape == 2) data = abi.encodePacked(selector, bytes32(uint256(uint160(arg))), bytes32(word));
         // shape == 0: empty calldata, the bare native-value send
 
+        // Plain CALLs only. With `DelegateCall` in scope this lemma reaches
+        // `_checkBatchLegs`, whose `abi.decode(Bytes.slice(data, 4), (bytes))` reads
+        // memory at an offset taken from the symbolic payload; Halmos 0.3.3 aborts there
+        // with `NotConcreteError: symbolic memory offset`, under either solver. The
+        // delegatecall branch is covered instead by `check_delegateCallOnlyToMultiSend`.
         bool escape = guard.isEscapeCall(safe, to, value, data, Enum.Operation.Call);
         (bool ok,) = _checkTransaction(to, value, data, Enum.Operation.Call, 0);
         assertEq(ok, escape, "the Guard admits exactly the escape hatch when nothing is approved");
@@ -896,17 +935,26 @@ contract GuardEquivalence is Test {
     /// and executing it is the only thing that ever spends it. Window and timestamp are
     /// symbolic, so the boundaries are proven here too; the payload and target are
     /// concrete, because a fully symbolic approval record makes this one diverge.
-    function check_executionConsumesTheApproval(uint64 validFrom, uint64 validTo, uint64 nowTs, bool pinned) public {
-        address payee = address(0xBEEF);
+    function check_executionConsumesTheApproval(
+        address to,
+        uint256 value,
+        uint8 classRaw,
+        uint64 validFrom,
+        uint64 validTo,
+        uint64 nowTs,
+        bool pinned
+    ) public {
+        vm.assume(classRaw < 3);
+        vm.assume(to != safe && to != address(guard)); // otherwise the class is forced to ADMIN
         vm.warp(nowTs);
         _activate();
 
         PreApprovalEngine.PreApproval memory a;
         a.id = PINNED_ID;
         a.safe = safe;
-        a.class_ = PreApprovalEngine.ApprovalClass.PAYLOAD;
-        a.target = payee;
-        a.value = 1 ether;
+        a.class_ = PreApprovalEngine.ApprovalClass(classRaw);
+        a.target = to;
+        a.value = value;
         a.dataHash = keccak256("");
         a.validFrom = validFrom;
         a.validTo = validTo;
@@ -915,10 +963,13 @@ contract GuardEquivalence is Test {
         if (pinned) guard.seedPin(safe, safeContract.TX_HASH(), PINNED_ID);
         else guard.seedQueued(guard.commitmentOf(a), PINNED_ID);
 
-        (bool ok,) = _checkTransaction(payee, 1 ether, "", Enum.Operation.Call, 0);
-        bool live = nowTs >= validFrom && nowTs <= validTo;
-        assertEq(ok, live, "the transaction executed exactly while its approval was live");
-        assertEq(guard.getPreApproval(PINNED_ID).used, live, "execution spends the approval, nothing else does");
+        (bool ok,) = _checkTransaction(to, value, "", Enum.Operation.Call, 0);
+        // Empty calldata to a third party dispatches as PAYLOAD, so it goes through
+        // exactly when the seeded approval is a live PAYLOAD approval on either tier.
+        bool shouldPass = nowTs >= validFrom && nowTs <= validTo
+            && classRaw == uint8(PreApprovalEngine.ApprovalClass.PAYLOAD);
+        assertEq(ok, shouldPass, "the transaction executed exactly while a matching approval was live");
+        assertEq(guard.getPreApproval(PINNED_ID).used, shouldPass, "execution spends the approval, nothing else does");
     }
 
     /// The only delegatecall a guarded Safe may make is to the pinned MultiSendCallOnly:
