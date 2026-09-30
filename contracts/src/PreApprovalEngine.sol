@@ -216,8 +216,13 @@ abstract contract PreApprovalEngine is QuantumKeyRegistry {
     ///         swapOwner / changeThreshold to eject a rogue owner. If one owner could
     ///         revoke them, that owner could veto their own removal forever and force the
     ///         Safe onto the 14-day emergency de-guard. ADMIN approvals stay revocable by
-    ///         the Safe (owner threshold, no quantum approval needed) and the Administrator;
-    ///         executing one needs the threshold anyway.
+    ///         the Safe (owner threshold, no quantum approval needed) and the Administrator.
+    ///         Note the stop that is left to the lone owner who spots a malicious ADMIN
+    ///         approval: `pauseSafe`, which any single owner may call and which blocks the
+    ///         module path outright, while only the threshold can unpause. Not "executing
+    ///         one needs the threshold anyway" — an enabled module executes an ADMIN
+    ///         approval with no owner involvement at all (see
+    ///         test_TM_ModuleExecutedSetGuardClearsEmergencyRequest).
     function revokePreApproval(bytes32 preApprovalId) external returns (bool) {
         PreApproval storage a = _approvals[preApprovalId];
         if (a.id == bytes32(0)) revert UnknownApproval(preApprovalId);
