@@ -3,8 +3,8 @@
 to the same app running in Speculos (Ledger's emulator).
 
 This replaces the HTTP call to the Python simulator (`ledger_sim.py`) with the real
-APDU exchange described in ledger-xmss-app.md. Stdlib only, except that USB needs
-`hid`; Speculos needs nothing.
+APDU exchange described in ledger-xmss-app.md. Stdlib, plus Foundry's `cast` for the
+host-side digest check; USB additionally needs `hid`, Speculos needs nothing.
 
 Wire protocol (the concrete framing the spec's command table leaves open)
 ------------------------------------------------------------------------
@@ -37,6 +37,7 @@ import json
 import os
 import socket
 import struct
+import subprocess
 import urllib.request
 
 CLA = 0xE0
@@ -195,6 +196,48 @@ def _b32(value):
     return bytes.fromhex(value[2:].rjust(64, "0"))
 
 
+PRE_APPROVAL_TYPE = (
+    "PreApproval(address safe,uint8 approvalClass,address token,address recipient,uint256 amount,"
+    "address target,uint256 value,bytes32 dataHash,uint64 validFrom,uint64 validTo,bytes32 nonce,"
+    "bytes32 quantumKeyId,uint32 xmssLeafIndex,bytes32 policyHash,bytes32 txHash)"
+)
+DOMAIN_TYPE = "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+
+
+def _cast(*args):
+    out = subprocess.run(["cast", *args], capture_output=True, text=True, timeout=30)
+    if out.returncode != 0:
+        raise RuntimeError(out.stderr.strip() or "cast failed")
+    return out.stdout.strip()
+
+
+def _keccak(hex_or_text):
+    return _cast("keccak", hex_or_text)
+
+
+def expected_digest(fields, leaf, chain_id, verifying_contract):
+    """What the digest must be, computed here from the fields we sent.
+
+    Deliberately an independent computation, not a copy of the device's: its whole
+    value is that it was arrived at separately. Keccak and ABI encoding come from
+    Foundry's `cast`, which the demo already requires.
+    """
+    domain = _keccak(_cast(
+        "abi-encode", "f(bytes32,bytes32,bytes32,uint256,address)",
+        _keccak(DOMAIN_TYPE), _keccak("FermionGuard"), _keccak("1"), str(chain_id), verifying_contract,
+    ))
+    struct = _keccak(_cast(
+        "abi-encode",
+        "f(bytes32,address,uint8,address,address,uint256,address,uint256,bytes32,uint64,uint64,"
+        "bytes32,bytes32,uint32,bytes32,bytes32)",
+        _keccak(PRE_APPROVAL_TYPE), fields["safe"], str(fields["approvalClass"]), fields["token"],
+        fields["recipient"], str(fields["amount"]), fields["target"], str(fields["value"]),
+        fields["dataHash"], str(fields["validFrom"]), str(fields["validTo"]), fields["nonce"],
+        fields["quantumKeyId"], str(leaf), fields["policyHash"], fields["txHash"],
+    ))
+    return _keccak("0x1901" + domain[2:] + struct[2:])
+
+
 def encode_payload(fields, chain_id, verifying_contract):
     """The signed fields, in the order the device parses and displays them."""
     return b"".join([
@@ -263,6 +306,16 @@ class Device:
         leaf = int.from_bytes(out[:4], "big")
         digest = "0x" + out[4:36].hex()
         total = int.from_bytes(out[36:38], "big")
+
+        # The device says what it hashed; check it against our own computation before
+        # touching the signatures. A device that displayed one thing and signed another
+        # would otherwise only be caught on-chain, after the leaf was already spent.
+        want = expected_digest(fields, leaf, chain_id, verifying_contract)
+        if want.lower() != digest.lower():
+            raise DeviceError(
+                f"The Ledger signed a different transaction than it was asked to: it reports "
+                f"digest {digest}, the fields sent hash to {want}. Signatures discarded."
+            )
 
         blob = b""
         while len(blob) < total:

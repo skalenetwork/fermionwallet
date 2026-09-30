@@ -249,22 +249,33 @@ contract Demo is Script {
         bytes memory blob = vm.ffi(cmd);
         root = _word(blob, 0);
         seed = _word(blob, 1);
-        encodedSig = _decodeXmss(leaf, blob);
+        encodedSig = _decodeXmss(leaf, blob, 2);
     }
 
-    /// Blob layout (lib/xmss-solidity/py/sign_digest.py and the simulated Ledger):
-    /// root | seed | r | wotsSig[67] | authPath[H], 32-byte words.
-    function _decodeXmss(uint32 leaf, bytes memory blob) internal pure returns (bytes memory encodedSig) {
-        require(blob.length == 32 * (3 + 67 + H), "xmss blob size");
+    /// A signature as the Ledger app puts it on the wire: `r | wotsSig[67] | authPath[H]`,
+    /// 32-byte words, no public key — the root and SEED are already on-chain from
+    /// registration, so the device does not resend them (demo/ledger_device.py, and the
+    /// simulator matches it). `firstWord` skips a prefix: `sign_digest.py` returns the
+    /// same signature behind `root | seed`, so the FFI path passes 2 and the device path 0.
+    function _decodeXmss(uint32 leaf, bytes memory blob) internal pure returns (bytes memory) {
+        return _decodeXmss(leaf, blob, 0);
+    }
+
+    function _decodeXmss(uint32 leaf, bytes memory blob, uint256 firstWord)
+        internal
+        pure
+        returns (bytes memory encodedSig)
+    {
+        require(blob.length == 32 * (firstWord + 1 + 67 + H), "xmss blob size");
         XMSS.Signature memory sig;
         sig.leafIdx = leaf;
-        sig.r = _word(blob, 2);
+        sig.r = _word(blob, firstWord);
         for (uint256 i = 0; i < 67; ++i) {
-            sig.wotsSig[i] = _word(blob, 3 + i);
+            sig.wotsSig[i] = _word(blob, firstWord + 1 + i);
         }
         sig.authPath = new bytes32[](H);
         for (uint256 i = 0; i < H; ++i) {
-            sig.authPath[i] = _word(blob, 70 + i);
+            sig.authPath[i] = _word(blob, firstWord + 68 + i);
         }
         encodedSig = abi.encode(sig);
     }

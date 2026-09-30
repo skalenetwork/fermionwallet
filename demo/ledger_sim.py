@@ -283,7 +283,10 @@ def sign_preapproval(req):
 
     ecdsa = cast("wallet", "sign", "--no-hash", "--private-key", ADMIN_PK, digest)
     r, sig_ots, auth = xmss_ref.sign(bytes.fromhex(digest[2:]), leaf, _levels, _sk_seed, _sk_prf, _seed)
-    blob = _levels[HEIGHT][0] + _seed + r + b"".join(sig_ots) + b"".join(auth)
+    # Exactly what the real app returns from GET_SIGNATURE_CHUNK: r | wotsSig | authPath.
+    # No root/SEED prefix — they are on-chain already, and a simulator that sent more than
+    # the device does would let a format mismatch hide until someone plugged in hardware.
+    blob = r + b"".join(sig_ots) + b"".join(auth)
     return {"status": "approved", "leaf": leaf, "digest": digest,
             "ecdsaSignature": ecdsa, "xmssSignature": "0x" + blob.hex()}
 
