@@ -207,43 +207,49 @@ pub fn digest(f: &Fields, leaf: u32) -> [u8; 32] {
 /// pages replaced by the one thing that takes their place: the wallet being spent
 /// from. Returns whether the human approved.
 pub fn review(f: &Fields, leaf: u32, total_leaves: u32, icon: &ledger_device_sdk::ui::bitmaps::Glyph) -> bool {
-    let mut leaf_text = fmt::Buf::<28>::new();
-    leaf_text.push_str("#");
-    leaf_text.push_u32_grouped(leaf);
-    leaf_text.push_str(" of ");
-    leaf_text.push_u32_grouped(total_leaves);
+    // One buffer, written and interned once per field. Seven field strings as stack
+    // locals is what made the pre-approval review overflow the Nano S Plus's stack and
+    // kill the app mid-session; this review had the same shape and the same fate
+    // waiting for it. Peak stack is now one 128-byte buffer whatever the flow grows to.
+    crate::text_reset();
+    let mut buf = fmt::Buf::<128>::new();
 
-    let mut amount = fmt::Buf::<128>::new();
-    amount.push_amount(f.amount(), 0);
-    amount.push_str(" raw units");
+    buf.push_str("#");
+    buf.push_u32_grouped(leaf);
+    buf.push_str(" of ");
+    buf.push_u32_grouped(total_leaves);
+    let leaf_text = crate::intern(buf.as_str());
 
-    let mut token = fmt::Buf::<44>::new();
-    crate::push_address(&mut token, f.token());
-    let mut to = fmt::Buf::<44>::new();
-    crate::push_address(&mut to, f.to());
-    let mut wallet = fmt::Buf::<44>::new();
-    crate::push_address(&mut wallet, f.wallet());
+    buf.clear().push_amount(f.amount(), 0).push_str(" raw units");
+    let amount = crate::intern(buf.as_str());
 
-    let mut valid_until = fmt::Buf::<32>::new();
-    valid_until.push_utc(f.valid_until());
+    crate::push_address(buf.clear(), f.token());
+    let token = crate::intern(buf.as_str());
+    crate::push_address(buf.clear(), f.to());
+    let to = crate::intern(buf.as_str());
+    crate::push_address(buf.clear(), f.wallet());
+    let wallet = crate::intern(buf.as_str());
 
-    let mut network = fmt::Buf::<112>::new();
-    network.push_amount(f.chain_id(), 0);
+    buf.clear().push_utc(f.valid_until());
+    let valid_until = crate::intern(buf.as_str());
+
+    buf.clear().push_amount(f.chain_id(), 0);
+    let network = crate::intern(buf.as_str());
 
     let fields = [
-        Field { name: "Leaf", value: leaf_text.as_str() },
-        Field { name: "Token", value: token.as_str() },
-        Field { name: "Amount", value: amount.as_str() },
-        Field { name: "Recipient", value: to.as_str() },
-        Field { name: "Valid until", value: valid_until.as_str() },
-        Field { name: "Wallet", value: wallet.as_str() },
-        Field { name: "Network", value: network.as_str() },
+        Field { name: "Leaf", value: leaf_text },
+        Field { name: "Token", value: token },
+        Field { name: "Amount", value: amount },
+        Field { name: "Recipient", value: to },
+        Field { name: "Valid until", value: valid_until },
+        Field { name: "Wallet", value: wallet },
+        Field { name: "Network", value: network },
     ];
     MultiFieldReview::new(
         &fields,
         // Short enough not to scroll on a Nano's 16-character line, and it cannot be
         // mistaken for the Safe flow's "Sign approval".
-        &["Send tokens", leaf_text.as_str()],
+        &["Send tokens", leaf_text],
         Some(icon),
         "Approve",
         Some(&CHECKMARK),
