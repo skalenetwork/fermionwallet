@@ -37,12 +37,24 @@ if [ ! -f demo-state/deployment.json ]; then
   echo "[demo] FATAL: setup failed"; exit 1
 fi
 
-echo "[demo] starting the simulated FermionGuard Ledger (device API on 127.0.0.1:9999) ..."
-rm -f demo-state/ledger-device.json  # fresh device counter for a fresh chain
-python3 /app/demo/ledger_sim.py &
-until curl -fsS http://127.0.0.1:9999/screen >/dev/null 2>&1; do
-  sleep 0.3
-done
+# LEDGER_TRANSPORT picks the device: "usb" a physical Ledger, "speculos" the same
+# app in Ledger's emulator, "simulator" (default) the Python stand-in.
+case "${LEDGER_TRANSPORT:-simulator}" in
+  usb|hid|ledger)
+    echo "[demo] using a physical Ledger over USB — open the FermionGuard app on it"
+    ;;
+  speculos|emulator)
+    echo "[demo] using the FermionGuard app in Speculos at ${SPECULOS_APDU_URL:-tcp://127.0.0.1:9999}"
+    ;;
+  *)
+    echo "[demo] starting the simulated FermionGuard Ledger (device API on 127.0.0.1:9999) ..."
+    rm -f demo-state/ledger-device.json  # fresh device counter for a fresh chain
+    python3 /app/demo/ledger_sim.py &
+    until curl -fsS http://127.0.0.1:9999/screen >/dev/null 2>&1; do
+      sleep 0.3
+    done
+    ;;
+esac
 
 echo "[demo] ready — UI on port 8080, JSON-RPC on port 8545"
 exec python3 /app/demo/server.py

@@ -19,6 +19,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import app_api
+import ledger_device
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UI_DIR = os.path.join(HERE, "ui")
@@ -30,6 +31,10 @@ STATE_FILE = os.path.join(CONTRACTS, "demo-state", "deployment.json")
 # The simulated FermionGuard Ledger (demo/ledger_sim.py) — the only signer of approvals.
 LEDGER = os.environ.get("LEDGER_SIM_URL", "http://127.0.0.1:9999")
 LEDGER_SLOT = 1
+# Which Ledger the demo drives: "usb" a physical device, "speculos" the same app in
+# Ledger's emulator, "simulator" the Python stand-in (demo/ledger_sim.py).
+LEDGER_TRANSPORT = os.environ.get("LEDGER_TRANSPORT", "simulator").lower()
+REAL_DEVICE = LEDGER_TRANSPORT in ("usb", "hid", "ledger", "speculos", "emulator")
 # keccak256("demo-policy-v1") — must match Demo.s.sol submitApproval().
 DEMO_POLICY_HASH = "0xaca8cad3f07d01b449747b697e498c47495dc59343bf992f3776347cd1ff6e2f"
 
@@ -185,6 +190,8 @@ def approve_on_ledger(amount):
 def sign_on_device(fields, xmss_root, guard):
     """Send the payload fields (never a hash) to the Ledger and wait for the human's
     decision. Returns the device response ({"status": "approved", ...} or a rejection)."""
+    if REAL_DEVICE:
+        return _sign_on_real_device(fields, guard)
     try:
         # The device times out after 60 s idle on its decision screen, but an active reviewer
         # can keep a session open longer: never give up on the device before it decides,
@@ -204,6 +211,46 @@ def sign_on_device(fields, xmss_root, guard):
                    "Rotate the key (for this local demo: restart it — docker restart, or "
                    "docker compose down -v && up for the Safe{Wallet} stack).")
         raise ValueError(msg) from None
+
+
+def _sign_on_real_device(fields, guard):
+    """The same flow against a real FermionGuard Ledger, over APDUs."""
+    device = ledger_device.Device(slot=LEDGER_SLOT)
+    try:
+        return device.sign_preapproval(fields, as_int(rpc("eth_chainId", [])), guard)
+    except ledger_device.DeviceError as e:
+        raise ValueError(str(e)) from None
+
+
+# Nano buttons: left and right walk the review flow, both together confirm.
+BUTTON_MAP = {"prev": "left", "next": "right", "approve": "both"}
+
+
+def device_screen():
+    """What the real device is showing, in the shape the demo's device panel expects."""
+    tr = ledger_device.transport()
+    lines = tr.screen()
+    if lines is None:  # a physical Ledger shows its screens on the device itself
+        return {"active": False, "real": True, "transport": tr.kind,
+                "key": "Physical Ledger", "nextLeaf": 0, "totalLeaves": 0,
+                "note": "Review and confirm on the Ledger itself."}
+    idle = not lines or lines[0] in ("FermionGuard", "Application", "is ready")
+    return {"active": not idle, "real": True, "transport": tr.kind, "index": 0, "total": 1,
+            "canApprove": False, "key": lines[0] if lines else "FermionGuard",
+            "nextLeaf": 0, "totalLeaves": 0,
+            "screen": {"title": lines[0] if lines else "FermionGuard", "lines": lines[1:] or lines}}
+
+
+def device_press(button):
+    """Map the demo panel's buttons onto the device's own."""
+    tr = ledger_device.transport()
+    if button == "reject":
+        raise ValueError("On a Ledger, walk to the Reject screen with ▶ and press both buttons.")
+    mapped = BUTTON_MAP.get(button)
+    if mapped is None:
+        raise ValueError("unknown button")
+    tr.press(mapped)
+    return {"ok": True}
 
 
 def forge_script(sig, args, broadcast):
@@ -347,7 +394,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/api/device/screen":
             try:
-                self._json(ledger("/screen"))
+                self._json(device_screen() if REAL_DEVICE else ledger("/screen"))
             except Exception as e:  # noqa: BLE001
                 self._json({"error": str(e)}, 502)
             return
@@ -395,7 +442,8 @@ class Handler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(length) or b"{}")
                 if not isinstance(body, dict):
                     raise ValueError('request body must be a JSON object like {"button": "next"}')
-                self._json(ledger("/button", {"button": body.get("button")}))
+                self._json(device_press(body.get("button")) if REAL_DEVICE
+                           else ledger("/button", {"button": body.get("button")}))
             except ValueError as e:
                 self._json({"ok": False, "error": str(e)}, 400)
             except Exception as e:  # noqa: BLE001  (device unreachable)

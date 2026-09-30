@@ -59,6 +59,11 @@ services:
       DEMO_MODE: wallet
       # The Safe App's backend reads each Safe's queue from the Transaction Service.
       TXS_URL: http://nginx:8000/txs
+      # Which Ledger signs: "simulator" (default), "speculos" (the real app in
+      # Ledger's emulator — bring it up with `--profile ledger`), or "usb".
+      LEDGER_TRANSPORT: ${LEDGER_TRANSPORT:-simulator}
+      SPECULOS_APDU_URL: tcp://ledger:9999
+      SPECULOS_API_URL: http://ledger:5000
     # Forward SIGTERM to every process of the demo (the entrypoint shell, anvil, the
     # server), so a restart stops the old chain at once instead of after 10 s.
     init: true
@@ -69,6 +74,23 @@ services:
       interval: 3s
       timeout: 5s
       retries: 100
+
+  # ── The FermionGuard Ledger app, in Ledger's emulator ──
+  # Off by default: `docker compose --profile ledger up -d` runs the real app, built
+  # from ledger-app/, and LEDGER_TRANSPORT=speculos points the demo at it. The seed is
+  # anvil's mnemonic, so the device's ECDSA key is the demo's registered
+  # Quantum Administrator. Its screens show at http://localhost:5001.
+  ledger:
+    profiles: ["ledger"]
+    image: ghcr.io/ledgerhq/speculos:latest
+    command: >-
+      --model nanosp --display headless --api-port 5000 --apdu-port 9999
+      --seed "test test test test test test test test test test test junk"
+      /app/app.elf
+    volumes:
+      - ${LEDGER_APP_ELF:-../../ledger-app/build/nanos2/bin/app.elf}:/app/app.elf:ro
+    ports:
+      - "5001:5000"
 
   # ── Safe{Wallet} (static export) + reverse proxy for all Safe services ──
   nginx:
