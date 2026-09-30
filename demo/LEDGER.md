@@ -35,10 +35,27 @@ with another is the failure this prevents: the Guard would refuse every approval
 
 Install the FermionGuard app, unlock the device, open the app, then:
 
+`demo/server.py` is only the web layer: it needs a chain and a deployment that already
+registered the device's key. Inside the image `demo/entrypoint.sh` does that; from a
+source checkout, do the same three steps by hand (this is `entrypoint.sh` with the
+container paths removed):
+
 ```sh
-pip install hidapi     # the USB transport needs it
-LEDGER_TRANSPORT=usb python3 demo/server.py
+pip install hidapi                                  # the USB transport needs it
+anvil --port 8545 --chain-id 31337 --silent &        # the chain server.py expects
+cd contracts && mkdir -p demo-state
+eval "$(python3 ../demo/ledger_device.py key)"       # sets DEVICE_XMSS_ROOT / _SEED
+export DEVICE_XMSS_ROOT DEVICE_XMSS_SEED
+forge script script/Demo.s.sol:Demo -s "deploy()" \
+  --rpc-url http://127.0.0.1:8545 --broadcast        # writes demo-state/deployment.json
+cd .. && LEDGER_TRANSPORT=usb CONTRACTS_DIR="$PWD/contracts" python3 demo/server.py
 ```
+
+Two of those are easy to skip and fail confusingly. `CONTRACTS_DIR` defaults to the
+in-container `/app/contracts`, so without it every `/api/*` call fails looking for
+`demo-state/deployment.json`. And the device's key must be read *before* deploying:
+register the reference key and sign with the device's, and the Guard rejects every
+approval with `InvalidXmssSignature` after the device has already spent the leaf.
 
 Review and confirm on the device itself; the demo's device window says so rather than pretending to drive it.
 

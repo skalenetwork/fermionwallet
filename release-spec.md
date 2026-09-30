@@ -43,7 +43,7 @@ A FermionGuard release is a set of versioned artifacts published together under 
 | A2 | `QuantumKeyRegistry` and `PreApprovalEngine` (abstract bases compiled into A3 — not deployed separately) | `contracts/src/QuantumKeyRegistry.sol`, `contracts/src/PreApprovalEngine.sol` | part of A3 | [Key Registry](./quantum-key-registry.md), [Pre-approval Engine](./pre-approval-engine.md) |
 | A3 | `FermionGuard` (transaction guard + module guard; the only deployed contract) | `contracts/src/FermionGuard.sol` | CREATE2 deployment, verified source; ABI, bytecode, immutable references and manifest attached to the GitHub Release | [Guard](./fermionguard-module.md) |
 | A4 | `deployments.json` | repository root | Git (signed tag), mirrored to `fermionwallet.eth` ENS text records | [Service deployment §2.3](./fermionguard-gnosis-service-deployment.md#23-canonical-deployments--address-verification) |
-| A5 | FermionGuard XMSS Ledger app | Ledger app repository | Ledger Live app catalog | [Ledger XMSS app](./ledger-xmss-app.md) |
+| A5 | FermionGuard XMSS Ledger app | `ledger-app/` in this repository | Ledger Live app catalog | [Ledger XMSS app](./ledger-xmss-app.md) |
 | A6 | FermionGuard Safe App | Safe App bundle | `https://app.fermionwallet.io` + IPFS pin (ENS `contenthash`) | [Service deployment §2.4](./fermionguard-gnosis-service-deployment.md#24-safe-app-distribution--verification) |
 | A7 | Add-on service image | service source | `ghcr.io/skalenetwork/fermionguard-service`, pinned by digest | [Service deployment §3](./fermionguard-gnosis-service-deployment.md#3-add-on-service-infrastructure-specification) |
 | A8 | Documentation and product site | `*.md`, `site/` | GitHub, GitHub Pages | this repository |
@@ -171,7 +171,7 @@ A release may not advance to the next stage until every gate for that stage pass
 
 ### 6.2 Build
 
-1. Build every artifact from a clean checkout of the release commit, with pinned toolchains (Solidity compiler version, Foundry, Rust toolchain, Node.js, lockfiles). For the contracts these pins are in the repository: solc 0.8.37 in `contracts/foundry.toml`, and Foundry v1.8.3 in both `release.yml` and `demo/Dockerfile` (bump them together).
+1. Build every artifact from a clean checkout of the release commit, with pinned toolchains (Solidity compiler version, Foundry, Rust toolchain, Node.js, lockfiles). For the contracts these pins are in the repository: solc 0.8.37 in `contracts/foundry.toml`, and Foundry v1.8.3 in three places — `release.yml`, `contracts.yml` and `demo/Dockerfile` (bump all three together; `contracts.yml` carries a comment saying so).
 2. Contracts must build reproducibly: two independent builds produce identical bytecode. Record the bytecode hash in the tracking issue.
 
 ### 6.3 Test and review
@@ -304,7 +304,7 @@ State of the repository at the time of writing, against the artifacts in §2:
 | A3 `FermionGuard` | Implemented and tested, including a bytecode test that it has no upgrade path; not audited; not deployed on any public network |
 | A4 `deployments.json` | Format specified; file not yet created |
 | CREATE2 deployment script | `contracts/script/Deploy.s.sol` |
-| A5 Ledger app | Specified; not yet built |
+| A5 Ledger app | A first Rust build exists in `ledger-app/`: it signs pre-approvals with both hybrid halves over a digest it recomputes on-device, commits the leaf counter to NVM before signing, and is driven end to end in Speculos by the demo (`demo/LEDGER.md`). It is **not** the specified app — one key slot instead of `MAX_KEYS = 4`, a demo tree height of 4 instead of 20, no key-generation/rotation/attestation/denial commands, Nano (BAGL) screens only, and the XMSS seed derived from the recovery phrase rather than device-generated, which `hardware-security-policy.md` forbids. `ledger-app/README.md` §"What this build is not" is the authoritative gap list. Not Ledger-reviewed, not in the Ledger Live catalog, and must not hold real funds |
 | A6 Safe App | Readiness preview published as a custom Safe App at `https://skalenetwork.github.io/fermionwallet/app/`; full screens designed (`assets/ui/`), not yet built |
 | A7 Service | Specified; not yet built |
 | A8 Docs and site | Published |
