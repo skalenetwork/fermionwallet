@@ -331,6 +331,11 @@ def queue(host, safe):
         a = row["approval"]
         if not row["verified"]:
             row["status"] = "mismatch"
+            row["reason"] = ("The Safe Transaction Service gave these fields for this transaction, "
+                             "but the Safe contract does not hash them to this transaction hash. "
+                             "One of them is wrong, and the fields shown here may not be the ones "
+                             "the owners signed. Do not approve it and do not execute it: tell the "
+                             "other owners and settle which is right away from this screen.")
         elif row["kind"] == "guard_escape":
             # Never blocked by the Guard, whatever else is true of this Safe.
             row["status"] = "free"
