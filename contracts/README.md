@@ -130,7 +130,16 @@ Within the 0.4–1M target set in `../fermionguard-module.md`
   target and payload, the Safe's `getTransactionHash` is a constant, and
   authorization and both signature schemes are permissive mocks. `_checkBatchLegs`
   is not proven at all — it is the largest gap, and the batch path is where the
-  Guard does its most intricate parsing.
+  Guard does its most intricate parsing. The reason is a tool limitation rather
+  than a choice: Halmos aborts on `abi.decode(Bytes.slice(data, 4), (bytes))` with
+  `NotConcreteError: symbolic memory offset`, so the decoder cannot be reached
+  symbolically at all. `_create` was unreachable for a different reason — a
+  harness cannot stub `_verifyAndConsumeXmss`, because a valid XMSS signature is
+  unreachable under symbolic execution — which leaves the commitment-queue cap,
+  `MIN_WINDOW`, the admin timelock lead time and `TxHashAlreadyPinned` resting on
+  concrete tests. Both gaps are recorded in `test/guard-proof/planted-bugs.md`,
+  each with the mutation that exposes it and the named unit test that does fail on
+  it, so the cost of deleting any one of those tests is written down.
 - Beyond those three proofs, the Guard, registry and engine are fuzz and
   invariant tested, not formally verified.
 - Not audited yet; audit is an acceptance criterion before mainnet.
