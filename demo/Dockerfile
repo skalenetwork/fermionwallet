@@ -1,6 +1,6 @@
-# FermionWallet self-contained demo.
-# Build from the REPO ROOT:  docker build -f demo/Dockerfile -t fermionwallet-demo .
-# Run:                       docker run --rm -p 8080:8080 -p 8545:8545 fermionwallet-demo
+# FermionGuard self-contained demo.
+# Build from the REPO ROOT:  docker build -f demo/Dockerfile -t fermionguard-demo .
+# Run:                       docker run --rm -p 8080:8080 -p 8545:8545 fermionguard-demo
 # Then open http://localhost:8080
 # DEMO_MODE=wallet runs it as the chain of the Safe{Wallet} stack (demo/wallet).
 FROM python:3.12-slim

@@ -1,8 +1,8 @@
-# FermionWallet Release Specification
+# FermionGuard Release Specification
 
-This document defines what a FermionWallet release is, which components ship together, the gates each release must pass, the step-by-step release procedure, and how fixes, upgrades, and incidents are handled after release.
+This document defines what a FermionGuard release is, which components ship together, the gates each release must pass, the step-by-step release procedure, and how fixes, upgrades, and incidents are handled after release.
 
-It does not restate component designs. Each requirement links to the document that owns it: the [MVP spec](./fermionwalletspec.md), [Guard](./fermionwallet-guard-module.md), [Key Registry](./quantum-key-registry.md), [Pre-approval Engine](./pre-approval-engine.md), [Ledger XMSS app](./ledger-xmss-app.md), [Add-on Service](./fermionwallet-add-on-service.md), [Service deployment](./fermionwallet-gnosis-service-deployment.md), [Hardware security policy](./hardware-security-policy.md), and [Threat model](./threat-model.md).
+It does not restate component designs. Each requirement links to the document that owns it: the [MVP spec](./fermionguardspec.md), [Guard](./fermionguard-module.md), [Key Registry](./quantum-key-registry.md), [Pre-approval Engine](./pre-approval-engine.md), [Ledger XMSS app](./ledger-xmss-app.md), [Add-on Service](./fermionguard-add-on-service.md), [Service deployment](./fermionguard-gnosis-service-deployment.md), [Hardware security policy](./hardware-security-policy.md), and [Threat model](./threat-model.md).
 
 Items marked **Proposed** are defaults introduced by this document that have not yet been decided. They are collected in [Open decisions](#12-open-decisions).
 
@@ -26,34 +26,34 @@ Items marked **Proposed** are defaults introduced by this document that have not
 
 ## 1. Release principles
 
-1. **Contracts are immutable.** The Guard — which contains the Key Registry, the pre-approval engine and the XMSS verifier — is non-upgradeable and has no admin. A contract "release" is a new deployment at new addresses, never an in-place change ([Guard: Immutability and deployment hygiene](./fermionwallet-guard-module.md#immutability-and-deployment-hygiene)).
+1. **Contracts are immutable.** The Guard — which contains the Key Registry, the pre-approval engine and the XMSS verifier — is non-upgradeable and has no admin. A contract "release" is a new deployment at new addresses, never an in-place change ([Guard: Immutability and deployment hygiene](./fermionguard-module.md#immutability-and-deployment-hygiene)).
 2. **What was audited is what ships.** Every mainnet contract release deploys bytecode built from the exact commit the auditor signed off on. The proof is the release manifest's runtime code hash with immutables zeroed, and the per-chain `EXTCODEHASH` recorded in `deployments.json`.
 3. **Parameter lock.** The Ledger app, the on-chain verifier, and the Safe App are locked to one XMSS parameter set (`XMSS-SHA2_20_256` for 1.x). A release that changes the parameter set is a major release ([Ledger XMSS app: Security requirements](./ledger-xmss-app.md#security-requirements)).
-4. **Fail closed.** No release may introduce a path that moves tokens outside `Safe.execTransaction` → Guard → ERC-20 `transfer` ([MVP spec §9](./fermionwalletspec.md#9-mvp-acceptance-criteria)).
+4. **Fail closed.** No release may introduce a path that moves tokens outside `Safe.execTransaction` → Guard → ERC-20 `transfer` ([MVP spec §9](./fermionguardspec.md#9-mvp-acceptance-criteria)).
 5. **No-brick is a release invariant.** Every release must preserve both guaranteed exits: the quantum-approved removal after `ADMIN_TIMELOCK`, and the owners-only emergency de-guard after `EMERGENCY_TIMELOCK`. Both are exercised before every release (Gate G5).
 6. **Users verify, not trust.** Every artifact a user installs can be checked against something published independently: contract codehashes, the Ledger catalog signature, the Safe App's IPFS CID, and the service image digest.
 
 ## 2. What ships in a release
 
-A FermionWallet release is a set of versioned artifacts published together under one product version.
+A FermionGuard release is a set of versioned artifacts published together under one product version.
 
 | # | Artifact | Source | Distribution | Owner doc |
 |---|---|---|---|---|
 | A1 | `XMSS` verifier library (internal, inlined into A3 — not deployed separately) | [skalenetwork/xmss-solidity](https://github.com/skalenetwork/xmss-solidity) `src/XMSS.sol`, submodule `contracts/lib/xmss-solidity` (formally verified against RFC 8391, see its `PROOF.md`) | part of A3 | [contracts/README](./contracts/README.md) |
 | A2 | `QuantumKeyRegistry` and `PreApprovalEngine` (abstract bases compiled into A3 — not deployed separately) | `contracts/src/QuantumKeyRegistry.sol`, `contracts/src/PreApprovalEngine.sol` | part of A3 | [Key Registry](./quantum-key-registry.md), [Pre-approval Engine](./pre-approval-engine.md) |
-| A3 | `FermionWalletGuard` (transaction guard + module guard; the only deployed contract) | `contracts/src/FermionWalletGuard.sol` | CREATE2 deployment, verified source; ABI, bytecode, immutable references and manifest attached to the GitHub Release | [Guard](./fermionwallet-guard-module.md) |
-| A4 | `deployments.json` | repository root | Git (signed tag), mirrored to `fermionwallet.eth` ENS text records | [Service deployment §2.3](./fermionwallet-gnosis-service-deployment.md#23-canonical-deployments--address-verification) |
-| A5 | FermionWallet XMSS Ledger app | Ledger app repository | Ledger Live app catalog | [Ledger XMSS app](./ledger-xmss-app.md) |
-| A6 | FermionWallet Safe App | Safe App bundle | `https://app.fermionwallet.io` + IPFS pin (ENS `contenthash`) | [Service deployment §2.4](./fermionwallet-gnosis-service-deployment.md#24-safe-app-distribution--verification) |
-| A7 | Add-on service image | service source | `ghcr.io/skalenetwork/fermionwallet-service`, pinned by digest | [Service deployment §3](./fermionwallet-gnosis-service-deployment.md#3-add-on-service-infrastructure-specification) |
+| A3 | `FermionGuard` (transaction guard + module guard; the only deployed contract) | `contracts/src/FermionGuard.sol` | CREATE2 deployment, verified source; ABI, bytecode, immutable references and manifest attached to the GitHub Release | [Guard](./fermionguard-module.md) |
+| A4 | `deployments.json` | repository root | Git (signed tag), mirrored to `fermionwallet.eth` ENS text records | [Service deployment §2.3](./fermionguard-gnosis-service-deployment.md#23-canonical-deployments--address-verification) |
+| A5 | FermionGuard XMSS Ledger app | Ledger app repository | Ledger Live app catalog | [Ledger XMSS app](./ledger-xmss-app.md) |
+| A6 | FermionGuard Safe App | Safe App bundle | `https://app.fermionwallet.io` + IPFS pin (ENS `contenthash`) | [Service deployment §2.4](./fermionguard-gnosis-service-deployment.md#24-safe-app-distribution--verification) |
+| A7 | Add-on service image | service source | `ghcr.io/skalenetwork/fermionguard-service`, pinned by digest | [Service deployment §3](./fermionguard-gnosis-service-deployment.md#3-add-on-service-infrastructure-specification) |
 | A8 | Documentation and product site | `*.md`, `site/` | GitHub, GitHub Pages | this repository |
 | A9 | Release notes | GitHub Release | GitHub Releases | §6.7 |
-| A10 | Demo container: local anvil chain, real Safe v1.5.0 (2-of-3), this release's Guard, simulated Ledger, web UI | `demo/Dockerfile` | `ghcr.io/skalenetwork/fermionwallet-demo:<tag>` (and `:latest` for non-prerelease tags), smoke-tested before push; digest in the release notes | `.github/workflows/release.yml` |
-| A11 | Safe{Wallet} demo: Compose stack running the open-source Safe{Wallet} UI, Client Gateway, Config Service and Transaction Service against A10 (`DEMO_MODE=wallet`: canonical Safe v1.4.1, 1-of-1), with FermionWallet as a listed Safe App | `demo/wallet/` | UI image `ghcr.io/skalenetwork/fermionwallet-demo-wallet:<tag>` (and `:latest` for non-prerelease tags); release asset `fermionwallet-demo-wallet-<tag>.tar.gz` (Compose bundle whose `.env` pins both FermionWallet images by digest) plus its SHA-256; tested in headless Chrome before push (`demo/wallet/e2e`) | [demo/wallet/README](./demo/wallet/README.md) |
+| A10 | Demo container: local anvil chain, real Safe v1.5.0 (2-of-3), this release's Guard, simulated Ledger, web UI | `demo/Dockerfile` | `ghcr.io/skalenetwork/fermionguard-demo:<tag>` (and `:latest` for non-prerelease tags), smoke-tested before push; digest in the release notes | `.github/workflows/release.yml` |
+| A11 | Safe{Wallet} demo: Compose stack running the open-source Safe{Wallet} UI, Client Gateway, Config Service and Transaction Service against A10 (`DEMO_MODE=wallet`: canonical Safe v1.4.1, 1-of-1), with FermionGuard as a listed Safe App | `demo/wallet/` | UI image `ghcr.io/skalenetwork/fermionguard-demo-wallet:<tag>` (and `:latest` for non-prerelease tags); release asset `fermionguard-demo-wallet-<tag>.tar.gz` (Compose bundle whose `.env` pins both FermionGuard images by digest) plus its SHA-256; tested in headless Chrome before push (`demo/wallet/e2e`) | [demo/wallet/README](./demo/wallet/README.md) |
 
 Leaf consumption is enforced by the registry's used-leaf bitmap inside the Guard; there is no separate stateful XMSS wrapper.
 
-`.github/workflows/release.yml` builds A3's release assets (the `fermionwallet-contracts-<tag>` `.tar.gz` and `.zip` with ABI, bytecode, immutable references, the full Foundry artifact, `MANIFEST.txt`, `foundry.toml` and `remappings.txt`, plus `SHA256SUMS`), A10 and A11, and publishes them on every `v*` tag or manual dispatch for an existing tag. A tag containing `-` (for example `v1.0.0-rc.1`) is published as a GitHub prerelease, and neither demo image gets `:latest` for it. For a tag that already has a release (a manual re-run), the workflow replaces the contract assets instead of creating a release, and the demo jobs add their release-note sections only if they are missing.
+`.github/workflows/release.yml` builds A3's release assets (the `fermionguard-contracts-<tag>` `.tar.gz` and `.zip` with ABI, bytecode, immutable references, the full Foundry artifact, `MANIFEST.txt`, `foundry.toml` and `remappings.txt`, plus `SHA256SUMS`), A10 and A11, and publishes them on every `v*` tag or manual dispatch for an existing tag. A tag containing `-` (for example `v1.0.0-rc.1`) is published as a GitHub prerelease, and neither demo image gets `:latest` for it. For a tag that already has a release (a manual re-run), the workflow replaces the contract assets instead of creating a release, and the demo jobs add their release-note sections only if they are missing.
 
 ## 3. Versioning and compatibility
 
@@ -105,7 +105,7 @@ Rules from the owner documents that apply at every stage:
 
 - A device showing `PENDING LEDGER REVIEW` must never hold a production key ([Ledger XMSS app: Installation](./ledger-xmss-app.md#installation-supported-devices-and-updates)).
 - Sideloaded builds are restricted to testnets ([Ledger XMSS app: Security requirements](./ledger-xmss-app.md#security-requirements)).
-- No mainnet deployment before an external audit ([Guard: Production constraints](./fermionwallet-guard-module.md#production-constraints); [contracts/README](./contracts/README.md)).
+- No mainnet deployment before an external audit ([Guard: Production constraints](./fermionguard-module.md#production-constraints); [contracts/README](./contracts/README.md)).
 
 ## 5. Release gates
 
@@ -116,7 +116,7 @@ A release may not advance to the next stage until every gate for that stage pass
 - [ ] `forge test` passes, including fuzz suites, with no skipped tests.
 - [ ] XMSS verifier passes the reference vectors at h = 4, 10, and 20 and the tamper/negative tests ([contracts/README](./contracts/README.md)).
 - [ ] Gas: `test_gas_verify_h20` passes (verification ≤ 1.1M gas; last measured 744,906).
-- [ ] Integration test against a real Safe (v1.3.0 and v1.4.1): a pre-approval pinned to the `safeTxHash` of nonce N executes at nonce N, and the Guard's `getTransactionHash(..., nonce() - 1)` recomputation matches ([Guard: Production constraints](./fermionwallet-guard-module.md#production-constraints)).
+- [ ] Integration test against a real Safe (v1.3.0 and v1.4.1): a pre-approval pinned to the `safeTxHash` of nonce N executes at nonce N, and the Guard's `getTransactionHash(..., nonce() - 1)` recomputation matches ([Guard: Production constraints](./fermionguard-module.md#production-constraints)).
 - [ ] Malformed MultiSend fuzzing (truncated header, overrunning `dataLength`, trailing bytes, more than `MAX_BATCH_LEGS`) reverts cheaply.
 - [ ] A test proves `requestEmergencyDeGuard` succeeds while the Safe is paused (emergency allow runs before the pause check).
 - [ ] Module guard coverage tested on Safe 1.5+: `execTransactionFromModule` cannot bypass policy.
@@ -132,9 +132,9 @@ A release may not advance to the next stage until every gate for that stage pass
 
 ### G3 — Safe App and service (testnet beta and later)
 
-- [ ] Every acceptance criterion in the Add-on Service's key-ceremony and pre-approval sections passes ([Add-on Service](./fermionwallet-add-on-service.md)).
+- [ ] Every acceptance criterion in the Add-on Service's key-ceremony and pre-approval sections passes ([Add-on Service](./fermionguard-add-on-service.md)).
 - [ ] Codehash and compatibility checks (§3.3) are tested with a deliberately mismatched Guard address and fail visibly.
-- [ ] Safe App CSP restricts iframe embedding to Safe{Wallet} ([Service deployment §5](./fermionwallet-gnosis-service-deployment.md#5-security--deployment-hardening-checklist)).
+- [ ] Safe App CSP restricts iframe embedding to Safe{Wallet} ([Service deployment §5](./fermionguard-gnosis-service-deployment.md#5-security--deployment-hardening-checklist)).
 - [ ] Service starts with no signing keys configured and holds none.
 
 ### G4 — End-to-end (testnet beta and later)
@@ -146,7 +146,7 @@ A release may not advance to the next stage until every gate for that stage pass
 ### G5 — No-brick drill (every stage, every release)
 
 - [ ] Quantum-approved Guard removal succeeds after `ADMIN_TIMELOCK`, and the Safe (owner threshold) can revoke it during the delay without a quantum approval.
-- [ ] Owners-only emergency de-guard succeeds after `EMERGENCY_TIMELOCK` with the add-on service **offline** and **no** Ledger present ([Service deployment §5](./fermionwallet-gnosis-service-deployment.md#5-security--deployment-hardening-checklist)).
+- [ ] Owners-only emergency de-guard succeeds after `EMERGENCY_TIMELOCK` with the add-on service **offline** and **no** Ledger present ([Service deployment §5](./fermionguard-gnosis-service-deployment.md#5-security--deployment-hardening-checklist)).
 - [ ] Emergency de-guard succeeds while the Safe is paused.
 
 ### G6 — External review (mainnet pilot and later)
@@ -186,7 +186,7 @@ A release may not advance to the next stage until every gate for that stage pass
 
 ### 6.5 Deploy contracts
 
-1. Deploy the Guard (A3) with `contracts/script/Deploy.s.sol`, using the constructor arguments and salt pinned for this version ([Service deployment §2.1](./fermionwallet-gnosis-service-deployment.md#21-deterministic-factory-deployment-create2)).
+1. Deploy the Guard (A3) with `contracts/script/Deploy.s.sol`, using the constructor arguments and salt pinned for this version ([Service deployment §2.1](./fermionguard-gnosis-service-deployment.md#21-deterministic-factory-deployment-create2)).
 2. Deploy to one chain first, run G7 checks there, then deploy to the remaining chains.
 3. Fill `deployments.json` with the address, constructor arguments and per-chain `EXTCODEHASH`. These are written once per version and never edited.
 
@@ -214,9 +214,9 @@ Then update the README and the product site if the release changes status or ava
 
 ### 7.1 Chains
 
-**Proposed for 1.0 GA:** Ethereum mainnet, Arbitrum One, Optimism, Base, and Polygon — the chains named in [Service deployment §2.1](./fermionwallet-gnosis-service-deployment.md#21-deterministic-factory-deployment-create2). A chain is supported only if the canonical CREATE2 singleton factory and Safe's canonical `MultiSendCallOnly` exist there, and G7 passed on it.
+**Proposed for 1.0 GA:** Ethereum mainnet, Arbitrum One, Optimism, Base, and Polygon — the chains named in [Service deployment §2.1](./fermionguard-gnosis-service-deployment.md#21-deterministic-factory-deployment-create2). A chain is supported only if the canonical CREATE2 singleton factory and Safe's canonical `MultiSendCallOnly` exist there, and G7 passed on it.
 
-Deploying to other chains is permissionless and yields identical addresses ([Service deployment §2.3](./fermionwallet-gnosis-service-deployment.md#23-canonical-deployments--address-verification)), but such chains are unsupported until listed in a release.
+Deploying to other chains is permissionless and yields identical addresses ([Service deployment §2.3](./fermionguard-gnosis-service-deployment.md#23-canonical-deployments--address-verification)), but such chains are unsupported until listed in a release.
 
 ### 7.2 Safe versions
 
@@ -224,7 +224,7 @@ Deploying to other chains is permissionless and yields identical addresses ([Ser
 |---|---|---|
 | < 1.3.0 | No | Guards don't exist |
 | 1.3.0, 1.4.1 | Yes | No enabled modules |
-| 1.5.0+ | Yes | No enabled modules, or FermionWallet module guard installed via `setModuleGuard` |
+| 1.5.0+ | Yes | No enabled modules, or FermionGuard module guard installed via `setModuleGuard` |
 
 Each release lists the exact Safe versions its integration tests covered. A Safe version not tested in G1 and G4 is not supported by that release.
 
@@ -239,7 +239,7 @@ Nano S Plus, Nano X, Stax, and Flex, on the minimum firmware pinned by the Ledge
 Ledger app, Safe App, and service releases with no contract change need no action from enrolled Safes beyond installing the update.
 
 - **Ledger app:** updates preserve the seed and leaf counter. Uninstalling destroys them and forces key rotation ([Ledger XMSS app: Installation](./ledger-xmss-app.md#installation-supported-devices-and-updates)). Release notes must repeat this warning.
-- **Service:** stateless container swap with forward-only migrations ([Service deployment §3.3](./fermionwallet-gnosis-service-deployment.md#33-deployment-runbook)).
+- **Service:** stateless container swap with forward-only migrations ([Service deployment §3.3](./fermionguard-gnosis-service-deployment.md#33-deployment-runbook)).
 
 ### 8.2 Contract upgrades
 
@@ -264,7 +264,7 @@ Patch releases follow the full procedure but may run gates G1, G5, and G6 as no-
 
 Deployed contracts cannot be patched or rolled back.
 
-1. **Contain:** alert the owners of every enrolled Safe so they pause their own Safes. There is no global pause and no admin who can act for them ([Guard: No global powers](./fermionwallet-guard-module.md#no-global-powers)). Pausing is fast and low-privilege and fails closed; unpausing is slow and requires that Safe's owner threshold plus a timelock ([Guard: Emergency pause](./fermionwallet-guard-module.md#emergency-pause-circuit-breaker)). The emergency de-guard stays available while paused.
+1. **Contain:** alert the owners of every enrolled Safe so they pause their own Safes. There is no global pause and no admin who can act for them ([Guard: No global powers](./fermionguard-module.md#no-global-powers)). Pausing is fast and low-privilege and fails closed; unpausing is slow and requires that Safe's owner threshold plus a timelock ([Guard: Emergency pause](./fermionguard-module.md#emergency-pause-circuit-breaker)). The emergency de-guard stays available while paused.
 2. **Notify:** alert every enrolled Safe through all configured channels, with instructions.
 3. **Fix:** ship a new contract version through the full procedure, including audit review of the fix.
 4. **Migrate:** Safes move to the new Guard per §8.2, or remove the Guard via the emergency path if they choose.
@@ -301,7 +301,7 @@ State of the repository at the time of writing, against the artifacts in §2:
 |---|---|
 | A1 `XMSS` verifier | Implemented with tests and gas benchmarks; not audited |
 | A2 Registry and pre-approval engine | Implemented and tested (unit tests with a mock Safe, integration tests with a real Safe v1.5.0, and owner co-signing by contract owners on Safe v1.3.0, v1.4.1 and v1.5.0); not audited |
-| A3 `FermionWalletGuard` | Implemented and tested, including a bytecode test that it has no upgrade path; not audited; not deployed on any public network |
+| A3 `FermionGuard` | Implemented and tested, including a bytecode test that it has no upgrade path; not audited; not deployed on any public network |
 | A4 `deployments.json` | Format specified; file not yet created |
 | CREATE2 deployment script | `contracts/script/Deploy.s.sol` |
 | A5 Ledger app | Specified; not yet built |

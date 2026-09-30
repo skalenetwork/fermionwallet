@@ -2,7 +2,7 @@
 
 ## Programming language
 
-- Solidity: `contracts/src/PreApprovalEngine.sol`, an abstract base compiled into the deployed `FermionWalletGuard`
+- Solidity: `contracts/src/PreApprovalEngine.sol`, an abstract base compiled into the deployed `FermionGuard`
 - JavaScript: the add-on service that prepares requests and relays signatures
 
 ## Open-source libraries / tooling used
@@ -12,9 +12,9 @@
 - OpenZeppelin library patterns for safe arithmetic and validation
 - optional JSON schema or validation libraries for request validation
 
-## Role in the FermionWallet MVP
+## Role in the FermionGuard MVP
 
-The pre-approval engine creates and validates time-bound, nonce-protected approvals for ERC-20 transfers. (Wrap/unwrap flows were removed from the MVP — see the security note in [fermionwalletspec.md](./fermionwalletspec.md) §7.1.)
+The pre-approval engine creates and validates time-bound, nonce-protected approvals for ERC-20 transfers. (Wrap/unwrap flows were removed from the MVP — see the security note in [fermionguardspec.md](./fermionguardspec.md) §7.1.)
 
 ## The Quantum Administrator
 
@@ -38,7 +38,7 @@ Three counters exist (the Ledger secure-element counter — authoritative for th
 
 ## Quantum Administrator hardware: Ledger (the only hardware module)
 
-The Quantum Administrator operates using a **Ledger hardware wallet running the [FermionWallet XMSS app](./ledger-xmss-app.md)** as the sole hardware cryptographic module. No server HSMs, cloud enclaves, or host-side keystores exist anywhere in the system.
+The Quantum Administrator operates using a **Ledger hardware wallet running the [FermionGuard XMSS app](./ledger-xmss-app.md)** as the sole hardware cryptographic module. No server HSMs, cloud enclaves, or host-side keystores exist anywhere in the system.
 
 ### The Ledger secure element is the complete post-quantum signing module
 
@@ -68,7 +68,7 @@ The Quantum Administrator operates using a **Ledger hardware wallet running the 
 
 ## Standard pre-approval data
 
-Every pre-approval carries an `approvalClass` — `TRANSFER`, `PAYLOAD`, or `ADMIN` (defined in [fermionwallet-guard-module.md → Pre-approval classes](./fermionwallet-guard-module.md#pre-approval-classes)) — plus:
+Every pre-approval carries an `approvalClass` — `TRANSFER`, `PAYLOAD`, or `ADMIN` (defined in [fermionguard-module.md → Pre-approval classes](./fermionguard-module.md#pre-approval-classes)) — plus:
 
 - approvalClass (TRANSFER | PAYLOAD | ADMIN)
 - token, recipient, amount (TRANSFER class)

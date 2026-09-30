@@ -9,7 +9,7 @@ import {QuantumKeyRegistry} from "./QuantumKeyRegistry.sol";
 // not a custom error: wallets such as Safe{Wallet} decode only string reasons, so this
 // is what a Safe owner actually reads when the Guard blocks an unapproved transaction.
 string constant NO_MATCHING_PRE_APPROVAL =
-    "FermionWallet: no quantum pre-approval for this transaction. Approve it in the FermionWallet app first.";
+    "FermionGuard: no quantum pre-approval for this transaction. Approve it in the FermionGuard app first.";
 
 /// @title PreApprovalEngine — hybrid (ECDSA + XMSS) time-bound pre-approvals
 /// @notice Creates, indexes, revokes, and (for the Guard) consumes pre-approvals per
@@ -23,7 +23,7 @@ string constant NO_MATCHING_PRE_APPROVAL =
 ///           Tier 1 (pinned): approvalByTxHash[safe][safeTxHash] — exact-transaction pin.
 ///           Tier 2 (field-matched): bounded FIFO queue per field commitment, lazy head
 ///           advance past expired/revoked entries so stale approvals never block live ones.
-/// @dev    Abstract: deployed only as part of `FermionWalletGuard`.
+/// @dev    Abstract: deployed only as part of `FermionGuard`.
 abstract contract PreApprovalEngine is QuantumKeyRegistry {
     using SignatureChecker for address;
     using DoubleEndedQueue for DoubleEndedQueue.Bytes32Deque;

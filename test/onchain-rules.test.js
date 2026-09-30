@@ -4,14 +4,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ERC20Token, FermionWallet, MIN_WINDOW_MS } from '../src/fermion-wallet.js';
+import { ERC20Token, FermionGuard, MIN_WINDOW_MS } from '../src/fermion-wallet.js';
 
 const T0 = 1_800_000_000_000; // fixed clock, ms
 
 function setup() {
   const clock = { t: T0 };
   const token = new ERC20Token('Fermion', 'FERM');
-  const wallet = new FermionWallet('0xOwner', { now: () => clock.t });
+  const wallet = new FermionGuard('0xOwner', { now: () => clock.t });
   token.mint('0xOwner', 1000n);
   const key = wallet.generateQuantumKeyPair();
   const base = {

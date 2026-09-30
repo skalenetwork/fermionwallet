@@ -6,7 +6,7 @@ import {ERC20Mock as MockToken} from "@openzeppelin/contracts/mocks/token/ERC20M
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
 
-import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
+import {FermionGuard} from "../src/FermionGuard.sol";
 import {PreApprovalEngine} from "../src/PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "../src/QuantumKeyRegistry.sol";
 import {XMSS} from "xmss-solidity/XMSS.sol";
@@ -179,7 +179,7 @@ abstract contract LegacySafeIntegrationBase is Test {
     address internal compatHandler;
 
     ILegacySafe internal safe;
-    FermionWalletGuard internal guard;
+    FermionGuard internal guard;
     MockToken internal token;
     bytes32 internal keyId;
     bytes32 internal xmssRoot;
@@ -201,7 +201,7 @@ abstract contract LegacySafeIntegrationBase is Test {
         vm.warp(1_800_000_000);
         _deployStack();
         token = new MockToken();
-        guard = new FermionWalletGuard(msco, ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, MAX_BATCH_LEGS, MAX_QUEUE);
+        guard = new FermionGuard(msco, ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, MAX_BATCH_LEGS, MAX_QUEUE);
         (xmssRoot, xmssSeed,) = _xmssSign(0, bytes32(uint256(1))); // root/seed extraction only
 
         safe = _newSafe(compatHandler, address(0), "");
@@ -233,7 +233,7 @@ abstract contract LegacySafeIntegrationBase is Test {
     function test_Enrollment_RefusedWhileFallbackHandlerInstalled() public {
         safe = _newSafe(compatHandler, address(0), "");
         _expectRegistrationRevert(
-            abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), compatHandler)
+            abi.encodeWithSelector(FermionGuard.FallbackHandlerForbidden.selector, address(safe), compatHandler)
         );
     }
 
@@ -314,7 +314,7 @@ abstract contract LegacySafeIntegrationBase is Test {
             0,
             data,
             Enum.Operation.DelegateCall,
-            abi.encodeWithSelector(FermionWalletGuard.ForbiddenBatchLegTarget.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.ForbiddenBatchLegTarget.selector, address(safe))
         );
     }
 
@@ -327,12 +327,12 @@ abstract contract LegacySafeIntegrationBase is Test {
         _createTransfer(recipient, 1 ether, 1, bytes32(0));
         _expectExecRevert(
             address(token), 0, pay, Enum.Operation.Call,
-            abi.encodeWithSelector(FermionWalletGuard.SafePausedError.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.SafePausedError.selector, address(safe))
         );
 
         // Owner-signed escape calls go through while paused, no quantum approval.
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe))), Enum.Operation.Call);
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.pauseSafe, (address(safe))), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
         uint64 executableAt = guard.emergencyDeGuardExecutableAt(address(safe));
         assertEq(executableAt, uint64(block.timestamp) + EMERGENCY_TIMELOCK);
 
@@ -351,9 +351,9 @@ abstract contract LegacySafeIntegrationBase is Test {
     function test_EscapeHatch_TimelockedUnpause() public {
         vm.prank(owner1);
         guard.pauseSafe(address(safe));
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestUnpauseSafe, ()), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestUnpauseSafe, ()), Enum.Operation.Call);
         vm.warp(guard.safeUnpauseExecutableAt(address(safe)) + 1);
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.unpauseSafe, ()), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.unpauseSafe, ()), Enum.Operation.Call);
         assertFalse(guard.safePaused(address(safe)));
 
         _createTransfer(recipient, 1 ether, 1, bytes32(0));
@@ -369,7 +369,7 @@ abstract contract LegacySafeIntegrationBase is Test {
         vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
         _expectExecRevert(
             address(safe), 0, install, Enum.Operation.Call,
-            abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), compatHandler)
+            abi.encodeWithSelector(FermionGuard.FallbackHandlerForbidden.selector, address(safe), compatHandler)
         );
 
         // A handler that got in anyway (storage-level) freezes checked transactions…
@@ -377,7 +377,7 @@ abstract contract LegacySafeIntegrationBase is Test {
         bytes memory pay = abi.encodeCall(IERC20.transfer, (recipient, 1 ether));
         _expectExecRevert(
             address(token), 0, pay, Enum.Operation.Call,
-            abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), compatHandler)
+            abi.encodeWithSelector(FermionGuard.FallbackHandlerForbidden.selector, address(safe), compatHandler)
         );
 
         // …until the quantum-approved removal, which works while the posture is bad.
@@ -403,7 +403,7 @@ abstract contract LegacySafeIntegrationBase is Test {
         vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
         _expectExecRevert(
             address(safe), 0, enable, Enum.Operation.Call,
-            abi.encodeWithSelector(FermionWalletGuard.ModuleGuardNotWired.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.ModuleGuardNotWired.selector, address(safe))
         );
 
         // setModuleGuard does not exist before 1.5.0: the Safe's fallback swallows it
@@ -416,7 +416,7 @@ abstract contract LegacySafeIntegrationBase is Test {
         vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
         _expectExecRevert(
             address(safe), 0, enable, Enum.Operation.Call,
-            abi.encodeWithSelector(FermionWalletGuard.ModuleGuardNotWired.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.ModuleGuardNotWired.selector, address(safe))
         );
         assertFalse(safe.isModuleEnabled(module));
     }
@@ -433,7 +433,7 @@ abstract contract LegacySafeIntegrationBase is Test {
         vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
         _expectExecRevert(
             address(safe), 0, enable, Enum.Operation.Call,
-            abi.encodeWithSelector(FermionWalletGuard.ModuleGuardNotWired.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.ModuleGuardNotWired.selector, address(safe))
         );
         assertFalse(safe.isModuleEnabled(module));
 
@@ -442,7 +442,7 @@ abstract contract LegacySafeIntegrationBase is Test {
         _safeExec(address(safe), 0, abi.encodeWithSignature("enableModule(address)", module), Enum.Operation.Call);
         vm.store(address(safe), MODULE_GUARD_SLOT, bytes32(uint256(uint160(address(guard)))));
         _expectRegistrationRevert(
-            abi.encodeWithSelector(FermionWalletGuard.ModulesEnabledWithoutModuleGuard.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.ModulesEnabledWithoutModuleGuard.selector, address(safe))
         );
     }
 
@@ -451,7 +451,7 @@ abstract contract LegacySafeIntegrationBase is Test {
         safe = _newSafe(address(0), address(0), "");
         _safeExec(address(safe), 0, abi.encodeWithSignature("enableModule(address)", module), Enum.Operation.Call);
         _expectRegistrationRevert(
-            abi.encodeWithSelector(FermionWalletGuard.ModulesEnabledWithoutModuleGuard.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.ModulesEnabledWithoutModuleGuard.selector, address(safe))
         );
     }
 
@@ -482,7 +482,7 @@ abstract contract LegacySafeIntegrationBase is Test {
         bytes memory pay = abi.encodeCall(IERC20.transfer, (recipient, 2 ether));
         _expectExecRevert(
             address(token), 0, pay, Enum.Operation.Call,
-            abi.encodeWithSelector(FermionWalletGuard.ModulesEnabledWithoutModuleGuard.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.ModulesEnabledWithoutModuleGuard.selector, address(safe))
         );
 
         // Remediation (disableModule(prevModule = SENTINEL, module)) is exempt.
@@ -509,8 +509,8 @@ abstract contract LegacySafeIntegrationBase is Test {
 
         LegacySafeTxBatcher.SafeCall[] memory calls = new LegacySafeTxBatcher.SafeCall[](4);
         uint256 n = safe.nonce();
-        calls[0] = _call(address(guard), abi.encodeCall(FermionWalletGuard.cancelEmergencyDeGuard, (address(safe))), 100_000, n);
-        calls[1] = _call(address(guard), abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), 0, n + 1);
+        calls[0] = _call(address(guard), abi.encodeCall(FermionGuard.cancelEmergencyDeGuard, (address(safe))), 100_000, n);
+        calls[1] = _call(address(guard), abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), 0, n + 1);
         calls[2] = _call(address(token), abi.encodeCall(IERC20.transfer, (recipient, tooMuch)), 100_000, n + 2);
         calls[3] = _call(address(token), abi.encodeCall(IERC20.transfer, (recipient, 1 ether)), 0, n + 3);
 
@@ -622,7 +622,7 @@ abstract contract LegacySafeIntegrationBase is Test {
 
     function _guardDigest(bytes32 structHash) internal view returns (bytes32) {
         bytes32 domain = keccak256(
-            abi.encode(DOMAIN_TYPEHASH, keccak256("FermionWalletGuard"), keccak256("1"), block.chainid, address(guard))
+            abi.encode(DOMAIN_TYPEHASH, keccak256("FermionGuard"), keccak256("1"), block.chainid, address(guard))
         );
         return keccak256(abi.encodePacked(hex"1901", domain, structHash));
     }

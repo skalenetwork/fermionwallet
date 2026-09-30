@@ -2,7 +2,7 @@
   <rect width="860" height="560" fill="#0c1626"/>
   <rect width="860" height="56" fill="#16263f"/>
   <circle cx="34" cy="28" r="14" fill="#57d6c0"/>
-  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONWALLET</text>
+  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONGUARD</text>
   <text x="250" y="34" fill="#57d6c0" font-size="14" font-weight="600">Key ceremony</text>
   <text x="700" y="34" fill="#8fa3bf" font-size="13">Safe: 0x9aF3…C21e</text>
   <text x="30" y="90" fill="#e8eef7" font-size="18" font-weight="700">Ceremony stages A, B, D, E (Stage C — collect signatures — in ui-ceremony.svg)</text>
@@ -10,7 +10,7 @@
   <rect x="30" y="108" width="392" height="196" rx="10" fill="#16263f"/>
   <text x="52" y="136" fill="#57d6c0" font-size="13" font-weight="700">STAGE A — PREFLIGHT</text>
   <g font-size="12.5">
-    <text x="52" y="164" fill="#4bd18a">✓</text><text x="72" y="164" fill="#e8eef7">FermionWallet XMSS app open · v1.0.2 · genuine device</text>
+    <text x="52" y="164" fill="#4bd18a">✓</text><text x="72" y="164" fill="#e8eef7">FermionGuard XMSS app open · v1.0.2 · genuine device</text>
     <text x="52" y="188" fill="#4bd18a">✓</text><text x="72" y="188" fill="#e8eef7">Administrator address matches Ledger: 0x4c11…88Fe</text>
     <text x="52" y="212" fill="#4bd18a">✓</text><text x="72" y="212" fill="#e8eef7">Registry reachable · registryNonce 7 · no Active key</text>
     <text x="52" y="236" fill="#f2b84b">…</text><text x="72" y="236" fill="#f2b84b">Waiting: 3 owners notified, session expires in 72 h</text>

@@ -1,9 +1,9 @@
 name: Contracts
 
 # On every push and pull request: the Guard, registry and engine test suites, and
-# two checks that FermionWallet keeps using the XMSS verifier as proven:
+# two checks that FermionGuard keeps using the XMSS verifier as proven:
 #   - the pinned xmss-solidity submodule passes its own test suite here, so the
-#     verifier FermionWallet compiles in is a commit its tests cover (its proof
+#     verifier FermionGuard compiles in is a commit its tests cover (its proof
 #     runs in that repository's CI on every push);
 #   - the registry verifies with the key's registered tree height (the
 #     four-argument XMSS.verify), the form the proof recommends.

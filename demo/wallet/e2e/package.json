@@ -1,7 +1,7 @@
 {
-  "name": "fermionwallet-demo-wallet-e2e",
+  "name": "fermionguard-demo-wallet-e2e",
   "private": true,
-  "description": "Browser end-to-end test of the FermionWallet demo on the real Safe{Wallet}",
+  "description": "Browser end-to-end test of the FermionGuard demo on the real Safe{Wallet}",
   "scripts": { "test": "node e2e.js" },
   "dependencies": { "playwright-core": "1.63.0" }
 }

@@ -7,7 +7,7 @@ import {MultiSendCallOnly} from "@safe-global/safe-contracts/contracts/libraries
 import {Safe} from "@safe-global/safe-contracts/contracts/Safe.sol";
 import {SafeProxyFactory} from "@safe-global/safe-contracts/contracts/proxies/SafeProxyFactory.sol";
 
-import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
+import {FermionGuard} from "../src/FermionGuard.sol";
 
 /// The v1.4.1 surface this test needs (identical ABI in v1.4.1 and v1.5.0).
 interface ISafe141 {
@@ -75,7 +75,7 @@ abstract contract LegacySafeRegistryTest is Test {
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
     address internal safe;
-    FermionWalletGuard internal guard;
+    FermionGuard internal guard;
     LegacyContractOwner internal wallet;
 
     function setUp() public {
@@ -89,7 +89,7 @@ abstract contract LegacySafeRegistryTest is Test {
         bytes memory init =
             abi.encodeCall(ISafe141.setup, (owners, 2, address(0), "", address(0), address(0), 0, payable(address(0))));
         safe = factory.createProxyWithNonce(singleton, init, 1);
-        guard = new FermionWalletGuard(address(new MultiSendCallOnly()), 2 days, 7 days, 4, 8);
+        guard = new FermionGuard(address(new MultiSendCallOnly()), 2 days, 7 days, 4, 8);
     }
 
     /// Directory of the Safe/SafeProxyFactory creation bytecode for this version.
@@ -170,7 +170,7 @@ abstract contract LegacySafeRegistryTest is Test {
 
     function _domain() internal view returns (bytes32) {
         return keccak256(
-            abi.encode(DOMAIN_TYPEHASH, keccak256("FermionWalletGuard"), keccak256("1"), block.chainid, address(guard))
+            abi.encode(DOMAIN_TYPEHASH, keccak256("FermionGuard"), keccak256("1"), block.chainid, address(guard))
         );
     }
 

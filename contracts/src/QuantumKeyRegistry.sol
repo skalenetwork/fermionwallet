@@ -30,8 +30,8 @@ interface ISafeLegacySignatures {
 ///         Rotation additionally consumes one leaf of the *old* key as a possession
 ///         proof. Emergency revocation (old key lost) is owner-governed behind
 ///         `EMERGENCY_ROTATION_TIMELOCK`, cancellable throughout the delay.
-/// @dev    Abstract: deployed only as part of `FermionWalletGuard` (one contract, one
-///         storage — see fermionwallet-guard-module.md, "Module-guard architecture").
+/// @dev    Abstract: deployed only as part of `FermionGuard` (one contract, one
+///         storage — see fermionguard-module.md, "Module-guard architecture").
 ///         The used-leaf bitmap lives here because leaf state is a property of the
 ///         key, not of any particular approval.
 abstract contract QuantumKeyRegistry is EIP712, Nonces {

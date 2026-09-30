@@ -1,7 +1,7 @@
 {
-  "name": "fermionwallet",
+  "name": "fermionguard",
   "version": "1.0.0",
-  "description": "Early JavaScript model of FermionWallet's key, policy and pre-approval flows (HMAC demo signatures, not post-quantum; the on-chain rules live in contracts/)",
+  "description": "Early JavaScript model of FermionGuard's key, policy and pre-approval flows (HMAC demo signatures, not post-quantum; the on-chain rules live in contracts/)",
   "type": "module",
   "scripts": {
     "test": "node --test \"test/**/*.test.js\""

@@ -1,4 +1,4 @@
-"""FermionWallet Safe App backend (the add-on service's approval API).
+"""FermionGuard Safe App backend (the add-on service's approval API).
 
 Per-Safe, product-shaped endpoints used by the Safe App (demo/ui/safe-app):
 
@@ -304,7 +304,7 @@ def create_approval(host, safe, payload):
 
     st = safe_status(host, safe)
     if not st["protected"]:
-        raise ApiError("This Safe is not protected by the FermionWallet Guard.")
+        raise ApiError("This Safe is not protected by the FermionGuard.")
     key = st["key"]
     if not key or key["status"] != "active":
         raise ApiError("This Safe has no active quantum key.")

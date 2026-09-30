@@ -1,9 +1,9 @@
-# FermionWallet contracts
+# FermionGuard contracts
 
-Solidity contracts for FermionWallet. The XMSS verifier lives in its own
+Solidity contracts for FermionGuard. The XMSS verifier lives in its own
 MIT-licensed repository, [skalenetwork/xmss-solidity](https://github.com/skalenetwork/xmss-solidity),
 included here as the submodule `lib/xmss-solidity`. The deploy/demo scripts
-are MIT-licensed; `FermionWalletGuard.sol`, `QuantumKeyRegistry.sol` and
+are MIT-licensed; `FermionGuard.sol`, `QuantumKeyRegistry.sol` and
 `PreApprovalEngine.sol` are LGPL-3.0-only (they build on Safe's LGPL
 contracts). The XMSS verifier is a **clean-room implementation** (RFC 8391 /
 NIST SP 800-208), written from the specification — no code taken from poqeth
@@ -22,7 +22,7 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
   `BitMaps`), verifies, and burns the leaf atomically; reverts loudly on reuse.
 - `src/PreApprovalEngine.sol` — hybrid (ECDSA + XMSS) pre-approvals: creation,
   revocation and consumption. Abstract, like the registry.
-- `src/FermionWalletGuard.sol` — the Safe transaction guard and module guard;
+- `src/FermionGuard.sol` — the Safe transaction guard and module guard;
   the only deployable contract (it contains the registry and the engine).
 - `script/Deploy.s.sol` — CREATE2 deployment of the Guard through an
   explicit call to the deterministic deployment proxy (env vars
@@ -37,7 +37,7 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
   `execute` per payout.
 - `foundry.toml` pins solc 0.8.37, so a release tag rebuilds byte-identical
   binaries.
-- `test/GuardIntegration.t.sol`, `test/FermionWalletGuard.t.sol` — leaf
+- `test/GuardIntegration.t.sol`, `test/FermionGuard.t.sol` — leaf
   consumption, reuse rejection, invalid-signature rollback, height binding,
   zero-key rejection (through the registry), plus the Guard and engine suites.
 - `test/LegacySafeSignatures.t.sol` — contract owners co-signing on Safe
@@ -58,13 +58,13 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
 | `XMSS.verify` (h = 10) | 712,434 |
 | `XMSS.verify` (h = 20, **measured**) | **744,906** |
 
-Within the 0.4–1M target set in `../fermionwallet-guard-module.md`
+Within the 0.4–1M target set in `../fermionguard-module.md`
 (asserted in the library's CI: `test_gas_verify_h20` fails above 1.1M).
 
 ## Security notes
 
 - `XMSS.sol` is stateless. **Never expose it to callers that do not consume
-  leaf indices** — use the FermionWallet Guard's registry as the
+  leaf indices** — use the FermionGuard's registry as the
   enforcement point. Index reuse breaks XMSS entirely.
 - `verify` rejects zero roots/seeds and tree heights outside 1..20.
 - The XMSS verifier is formally verified against RFC 8391 (functional

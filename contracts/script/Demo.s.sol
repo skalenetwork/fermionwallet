@@ -10,7 +10,7 @@ import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
+import {FermionGuard} from "../src/FermionGuard.sol";
 import {PreApprovalEngine} from "../src/PreApprovalEngine.sol";
 import {XMSS} from "xmss-solidity/XMSS.sol";
 
@@ -60,7 +60,7 @@ contract Demo is Script {
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
     Safe internal safe;
-    FermionWalletGuard internal guard;
+    FermionGuard internal guard;
     DemoToken internal token;
     address internal vendor;
     bytes32 internal keyId;
@@ -107,7 +107,7 @@ contract Demo is Script {
         safe = Safe(payable(SafeProxyFactory(factory).createProxyWithNonce(singleton, initializer, 0xFE47)));
 
         // Demo-friendly timelocks: ADMIN 60 s, emergency de-guard 120 s.
-        guard = new FermionWalletGuard(msco, 60, 120, 4, 8);
+        guard = new FermionGuard(msco, 60, 120, 4, 8);
 
         token.mint(address(safe), 1_000_000 ether);
         (bool funded,) = payable(address(safe)).call{value: 10 ether}("");
@@ -193,7 +193,7 @@ contract Demo is Script {
         console2.logBytes32(id);
     }
 
-    /// Relayer for the FermionWallet Safe App: submit a pre-approval exactly as the
+    /// Relayer for the FermionGuard Safe App: submit a pre-approval exactly as the
     /// (simulated) Ledger signed it. `request` is the ABI-encoded PreApprovalRequest
     /// (any Safe, token, recipient, amount, window and safeTxHash pin); the Guard
     /// verifies both signature halves against it, so a relayer that altered any field
@@ -228,7 +228,7 @@ contract Demo is Script {
     function _load() internal {
         string memory j = vm.readFile(STATE);
         safe = Safe(payable(vm.parseJsonAddress(j, ".safe")));
-        guard = FermionWalletGuard(vm.parseJsonAddress(j, ".guard"));
+        guard = FermionGuard(vm.parseJsonAddress(j, ".guard"));
         token = DemoToken(vm.parseJsonAddress(j, ".token"));
         vendor = vm.parseJsonAddress(j, ".vendor");
         keyId = vm.parseJsonBytes32(j, ".keyId");
@@ -277,7 +277,7 @@ contract Demo is Script {
 
     function _guardDigest(bytes32 structHash) internal view returns (bytes32) {
         bytes32 domain = keccak256(
-            abi.encode(DOMAIN_TYPEHASH, keccak256("FermionWalletGuard"), keccak256("1"), block.chainid, address(guard))
+            abi.encode(DOMAIN_TYPEHASH, keccak256("FermionGuard"), keccak256("1"), block.chainid, address(guard))
         );
         return keccak256(abi.encodePacked(hex"1901", domain, structHash));
     }

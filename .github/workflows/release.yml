@@ -7,11 +7,11 @@ name: Release
 #
 # The self-contained demo container (demo/Dockerfile) ships with every release:
 # built from the tag, smoke-tested end to end (blocked -> approve -> execute),
-# then pushed to ghcr.io/<owner>/fermionwallet-demo:<tag> (and :latest for
+# then pushed to ghcr.io/<owner>/fermionguard-demo:<tag> (and :latest for
 # non-prerelease tags). Its digest and run command are added to the notes.
 #
 # The Safe{Wallet} demo (demo/wallet) ships too: the prebuilt Safe{Wallet} UI
-# image is pushed to ghcr.io/<owner>/fermionwallet-demo-wallet:<tag>, the whole
+# image is pushed to ghcr.io/<owner>/fermionguard-demo-wallet:<tag>, the whole
 # Compose stack is tested in a real browser (demo/wallet/e2e), and a Compose
 # bundle pinned to this release's images is attached to the release.
 
@@ -58,12 +58,12 @@ jobs:
       - name: Package contract binaries
         working-directory: contracts
         run: |
-          DIST="fermionwallet-contracts-${TAG}"
+          DIST="fermionguard-contracts-${TAG}"
           mkdir -p "dist/${DIST}/abi" "dist/${DIST}/bytecode" "dist/${DIST}/artifacts"
-          # FermionWalletGuard is the only deployable contract: QuantumKeyRegistry and
+          # FermionGuard is the only deployable contract: QuantumKeyRegistry and
           # PreApprovalEngine are abstract bases compiled into it (empty bytecode),
           # and its ABI already covers their functions.
-          C=FermionWalletGuard
+          C=FermionGuard
           ART="out/${C}.sol/${C}.json"
           # Full Foundry artifact (ABI + bytecode + metadata + source hashes)
           cp "${ART}" "dist/${DIST}/artifacts/${C}.json"
@@ -78,9 +78,9 @@ jobs:
           {
             echo "tag: ${TAG}"
             echo "commit: $(git rev-parse HEAD)"
-            echo "solc: $(jq -r '.metadata.compiler.version' out/FermionWalletGuard.sol/FermionWalletGuard.json)"
+            echo "solc: $(jq -r '.metadata.compiler.version' out/FermionGuard.sol/FermionGuard.json)"
             echo
-            echo "FermionWalletGuard runtime code hash, immutables zeroed:"
+            echo "FermionGuard runtime code hash, immutables zeroed:"
             echo "  $(cast keccak "$(jq -r '.deployedBytecode.object' "${ART}")")"
             echo
             echo "This is NOT the on-chain EXTCODEHASH. The constructor writes immutables into"
@@ -115,8 +115,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ASSETS=(
-            "contracts/dist/fermionwallet-contracts-${TAG}.tar.gz"
-            "contracts/dist/fermionwallet-contracts-${TAG}.zip"
+            "contracts/dist/fermionguard-contracts-${TAG}.tar.gz"
+            "contracts/dist/fermionguard-contracts-${TAG}.zip"
             "contracts/dist/SHA256SUMS"
           )
           if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
@@ -128,7 +128,7 @@ jobs:
           case "${TAG}" in *-*) PRERELEASE=(--prerelease) ;; esac
           gh release create "${TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --title "FermionWallet ${TAG}" \
+            --title "FermionGuard ${TAG}" \
             --notes-file release-notes.md \
             --generate-notes \
             --verify-tag \
@@ -143,7 +143,7 @@ jobs:
       packages: write # push to ghcr.io
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
-      IMAGE: ghcr.io/${{ github.repository_owner }}/fermionwallet-demo
+      IMAGE: ghcr.io/${{ github.repository_owner }}/fermionguard-demo
     steps:
       - uses: actions/checkout@v4
         with:
@@ -161,8 +161,8 @@ jobs:
             type=raw,value=${{ env.TAG }}
             type=raw,value=latest,enable=${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
           labels: |
-            org.opencontainers.image.title=FermionWallet demo
-            org.opencontainers.image.description=Local anvil chain with a real Safe, the FermionWallet Guard, a simulated Ledger and a web UI (standalone, or DEMO_MODE=wallet for the Safe{Wallet} stack)
+            org.opencontainers.image.title=FermionGuard demo
+            org.opencontainers.image.description=Local anvil chain with a real Safe, the FermionGuard, a simulated Ledger and a web UI (standalone, or DEMO_MODE=wallet for the Safe{Wallet} stack)
             org.opencontainers.image.version=${{ env.TAG }}
 
       - name: Build demo image
@@ -171,13 +171,13 @@ jobs:
           context: .
           file: demo/Dockerfile
           load: true
-          tags: fermionwallet-demo:smoke
+          tags: fermionguard-demo:smoke
           cache-to: type=gha,mode=max
           cache-from: type=gha
 
       - name: Smoke-test the demo end to end
         run: |
-          docker run -d --name demo -p 8080:8080 fermionwallet-demo:smoke
+          docker run -d --name demo -p 8080:8080 fermionguard-demo:smoke
           timeout 300 sh -c 'until docker logs demo 2>&1 | grep -qE "ready —|FATAL"; do sleep 2; done'
           docker logs demo 2>&1 | tail -5
           # grep -c reads all input: grep -q could exit first and SIGPIPE docker logs under pipefail.
@@ -243,8 +243,8 @@ jobs:
       packages: write # push to ghcr.io
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
-      DEMO_IMAGE: ghcr.io/${{ github.repository_owner }}/fermionwallet-demo
-      UI_IMAGE: ghcr.io/${{ github.repository_owner }}/fermionwallet-demo-wallet
+      DEMO_IMAGE: ghcr.io/${{ github.repository_owner }}/fermionguard-demo
+      UI_IMAGE: ghcr.io/${{ github.repository_owner }}/fermionguard-demo-wallet
     steps:
       - uses: actions/checkout@v4
         with:
@@ -267,8 +267,8 @@ jobs:
             type=raw,value=${{ env.TAG }}
             type=raw,value=latest,enable=${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
           labels: |
-            org.opencontainers.image.title=FermionWallet demo: Safe{Wallet}
-            org.opencontainers.image.description=Prebuilt Safe{Wallet} web UI and reverse proxy for the FermionWallet Compose demo
+            org.opencontainers.image.title=FermionGuard demo: Safe{Wallet}
+            org.opencontainers.image.description=Prebuilt Safe{Wallet} web UI and reverse proxy for the FermionGuard Compose demo
             org.opencontainers.image.version=${{ env.TAG }}
 
       - name: Build the Safe{Wallet} UI image
@@ -277,7 +277,7 @@ jobs:
           context: .
           file: demo/wallet/ui.Dockerfile
           load: true
-          tags: fermionwallet-demo-wallet:e2e
+          tags: fermionguard-demo-wallet:e2e
 
       # Also lets Compose pull the chain image the demo-image job just pushed.
       - name: Log in to ghcr.io
@@ -291,7 +291,7 @@ jobs:
         working-directory: demo/wallet
         env:
           FERMION_DEMO_IMAGE: ${{ env.DEMO_IMAGE }}:${{ env.TAG }}
-          FERMION_WALLET_UI_IMAGE: fermionwallet-demo-wallet:e2e
+          FERMION_WALLET_UI_IMAGE: fermionguard-demo-wallet:e2e
         run: |
           docker compose up -d --wait --wait-timeout 600
           docker compose ps -a
@@ -332,7 +332,7 @@ jobs:
         env:
           UI_DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          B="fermionwallet-demo-wallet-${TAG}"
+          B="fermionguard-demo-wallet-${TAG}"
           mkdir -p "dist/${B}"
           cp -r demo/wallet/docker-compose.yml demo/wallet/env demo/wallet/bootstrap_cfg.py demo/wallet/README.md "dist/${B}/"
           DEMO_DIGEST="$(docker buildx imagetools inspect "${DEMO_IMAGE}:${TAG}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
@@ -350,7 +350,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          B="fermionwallet-demo-wallet-${TAG}"
+          B="fermionguard-demo-wallet-${TAG}"
           gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" --clobber "dist/${B}.tar.gz" "dist/${B}.tar.gz.sha256"
           gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json body -q .body > notes.md
           # A re-run for the same tag must not append the section twice.
@@ -359,7 +359,7 @@ jobs:
             echo
             echo "## Demo on the real Safe{Wallet}"
             echo
-            echo "The open-source Safe{Wallet} stack on a local chain, with FermionWallet as a Safe App"
+            echo "The open-source Safe{Wallet} stack on a local chain, with FermionGuard as a Safe App"
             echo "and a simulated Ledger. Download \`${B}.tar.gz\` from the assets below, then:"
             echo
             echo '```sh'

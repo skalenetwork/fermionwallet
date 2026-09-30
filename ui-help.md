@@ -1,6 +1,6 @@
-# FermionWallet UI Help
+# FermionGuard UI Help
 
-A user guide to the FermionWallet Safe App for the three roles that use it: **Safe owners**, the **Quantum Administrator**, and **treasury operators**. Screens shown are design mockups from the UI specification in [fermionwallet-add-on-service.md](./fermionwallet-add-on-service.md).
+A user guide to the FermionGuard Safe App for the three roles that use it: **Safe owners**, the **Quantum Administrator**, and **treasury operators**. Screens shown are design mockups from the UI specification in [fermionguard-add-on-service.md](./fermionguard-add-on-service.md).
 
 ## Contents
 
@@ -21,7 +21,7 @@ A user guide to the FermionWallet Safe App for the three roles that use it: **Sa
 
 ## What you're looking at
 
-FermionWallet runs as a **Safe App** — an app inside your existing Safe{Wallet} interface. It adds a second, quantum-resistant authorization to your Safe: transactions still need your normal owner signatures, *and* a quantum pre-approval signed by the Quantum Administrator's hardware key. Nothing about your Safe changes; the app is where you see and manage the quantum half.
+FermionGuard runs as a **Safe App** — an app inside your existing Safe{Wallet} interface. It adds a second, quantum-resistant authorization to your Safe: transactions still need your normal owner signatures, *and* a quantum pre-approval signed by the Quantum Administrator's hardware key. Nothing about your Safe changes; the app is where you see and manage the quantum half.
 
 ## Adding the Guard to an existing Safe
 
@@ -32,9 +32,9 @@ You do not migrate anything. Your Safe, owners, threshold, and history stay exac
 | Check | Why |
 |---|---|
 | Safe version 1.3.0+ | Guards don't exist before 1.3.0 |
-| **No enabled modules** (or Safe 1.5+ with a module guard) | Modules execute *around* the Guard — an enabled module is an open back door, so it must be removed first or covered by a FermionWallet module guard. A *module guard* is a second Safe hook (`setModuleGuard`, Safe 1.5+) that vets module-initiated transactions the way the ordinary Guard vets owner-signed ones; FermionWallet uses one contract for both. The preflight reads your Safe's module list on-chain and shows it to you. **There is no chicken-and-egg problem here:** removing a module (`disableModule`) is an ordinary owner-signed Safe transaction executed *before* the FermionWallet Guard is enabled — at that point nothing requires quantum approval yet. Remove unneeded modules first, then proceed; on Safe 1.5+ you may instead keep them and install the FermionWallet module guard (`setModuleGuard`), also as an ordinary Safe transaction *before* the key ceremony — registration is refused while an enabled module is unguarded, and once the Guard is on, `setModuleGuard` needs a 48-hour admin approval |
+| **No enabled modules** (or Safe 1.5+ with a module guard) | Modules execute *around* the Guard — an enabled module is an open back door, so it must be removed first or covered by a FermionGuard module guard. A *module guard* is a second Safe hook (`setModuleGuard`, Safe 1.5+) that vets module-initiated transactions the way the ordinary Guard vets owner-signed ones; FermionGuard uses one contract for both. The preflight reads your Safe's module list on-chain and shows it to you. **There is no chicken-and-egg problem here:** removing a module (`disableModule`) is an ordinary owner-signed Safe transaction executed *before* the FermionGuard is enabled — at that point nothing requires quantum approval yet. Remove unneeded modules first, then proceed; on Safe 1.5+ you may instead keep them and install the FermionGuard module guard (`setModuleGuard`), also as an ordinary Safe transaction *before* the key ceremony — registration is refused while an enabled module is unguarded, and once the Guard is on, `setModuleGuard` needs a 48-hour admin approval |
 | **No fallback handler** | Safe's standard fallback handler approves signed messages (ERC-1271 `isValidSignature`) using only the owners' classical keys, with no Safe transaction — Permit, Permit2 and order protocols could then move funds without the Guard ever running. Remove it (`setFallbackHandler(address(0))`) as an ordinary owner-signed Safe transaction *before* the key ceremony; registration is refused while one is set. See [Working without a fallback handler](#working-without-a-fallback-handler) |
-| A designated Quantum Administrator with a Ledger running the FermionWallet XMSS app | The quantum key must exist before enforcement starts |
+| A designated Quantum Administrator with a Ledger running the FermionGuard XMSS app | The quantum key must exist before enforcement starts |
 | Owners available to sign | Two Safe transactions and one co-signed ceremony need the threshold |
 
 ### Working without a fallback handler
@@ -47,13 +47,13 @@ A guarded Safe runs with no fallback handler. What that means day to day:
 | Holding, receiving and sending ETH | Receiving NFTs via `safeTransferFrom` (ERC-721) and ERC-1155 tokens — plain ERC-721 `transferFrom` still works |
 | Plain ERC-721 `transferFrom` | Tokens that call back on receipt (ERC-1363 `transferAndCall`, ERC-777 `send`) — their ERC-20-style `transfer` still works |
 
-Safe{Wallet} may warn that no fallback handler is set; that is expected. Support for signed messages will come from a FermionWallet handler that also requires a quantum approval for each message.
+Safe{Wallet} may warn that no fallback handler is set; that is expected. Support for signed messages will come from a FermionGuard handler that also requires a quantum approval for each message.
 
-**Step 1 — Open the app.** In Safe{Wallet}: *Apps → add custom Safe App → FermionWallet*. Get the app URL **only** from the FermionWallet GitHub README or the `fermionwallet.eth` ENS record — never from an email, chat message, or search result (a phishing clone at a look-alike URL is the cheapest possible attack on this step). On load, the app displays the Guard address it will use next to the published canonical deployment and refuses to continue if they differ. Connect while the Safe has **no** FermionWallet Guard yet; everything below happens through ordinary Safe transactions your owners already know how to sign.
+**Step 1 — Open the app.** In Safe{Wallet}: *Apps → add custom Safe App → FermionGuard*. Get the app URL **only** from the FermionGuard GitHub README or the `fermionwallet.eth` ENS record — never from an email, chat message, or search result (a phishing clone at a look-alike URL is the cheapest possible attack on this step). On load, the app displays the Guard address it will use next to the published canonical deployment and refuses to continue if they differ. Connect while the Safe has **no** FermionGuard yet; everything below happens through ordinary Safe transactions your owners already know how to sign.
 
 **Step 2 — Run the key ceremony.** Follow [The key ceremony](#the-key-ceremony-first-time-setup-and-rotation) to generate the Administrator's XMSS key on the Ledger and register it on-chain with owner co-signatures. **This must happen first**: enabling the Guard with no Active quantum key would block every transaction on day one.
 
-**Step 3 — Enable the Guard.** The app proposes a single Safe transaction: `setGuard(<FermionWallet Guard>)`. The app shows the Guard's address alongside the published canonical deployment for your chain — verify they match before signing. Owners sign and execute it like any normal transaction (the Guard isn't active yet, so no quantum approval is needed for this one). This is the point of no casual return: from the next transaction onward, everything needs both signatures.
+**Step 3 — Enable the Guard.** The app proposes a single Safe transaction: `setGuard(<FermionGuard>)`. The app shows the Guard's address alongside the published canonical deployment for your chain — verify they match before signing. Owners sign and execute it like any normal transaction (the Guard isn't active yet, so no quantum approval is needed for this one). This is the point of no casual return: from the next transaction onward, everything needs both signatures.
 
 **Step 4 — Verification transfer.** The app queues a dust-sized test transfer to an address you control and walks it through the full pipeline: owner signatures → 🟡 → quantum approval on the Ledger → 🟢 → execute. When it lands, the dashboard shows **Protected ✓** with the Guard address, key fingerprint, and leaf counter. Keep the printable enrollment record with the ceremony record.
 
@@ -197,7 +197,7 @@ For when the quantum key **cannot** participate: the Ledger is lost or destroyed
 
 **The flow:**
 1. Any owner opens **Emergency options → Start emergency Guard removal**. The screen states the terms up front: 14-day timelock, every party notified immediately, and the owners can cancel at any point during the countdown with an ordinary owner-threshold Safe transaction. The Administrator's key alone cannot cancel it — otherwise a stolen Ledger could block every emergency exit forever.
-2. Owners sign the initiation with their normal keys (threshold required) — this is an ordinary Safe-governance action, deliberately independent of the quantum layer *and* of the FermionWallet backend.
+2. Owners sign the initiation with their normal keys (threshold required) — this is an ordinary Safe-governance action, deliberately independent of the quantum layer *and* of the FermionGuard backend.
 3. The countdown card (shown above) is pinned to every owner's dashboard for the full 14 days: initiator, signatures, execute-no-earlier-than timestamp, and a **Cancel** path.
 4. After 14 days, the owners sign and execute the removal (`setGuard(address(0))`, an ordinary owner-threshold Safe transaction). The Safe is back to plain multisig — the app shows an unambiguous **UNPROTECTED** banner until a new key ceremony re-enables the Guard.
 
@@ -219,7 +219,7 @@ The device screen is the final authority — what you confirm there is exactly w
 7. **Policy hash** — short fingerprint.
 8. **Decision** — hold to approve, tap to reject. Rejecting or walking away costs nothing; no leaf is consumed until you approve.
 
-Administrative payloads show a warning header (`ADMIN ACTION — affects Safe governance`) and the decoded intent, e.g. *"Removes the FermionWallet Guard"*. The approval class is inside the signed payload — a compromised computer cannot dress an admin action up as a transfer.
+Administrative payloads show a warning header (`ADMIN ACTION — affects Safe governance`) and the decoded intent, e.g. *"Removes the FermionGuard"*. The approval class is inside the signed payload — a compromised computer cannot dress an admin action up as a transfer.
 
 ## Key health
 
@@ -227,7 +227,7 @@ Administrative payloads show a warning header (`ADMIN ACTION — affects Safe go
 
 The Quantum key tab shows the active key at a glance: ceremony words, parameter set, registration date, and the **leaf usage bar** read live from the on-chain bitmap. Warnings fire at 80% (amber), 95% (interstitial before every signature), and 100% (signing refused — rotate).
 
-**Desync alarms** live in the monthly stats line (`0 desync alarms` — green when zero). A desync means the chain shows a consumed leaf that this app never released: a potential key-compromise indicator. When the counter is non-zero, it does not stay quiet in a stats line — a **red banner pins to the top of every screen** (*"⚠ 1 desync alarm — a leaf was consumed outside this app. Treat as possible key compromise → review / start emergency rotation"*), signing is paused (fail-closed), and the Administrator is paged on **every configured alert channel simultaneously** (push, email, Slack/webhook — configured under *Settings → Notifications*; the pager route must include at least one channel that does not depend on the FermionWallet backend). The banner links to the exact on-chain event and to the [emergency rotation procedure](./quantum-key-registry.md#key-rotation-procedure-quantum-administrator).
+**Desync alarms** live in the monthly stats line (`0 desync alarms` — green when zero). A desync means the chain shows a consumed leaf that this app never released: a potential key-compromise indicator. When the counter is non-zero, it does not stay quiet in a stats line — a **red banner pins to the top of every screen** (*"⚠ 1 desync alarm — a leaf was consumed outside this app. Treat as possible key compromise → review / start emergency rotation"*), signing is paused (fail-closed), and the Administrator is paged on **every configured alert channel simultaneously** (push, email, Slack/webhook — configured under *Settings → Notifications*; the pager route must include at least one channel that does not depend on the FermionGuard backend). The banner links to the exact on-chain event and to the [emergency rotation procedure](./quantum-key-registry.md#key-rotation-procedure-quantum-administrator).
 
 **Rotate key** re-runs the ceremony with one extra proof from the old key. Plan rotation well before exhaustion — at typical treasury volume a 2^20 key lasts decades, so exhaustion warnings usually indicate abuse, not usage.
 
@@ -244,7 +244,7 @@ The **Audit log** tab (top navigation) is the append-only record of everything w
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| "Wrong app open" at preflight | Ledger is on the dashboard or another app | Open the FermionWallet XMSS app |
+| "Wrong app open" at preflight | Ledger is on the dashboard or another app | Open the FermionGuard XMSS app |
 | "Address mismatch" | Connected Ledger isn't the registered Quantum Administrator device | Use the enrolled device; the admin address is fixed at enrollment |
 | Sign button stays disabled | Two-source check failed, or 🆕 recipient not confirmed | If sources disagree: stop, report — possible tampering. Otherwise tick the out-of-band checkbox |
 | Row flipped 🟢 → 🟡 by itself | The Safe transaction was edited/replaced after approval | Open **See changes** for the field-by-field diff — re-approve only after reviewing it as a new transaction |
@@ -253,4 +253,4 @@ The **Audit log** tab (top navigation) is the append-only record of everything w
 | "Rotation overdue" interstitial | Key past 95% of its leaf budget | Run Rotate key now; signing stops entirely at 100% |
 | Row shows ⛓️ blocked by earlier nonce | A lower-nonce Safe transaction hasn't executed | Execute (or reject/replace) the earlier nonce; approvals only run in nonce order |
 | Approval expired before execution | Validity window shorter than the queue ahead of it (or network congestion) | Re-approve with the suggested window; each expiry costs one XMSS leaf, so fix the window rather than retrying blind |
-| Safe{Wallet} says *"FermionWallet: no quantum pre-approval for this transaction"* | Executing before quantum authorization | Wait for 🟢 — this error is the system working as intended |
+| Safe{Wallet} says *"FermionGuard: no quantum pre-approval for this transaction"* | Executing before quantum authorization | Wait for 🟢 — this error is the system working as intended |

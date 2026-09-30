@@ -1,22 +1,22 @@
 # Hardware Security Policy — Ledger-Only Architecture
 
-## FermionWallet Cryptographic Module (FCM)
+## FermionGuard Cryptographic Module (FCM)
 ### Hardware: Ledger device (Nano S Plus / Nano X / Stax / Flex), ST33-family Secure Element
-### Firmware: Ledger OS (BOLOS) + FermionWallet XMSS app v1.x
+### Firmware: Ledger OS (BOLOS) + FermionGuard XMSS app v1.x
 
 **Document Version:** 2.0
 **Date:** September 2026
-**Author:** FermionWallet Security & Cryptography Team
+**Author:** FermionGuard Security & Cryptography Team
 
-> **Supersedes** the former FIPS 140-3 security policy for the backend HSM (`FW-HSM-v1.0`). That module has been **removed from the architecture**: FermionWallet is Ledger-only. The sole cryptographic module is the Administrator's Ledger secure element running the [FermionWallet XMSS app](./ledger-xmss-app.md). There is no server HSM, no cloud enclave, no host-side keystore — and therefore **no Root Master Key**: at-rest protection of key material is intrinsic to the secure element and needs no module-managed key-wrapping hierarchy.
+> **Supersedes** the former FIPS 140-3 security policy for the backend HSM (`FW-HSM-v1.0`). That module has been **removed from the architecture**: FermionGuard is Ledger-only. The sole cryptographic module is the Administrator's Ledger secure element running the [FermionGuard XMSS app](./ledger-xmss-app.md). There is no server HSM, no cloud enclave, no host-side keystore — and therefore **no Root Master Key**: at-rest protection of key material is intrinsic to the secure element and needs no module-managed key-wrapping hierarchy.
 >
-> **Certification note.** Ledger secure elements are certified under **Common Criteria (EAL5+/EAL6+, AVA_VAN.5)** by ANSSI, not FIPS 140-3. This policy therefore does not claim FIPS validation; it maps the security objectives previously stated in FIPS terms onto the Ledger platform and states the invariants the FermionWallet XMSS app must enforce.
+> **Certification note.** Ledger secure elements are certified under **Common Criteria (EAL5+/EAL6+, AVA_VAN.5)** by ANSSI, not FIPS 140-3. This policy therefore does not claim FIPS validation; it maps the security objectives previously stated in FIPS terms onto the Ledger platform and states the invariants the FermionGuard XMSS app must enforce.
 
 ---
 
 ## 1. Module Overview & Cryptographic Boundary
 
-The cryptographic module is the Ledger device's **ST33-family secure element (SE)** executing the FermionWallet XMSS app under Ledger OS. It generates, stores, and exercises:
+The cryptographic module is the Ledger device's **ST33-family secure element (SE)** executing the FermionGuard XMSS app under Ledger OS. It generates, stores, and exercises:
 
 - the stateful hash-based **XMSS key** (RFC 8391 / NIST SP 800-208, `XMSS-SHA2_20_256`: $n=32, w=16, h=20$) — the post-quantum half of every hybrid pre-approval, and
 - the classical **ECDSA secp256k1 key** (`quantumAdmin` EOA) — the EIP-712 half,
@@ -26,7 +26,7 @@ both confined to the SE. The physical boundary is the SE package; the MCU, USB/B
 ```text
 +---------------------------- Ledger device -----------------------------+
 |  +----------------- Secure Element (boundary) ---------------------+   |
-|  |  FermionWallet XMSS app                                         |   |
+|  |  FermionGuard XMSS app                                         |   |
 |  |   - SK_SEED / SK_PRF (XMSS)      - SHA-256 engine               |   |
 |  |   - secp256k1 admin key          - TRNG + DRBG                  |   |
 |  |   - Monotonic leaf counter (SE NVRAM, increment-only)           |   |
@@ -97,7 +97,7 @@ both confined to the SE. The physical boundary is the SE package; the MCU, USB/B
 
 ## 5. Zeroization, Loss & Recovery
 
-- **Zeroization triggers:** `RETIRE_KEY` (one key), authorized device wipe, FermionWallet app deletion, or 3 consecutive PIN failures (all keys). The SE destroys `SK_SEED`/`SK_PRF` and the counter irreversibly.
+- **Zeroization triggers:** `RETIRE_KEY` (one key), authorized device wipe, FermionGuard app deletion, or 3 consecutive PIN failures (all keys). The SE destroys `SK_SEED`/`SK_PRF` and the counter irreversibly.
 - **The XMSS key is intentionally unrecoverable** — from the 24-word phrase, from Ledger Recover, from backups. This is a security feature, not a gap: any restore path would resurrect a stale leaf counter.
 - **Recovery is on-chain, not on-device.** A lost, wiped, or destroyed Ledger costs signing capability only, never funds: the organization runs the co-signed ceremony for a new XMSS root on a new device (`registerQuantumKey`, or emergency rotation via Safe governance — see [quantum-key-registry.md](./quantum-key-registry.md)), and the Safe's time-locked escape hatches never depend on the device.
 
@@ -117,4 +117,4 @@ both confined to the SE. The physical boundary is the SE package; the MCU, USB/B
 
 - The backend relayer and Safe App hold **no key material**; they relay Ledger-produced signatures and maintain only an advisory mirror of the leaf index (resynced from the on-chain bitmap — see [pre-approval-engine.md](./pre-approval-engine.md)).
 - The on-chain Guard independently verifies both hybrid halves and enforces leaf single-use in its bitmap, so even a fully compromised host cannot forge or replay an authorization.
-- Administrators must keep device firmware and the FermionWallet app updated through Ledger Live's authenticated channel only.
+- Administrators must keep device firmware and the FermionGuard app updated through Ledger Live's authenticated channel only.

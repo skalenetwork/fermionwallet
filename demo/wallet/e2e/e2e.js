@@ -1,11 +1,11 @@
-// End-to-end test of FermionWallet on the real Safe{Wallet}.
+// End-to-end test of FermionGuard on the real Safe{Wallet}.
 //
 // Drives headless Chrome through the product flow against a running stack
 // (demo/wallet/docker-compose.yml), exactly as a treasury team would:
 //   1. connect an owner with Safe{Wallet}'s "Private key" wallet
 //   2. create a dUSD transfer with Safe{Wallet}'s own Send flow and sign it
 //   3. try to execute it from Safe{Wallet}'s queue -> the Guard blocks it
-//   4. open the FermionWallet Safe App: the transfer is listed as needing
+//   4. open the FermionGuard Safe App: the transfer is listed as needing
 //      quantum approval; review it and sign on the Ledger (the device window)
 //   5. execute it from Safe{Wallet}'s queue -> it goes through, exact amount paid
 //
@@ -72,7 +72,7 @@ async function executeFromQueue(page) {
 
 (async () => {
   const st = await appApi('status');
-  if (!st.protected || !st.key) fail('the demo Safe is not protected by the FermionWallet Guard');
+  if (!st.protected || !st.key) fail('the demo Safe is not protected by the FermionGuard');
   if (st.key.leavesLeft < 1) {
     fail('the quantum key has no one-time signatures left. Reset the stack: ' +
       'docker compose down -v && docker compose up -d --wait');
@@ -129,12 +129,12 @@ async function executeFromQueue(page) {
     if ((await balanceOf(RECIPIENT)) !== 0n) fail('the unapproved transfer moved funds');
     step('blocked by the Guard, nothing paid');
 
-    step('approve it in the FermionWallet Safe App, signing on the Ledger');
+    step('approve it in the FermionGuard Safe App, signing on the Ledger');
     await page.goto(`${WALLET}/apps/open?safe=fwdemo:${SAFE}&appUrl=${encodeURIComponent(APP)}`, { waitUntil: 'networkidle' });
     const app = page.frameLocator('iframe').first();
     const row = app.locator(`[data-row="${queued.safeTxHash}"]`);
     for (let i = 0; !(await row.isVisible().catch(() => false)); i++) {
-      if (i > 120) fail('the transfer did not appear in the FermionWallet queue');
+      if (i > 120) fail('the transfer did not appear in the FermionGuard queue');
       await clickIfShown(page.getByRole('button', { name: 'Accept all' }), 100);
       if (await clickIfShown(page.getByText('I have read and understood'), 100)) {
         await page.getByRole('button', { name: 'Continue' }).click();

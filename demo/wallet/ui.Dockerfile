@@ -1,5 +1,5 @@
 # Safe{Wallet} web UI (the real, open-source safe-wallet-web) pre-built for the
-# local FermionWallet demo stack, served by the stack's reverse proxy.
+# local FermionGuard demo stack, served by the stack's reverse proxy.
 #
 # The upstream image compiles the Next.js static export at container start
 # (minutes, several GB of RAM). Building it once here makes `docker compose up`
@@ -7,7 +7,7 @@
 # gateway URL fixes the host port the stack is served on (8000).
 #
 # Build from the REPO ROOT:
-#   docker build -f demo/wallet/ui.Dockerfile -t fermionwallet-demo-wallet .
+#   docker build -f demo/wallet/ui.Dockerfile -t fermionguard-demo-wallet .
 ARG SAFE_WALLET_VERSION=v1.91.0
 FROM ghcr.io/safe-global/safe-wallet-web:${SAFE_WALLET_VERSION} AS build
 
@@ -17,7 +17,7 @@ ENV NEXT_PUBLIC_IS_PRODUCTION=true \
     NEXT_PUBLIC_DEFAULT_MAINNET_CHAIN_ID=31337 \
     NEXT_PUBLIC_SAFE_VERSION=1.4.1 \
     NEXT_PUBLIC_IS_OFFICIAL_HOST=false \
-    NEXT_PUBLIC_BRAND_NAME="Safe{Wallet} · FermionWallet demo" \
+    NEXT_PUBLIC_BRAND_NAME="Safe{Wallet} · FermionGuard demo" \
     NODE_OPTIONS=--max-old-space-size=8192
 # The one source change: show small balances by default. A local chain has no
 # price feed, so every token is worth "$0" and would otherwise hide as dust.

@@ -1,6 +1,6 @@
 # Ledger XMSS App
 
-Custom Ledger embedded app giving the Quantum Administrator a hardware-held, stateful XMSS signing key. This is the sole cryptographic module of the FermionWallet architecture (see [`pre-approval-engine.md`](./pre-approval-engine.md)) — there is no host-side or HSM signing path.
+Custom Ledger embedded app giving the Quantum Administrator a hardware-held, stateful XMSS signing key. This is the sole cryptographic module of the FermionGuard architecture (see [`pre-approval-engine.md`](./pre-approval-engine.md)) — there is no host-side or HSM signing path.
 
 ## Programming language
 
@@ -57,7 +57,7 @@ All commands are rejected while another signing session is in flight; no command
 
 **Supported devices.** Ledger **Nano S Plus, Nano X, Stax, and Flex** (all carry the ST33-family secure element with the monotonic-counter NVM primitives the app requires). The original Nano S is **not** supported: insufficient app flash for the XMSS working set. Minimum firmware: the latest stable Ledger OS for each device at release time, pinned in the app's `Cargo.toml`/manifest — the app refuses to install on older firmware.
 
-**Installation path (production).** Through **Ledger Live → My Ledger → App catalog → "FermionWallet XMSS"**, after the app passes Ledger's third-party security review and is listed. This is the only path end users should use: catalog apps are signed by Ledger, and the device's genuine check + Ledger Live's signature verification together guarantee an unmodified binary on a genuine device. Until catalog listing is complete, institutional pilot users install a Ledger-signed release build via the same Ledger Live mechanism under the "developer mode" listing — **never** a self-built sideload for a key that will guard real funds.
+**Installation path (production).** Through **Ledger Live → My Ledger → App catalog → "FermionGuard XMSS"**, after the app passes Ledger's third-party security review and is listed. This is the only path end users should use: catalog apps are signed by Ledger, and the device's genuine check + Ledger Live's signature verification together guarantee an unmodified binary on a genuine device. Until catalog listing is complete, institutional pilot users install a Ledger-signed release build via the same Ledger Live mechanism under the "developer mode" listing — **never** a self-built sideload for a key that will guard real funds.
 
 **Installation path (development only).** Engineers use `cargo ledger build` + `ledgerctl install` sideloading onto a dev device, and `speculos` for CI. Sideloaded builds display a persistent "PENDING LEDGER REVIEW" warning on the device (standard BOLOS behavior for unsigned apps); any device showing that warning must never hold a production key.
 
@@ -85,7 +85,7 @@ On-device screens for every flow, targeting both device families via the SDK's U
 
 | # | Screen | Content / action |
 |---|---|---|
-| 1 | Intent | "Generate quantum key for FermionWallet?" — shows the target slot ("Key 3 of 4 — keys 1–2 are kept"), parameter set (`XMSS-SHA2_20_256`) and lifetime ("~1,048,576 approvals") |
+| 1 | Intent | "Generate quantum key for FermionGuard?" — shows the target slot ("Key 3 of 4 — keys 1–2 are kept"), parameter set (`XMSS-SHA2_20_256`) and lifetime ("~1,048,576 approvals") |
 | 2 | Entropy notice | "Key is generated inside this device and cannot be exported or restored from your recovery phrase." Requires explicit acknowledgment — this is the #1 support surprise, surfaced before generation, not after |
 | 3 | Progress | Tree construction progress bar with time estimate (minutes on Nano-class MCUs); cancellable until complete |
 | 4 | Root review | Full root, chunked, multi-page; plus the derived **6-word ceremony code** rendered on-device — the words the owners will verify out-of-band come from the secure element itself, not from the host UI |
@@ -112,7 +112,7 @@ On-device screens for every flow, targeting both device families via the SDK's U
 
 On approve: NVM counter commits, *then* both hybrid halves stream out — the ECDSA signature and the XMSS signature over the same digest (counter-before-signature invariant). On reject or timeout (60 s idle on the decision screen): APDU error, no state change, no leaf consumed. Unknown or malformed payload fields abort the flow before screen 1 — there is no "review anyway" path.
 
-**Non-transfer classes (`PAYLOAD`/`ADMIN`):** the same flow with screens 2–4 replaced by target address (full, chunked), native ETH value, and the payload `dataHash` (first/last 8 hex). `ADMIN`-class payloads additionally show a warning header ("ADMIN ACTION — affects Safe governance") and, when the host supplies the decoded intent, a plain-language line such as "Removes the FermionWallet Guard". The class is part of the signed payload, so a host cannot present an admin action as a transfer.
+**Non-transfer classes (`PAYLOAD`/`ADMIN`):** the same flow with screens 2–4 replaced by target address (full, chunked), native ETH value, and the payload `dataHash` (first/last 8 hex). `ADMIN`-class payloads additionally show a warning header ("ADMIN ACTION — affects Safe governance") and, when the host supplies the decoded intent, a plain-language line such as "Removes the FermionGuard". The class is part of the signed payload, so a host cannot present an admin action as a transfer.
 
 ### Flow 3 — Rotation (`SIGN_ROTATION`, old-key possession proof)
 

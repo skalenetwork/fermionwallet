@@ -1,4 +1,4 @@
-"""Register the local chain and the FermionWallet Safe App in the Safe Config Service.
+"""Register the local chain and the FermionGuard Safe App in the Safe Config Service.
 
 Runs once, inside the safe-config-service image (`python src/manage.py shell`),
 after migrations and before cfg-web starts. It replaces the manual steps of
@@ -17,9 +17,9 @@ APP_URL = os.environ.get("FERMION_APP_URL", "http://localhost:8001/safe-app")
 chain, _ = Chain.objects.update_or_create(
     id=CHAIN_ID,
     defaults=dict(
-        name="FermionWallet Demo (anvil)",
+        name="FermionGuard Demo (anvil)",
         short_name="fwdemo",
-        description="Local anvil chain of the FermionWallet demo",
+        description="Local anvil chain of the FermionGuard demo",
         l2=True,
         is_testnet=True,
         relevance=1,
@@ -67,12 +67,12 @@ for key in ("SAFE_APPS", "EIP1559", "SAFE_TX_GAS_OPTIONAL", "ERC721", "SEND_FLOW
 SafeApp.objects.update_or_create(
     url=APP_URL,
     defaults=dict(
-        name="FermionWallet",
+        name="FermionGuard",
         description="Post-quantum second authorization: approve queued Safe transactions on your Ledger with hybrid ECDSA + XMSS signatures.",
         chain_ids=[CHAIN_ID],
-        icon_url="demo/fermionwallet.svg",
+        icon_url="demo/fermionguard.svg",
         listed=True,
         featured=True,
     ),
 )
-print(f"cfg bootstrap: chain {CHAIN_ID} + FermionWallet Safe App ({APP_URL}) registered")
+print(f"cfg bootstrap: chain {CHAIN_ID} + FermionGuard Safe App ({APP_URL}) registered")

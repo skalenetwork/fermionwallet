@@ -6,10 +6,10 @@ import {Safe} from "@safe-global/safe-contracts/contracts/Safe.sol";
 import {MultiSendCallOnly} from "@safe-global/safe-contracts/contracts/libraries/MultiSendCallOnly.sol";
 import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
 
-import {FermionWalletGuard} from "../../src/FermionWalletGuard.sol";
+import {FermionGuard} from "../../src/FermionGuard.sol";
 import {PreApprovalEngine, NO_MATCHING_PRE_APPROVAL} from "../../src/PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "../../src/QuantumKeyRegistry.sol";
-import {PropertyBase, FermionWalletGuardHarness, FrameRunner} from "./PropertyBase.sol";
+import {PropertyBase, FermionGuardHarness, FrameRunner} from "./PropertyBase.sol";
 
 /// A "token" whose transfer re-enters Safe.execTransaction with pre-signed inner
 /// transactions (catching and recording each outcome) — nested execution probe.
@@ -106,7 +106,7 @@ contract GuardHandler is PropertyBase {
 
     constructor(
         Safe safe_,
-        FermionWalletGuardHarness guard_,
+        FermionGuardHarness guard_,
         MockToken token_,
         MockToken token2_,
         MultiSendCallOnly msco_,
@@ -408,12 +408,12 @@ contract GuardHandler is PropertyBase {
         bool ok;
         bool expected;
         if (a == 0) {
-            (ok,) = _tryExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe))), Enum.Operation.Call, 0);
+            (ok,) = _tryExec(address(guard), 0, abi.encodeCall(FermionGuard.pauseSafe, (address(safe))), Enum.Operation.Call, 0);
             expected = true;
         } else {
             address[4] memory who = [address(0), owner3, ledger, stranger];
             vm.prank(who[a]);
-            (ok,) = address(guard).call(abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe))));
+            (ok,) = address(guard).call(abi.encodeCall(FermionGuard.pauseSafe, (address(safe))));
             expected = a != 3 && _now() >= mCooldownUntil;
         }
         _check(ok == expected, "pause outcome differs from model (cooldown)");
@@ -421,13 +421,13 @@ contract GuardHandler is PropertyBase {
     }
 
     function requestUnpause() external {
-        (bool ok,) = _tryExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestUnpauseSafe, ()), Enum.Operation.Call, 0);
+        (bool ok,) = _tryExec(address(guard), 0, abi.encodeCall(FermionGuard.requestUnpauseSafe, ()), Enum.Operation.Call, 0);
         _check(ok == mPaused, "requestUnpause outcome");
         if (ok) mUnpauseAt = _now() + ADMIN_TIMELOCK;
     }
 
     function unpause() external {
-        (bool ok,) = _tryExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.unpauseSafe, ()), Enum.Operation.Call, 0);
+        (bool ok,) = _tryExec(address(guard), 0, abi.encodeCall(FermionGuard.unpauseSafe, ()), Enum.Operation.Call, 0);
         _check(ok == (mUnpauseAt != 0 && _now() >= mUnpauseAt), "unpause timelock");
         if (ok) {
             mPaused = false;
@@ -461,15 +461,15 @@ contract GuardHandler is PropertyBase {
     function _escape(uint256 r, Sim memory m) internal view returns (bytes memory d, bool ok) {
         uint256 pick = r % 7;
         if (pick == 0) {
-            d = abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe)));
+            d = abi.encodeCall(FermionGuard.pauseSafe, (address(safe)));
             ok = true;
             m.paused = true;
         } else if (pick == 1) {
-            d = abi.encodeCall(FermionWalletGuard.requestUnpauseSafe, ());
+            d = abi.encodeCall(FermionGuard.requestUnpauseSafe, ());
             ok = m.paused;
             if (ok) m.unpauseAt = _now() + ADMIN_TIMELOCK;
         } else if (pick == 2) {
-            d = abi.encodeCall(FermionWalletGuard.unpauseSafe, ());
+            d = abi.encodeCall(FermionGuard.unpauseSafe, ());
             ok = m.unpauseAt != 0 && _now() >= m.unpauseAt;
             if (ok) {
                 m.paused = false;
@@ -477,11 +477,11 @@ contract GuardHandler is PropertyBase {
                 m.cooldown = _now() + ADMIN_TIMELOCK;
             }
         } else if (pick == 3) {
-            d = abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ());
+            d = abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ());
             ok = true;
             m.emergencyAt = _now() + EMERGENCY_TIMELOCK;
         } else if (pick == 4) {
-            d = abi.encodeCall(FermionWalletGuard.cancelEmergencyDeGuard, (address(safe)));
+            d = abi.encodeCall(FermionGuard.cancelEmergencyDeGuard, (address(safe)));
             ok = m.emergencyAt != 0;
             m.emergencyAt = 0;
         } else if (pick == 5) {
@@ -574,7 +574,7 @@ contract GuardHandler is PropertyBase {
                 _check(!iok[nEsc], "nested unapproved transaction executed");
                 _check(
                     _sel(ierr[nEsc])
-                        == (mi.paused ? FermionWalletGuard.SafePausedError.selector : FermionWalletGuard.NestedSafeTransaction.selector),
+                        == (mi.paused ? FermionGuard.SafePausedError.selector : FermionGuard.NestedSafeTransaction.selector),
                     "nested transaction not rejected as nested"
                 );
             }
@@ -587,10 +587,10 @@ contract GuardHandler is PropertyBase {
     function _checkProbe(bool ok, bytes memory err, bool paused) internal {
         bytes4 probeErr = _sel(err);
         _check(!ok, "unapproved probe executed");
-        _check(probeErr != FermionWalletGuard.NestedSafeTransaction.selector, "depth counter leaked across transactions");
+        _check(probeErr != FermionGuard.NestedSafeTransaction.selector, "depth counter leaked across transactions");
         _check(
             paused
-                ? probeErr == FermionWalletGuard.SafePausedError.selector
+                ? probeErr == FermionGuard.SafePausedError.selector
                 : keccak256(err) == keccak256(abi.encodeWithSignature("Error(string)", NO_MATCHING_PRE_APPROVAL)),
             "probe rejected for an unexpected reason"
         );
