@@ -75,6 +75,16 @@ jobs:
           grep -qE 'XMSS\.verify\(digest, sig, XMSS\.PublicKey\(\{root: xmssRoot, seed: xmssSeed\}\), treeHeight\)' src/FermionWallet.sol \
             || { echo "FermionWallet must call the four-argument XMSS.verify with its immutable treeHeight"; exit 1; }
 
+      - name: Every documented file, link and anchor still exists
+        # Three times in one day this repository documented a file that did not exist —
+        # a coverage script named by three specifications before anyone wrote it, a
+        # proof folder's README cited by two Solidity files and a generated document,
+        # and a model checker cited by the specification it was meant to check. Each was
+        # caught by a person reading carefully; none had to be. The checker also refuses
+        # a target that exists only in the author's working tree, which is the same
+        # broken link wearing a disguise.
+        run: python3 contracts/script/check_doc_links.py
+
       - name: The app, the host and the relayer agree about the wire
         # The APDU numbers and the signature blob's layout live in five places in three
         # languages, and nothing links them. Both times they drifted today the failure
