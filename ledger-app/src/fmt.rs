@@ -5,27 +5,78 @@
 //! bug (`ledger-xmss-app.md`: "no abbreviation of security-critical values"), so
 //! every writer here records overflow instead of trimming and callers size their
 //! buffers for the longest value the field can hold.
+//!
+//! Two rules make that a guarantee rather than an intention:
+//!
+//! * nothing here ever returns part of a value. A field that did not fit its buffer
+//!   reads `TOO_LONG`, and a timestamp past `MAX_UTC_SECS` reads `NOT_A_DATE` — both
+//!   digit-free, so neither can be misread as the value it replaced;
+//! * `Buf::overflowed` is sticky across `clear`, so a review that writes every field
+//!   through one buffer can ask, once, whether any page it is about to show says less
+//!   than the payload it is asking the holder to sign — and not show it.
 
-/// A fixed-capacity ASCII buffer. `overflowed` records that something did not fit,
-/// so a caller can refuse a payload rather than display half a value.
+/// What a field reads as when it did not fit its buffer. `as_str` returns this in
+/// place of the prefix that *did* fit: a truncated amount or a truncated chain id is
+/// a screen that says less than the payload, which is the bug this module exists to
+/// prevent. Deliberately digit-free, so no part of it can be read as a value.
+pub const TOO_LONG: &str = "FIELD TOO LONG - REJECT";
+
+/// What a timestamp reads as when `push_utc` will not draw it. See `MAX_UTC_SECS`.
+/// Digit-free for the same reason: there is no year in it to misread as a date.
+pub const NOT_A_DATE: &str = "NOT A DATE - REJECT";
+
+/// The last second `push_utc` will draw: 23:59:59 on 31 Dec 9999 UTC. One second
+/// later the year needs five digits, and a five-digit year is not a date any holder
+/// of this device is being asked to consent to — it is a `uint64` that no honest
+/// signer produced. `push_utc` writes `NOT_A_DATE` for it instead.
+pub const MAX_UTC_SECS: u64 = 253_402_300_799;
+
+/// Whether `push_utc` will draw this timestamp as a date. A caller that has a way to
+/// refuse — a status word, a rejected payload — should ask this *before* the review
+/// and refuse, rather than put `NOT_A_DATE` in front of the holder: the field is
+/// unreviewable either way, and refusing costs no one a decision.
+pub fn utc_renderable(secs: u64) -> bool {
+    secs <= MAX_UTC_SECS
+}
+
+/// A fixed-capacity ASCII buffer. `overflowed` records that something written into it
+/// could not be shown honestly, so a caller can refuse a payload rather than display
+/// half a value.
 pub struct Buf<const N: usize> {
     bytes: [u8; N],
     len: usize,
+    /// The value currently in the buffer did not fit. `clear` resets it.
     full: bool,
+    /// Some value written since `new` could not be shown honestly — it did not fit,
+    /// or `push_utc` refused to draw it. `clear` does *not* reset this: one `Buf` is
+    /// written once per field for a whole review, so this is the flag that answers
+    /// "was any page of that review a lie?" after the last field is built.
+    tainted: bool,
 }
 
 impl<const N: usize> Buf<N> {
     pub fn new() -> Self {
-        Buf { bytes: [0u8; N], len: 0, full: false }
+        Buf { bytes: [0u8; N], len: 0, full: false, tainted: false }
     }
 
+    /// The value, or `TOO_LONG` if it did not fit. Never a prefix of a value: a
+    /// caller that forgets to check `overflowed` still cannot put half an address or
+    /// a truncated number on the screen.
     pub fn as_str(&self) -> &str {
+        if self.full {
+            return TOO_LONG;
+        }
         // Only ASCII is ever written, so this is always valid UTF-8.
         core::str::from_utf8(&self.bytes[..self.len]).unwrap_or("")
     }
 
+    /// Sticky across `clear`: true once any value written into this buffer overflowed
+    /// it or was a timestamp `push_utc` would not draw. A review that builds its
+    /// fields in one `Buf` can therefore check this once, after the last field, and
+    /// not proceed — every such field is a page that shows less than the payload it
+    /// asks the holder to sign.
     pub fn overflowed(&self) -> bool {
-        self.full
+        self.tainted
     }
 
     /// Reuse the buffer for the next value. One `Buf` written many times keeps the
@@ -42,6 +93,7 @@ impl<const N: usize> Buf<N> {
             self.len += 1;
         } else {
             self.full = true;
+            self.tainted = true;
         }
     }
 
@@ -168,10 +220,28 @@ impl<const N: usize> Buf<N> {
 
     /// A Unix second as `21 Sep 2025 15:40 UTC`: the absolute time the payload
     /// signed, not a duration — durations hide clock-skew games.
+    ///
+    /// A timestamp past `MAX_UTC_SECS` is not drawn at all: it reads `NOT_A_DATE` and
+    /// taints the buffer. This ended with `push_u32(year as u32)` on a `uint64`
+    /// timestamp, so the year wrapped at 2^32 and every plausible date had an
+    /// enormous twin that rendered character for character the same —
+    /// `validUntil = 1790769600` and `validUntil = 135536078592187200` both drew
+    /// `30 Sep 2026 12:00 UTC`, while the digest covered the value that was sent.
+    /// `fermionwallet.md` [FWL-036] makes a signed transfer relayable by anyone until
+    /// `validUntil`, with no cancel path, and says short windows are the only control
+    /// there is. A holder who reads a date that has passed signs a replacement and
+    /// the relayer spends both: the amount leaves the wallet twice. So the year is
+    /// carried as `i64` and bounded to four digits *before* anything is drawn, and a
+    /// year outside that is not drawn at all — the holder is not asked to consent to
+    /// a field the screen is lying about.
     pub fn push_utc(&mut self, secs: u64) -> &mut Self {
         const MONTHS: [&str; 12] = [
             "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         ];
+        if !utc_renderable(secs) {
+            self.tainted = true;
+            return self.push_str(NOT_A_DATE);
+        }
         let tod = (secs % 86_400) as u32;
         // Civil date from days since the epoch (Howard Hinnant's civil_from_days).
         let z = (secs / 86_400) as i64 + 719_468;
@@ -185,10 +255,21 @@ impl<const N: usize> Buf<N> {
         let month = if mp < 10 { mp + 3 } else { mp - 9 };
         let year = if month <= 2 { y + 1 } else { y };
 
+        // The `secs` guard above already bounds the year at 9999. This bounds the
+        // *year itself*, before a single character is drawn, so that no arithmetic
+        // slip anywhere above this line can put a wrapped or five-digit year on the
+        // screen: the check and the thing it protects are one line apart.
+        if year < 1970 || year > 9999 {
+            self.tainted = true;
+            return self.push_str(NOT_A_DATE);
+        }
+
         self.push_u32(day as u32);
         self.push_str(" ");
         self.push_str(MONTHS[(month - 1) as usize]);
         self.push_str(" ");
+        // Lossless: `year` is in 1970..=9999 by the check above. It is the cast that
+        // used to be here without one that turned an unbounded window into a date.
         self.push_u32(year as u32);
         self.push_str(" ");
         self.push_two(tod / 3600);
