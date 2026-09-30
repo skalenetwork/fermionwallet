@@ -83,10 +83,22 @@ services:
   ledger:
     profiles: ["ledger"]
     image: ghcr.io/ledgerhq/speculos:latest
-    command: >-
-      --model nanosp --display headless --api-port 5000 --apdu-port 9999
-      --seed "test test test test test test test test test test test junk"
-      /app/app.elf
+    # The ELF is a bind mount, and Docker creates an empty DIRECTORY at a bind source
+    # that does not exist rather than refusing — so an unbuilt ledger-app/ produces a
+    # Speculos that starts, finds no app, and fails in a way that reads like an emulator
+    # problem. The entrypoint checks first and says what to run instead.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ ! -f /app/app.elf ] || [ ! -s /app/app.elf ]; then
+          echo "No Ledger app at ledger-app/build/nanos2/bin/app.elf."
+          echo "Build it first:  ./ledger-app/build.sh"
+          echo "Or point LEDGER_APP_ELF at an existing build."
+          exit 1
+        fi
+        exec speculos --model nanosp --display headless --api-port 5000 --apdu-port 9999 \
+          --seed "test test test test test test test test test test test junk" \
+          /app/app.elf
     volumes:
       - ${LEDGER_APP_ELF:-../../ledger-app/build/nanos2/bin/app.elf}:/app/app.elf:ro
     ports:
