@@ -1,6 +1,6 @@
 ---
 eip: <to be assigned>
-title: Hybrid post-quantum pre-approvals
+title: Hybrid Post-Quantum Pre-Approvals
 description: Transaction authorisations signed by both a classical and a hash-based key, matched and consumed atomically at execution
 author: Konstantin Kladko (@kladkogex)
 discussions-to: <URL>
@@ -8,14 +8,15 @@ status: Draft
 type: Standards Track
 category: ERC
 created: 2026-09-30
-requires: 165, 712, 1271
+requires: 20, 165, 712, 1271, 4337
 ---
 
 ## Abstract
 
 This ERC specifies *pre-approvals*: authorisation objects a smart account creates before a
-transaction is executed, each carrying two independent signatures over one EIP-712 digest — one
-classical (ECDSA or ERC-1271) and one post-quantum (a stateful hash-based signature) — and each
+transaction is executed, each carrying two independent signatures over one
+[EIP-712](./eip-712.md) digest — one classical (ECDSA or [ERC-1271](./eip-1271.md)) and one
+post-quantum (a stateful hash-based signature) — and each
 consumed exactly once, atomically, at execution time. It defines the three approval classes and
 what each one binds, the EIP-712 message both signers sign, the creation and validity rules, the
 two-tier matching that lets an enforcement hook find the right approval in constant bounded
@@ -54,7 +55,8 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted
 as described in RFC 2119 and RFC 8174.
 
-Normative statements are labelled `[PA-nn]`.
+Normative statements are labelled `[PA-nn]`. The numbers are stable identifiers, not a
+reading order: clauses added in a later revision keep the next free number wherever they belong.
 
 ### 1. Model and roles
 
@@ -108,12 +110,22 @@ Normative statements are labelled `[PA-nn]`.
   `PAYLOAD` or through a batch.
 - **[PA-10]** Implementations MUST emit a distinct event for `ADMIN` creation that includes the
   earliest execution time, so that watchers can act during the delay.
+- **[PA-45]** The class is fixed by the creation entry point, not carried in the request: an
+  implementation MUST expose one entry point per class and MUST set `approvalClass` in the
+  signed digest from the entry point that was called —
+  `createPreApproval` → `TRANSFER` (0), `createPayloadPreApproval` → `PAYLOAD` (1),
+  `createAdminPreApproval` → `ADMIN` (2) ([PA-39]). `PreApprovalRequest` (§3) therefore carries
+  no class member, while the type string of [PA-11] has `uint8 approvalClass` as its second
+  member; a signer computing the digest supplies the value belonging to the entry point it is
+  calling. An implementation MUST NOT offer a single entry point that takes the class as an
+  argument instead: one entry point per class is what keeps the class out of the relayer's
+  hands without a further check.
 
 ### 3. The signed message
 
 ```solidity
 struct PreApprovalRequest {
-    address account;       // `safe` in the type string
+    address safe;          // the account; see [PA-11] on the name
     address token;         // TRANSFER only
     address recipient;     // TRANSFER only
     uint256 amount;        // TRANSFER only
@@ -138,7 +150,12 @@ PreApproval(address safe,uint8 approvalClass,address token,address recipient,uin
 
 whose type hash is
 `0x5468891f128cc5ac3b167339395b9b79f129564c2b0b0e766beb737fa6422e19`. The member named `safe`
-is the account address; the name is part of the frozen type string.
+is the account address. That spelling is historical — the first implementation served Safe
+accounts — and is now frozen, because the type hash above, which every signing device and
+verifier reproduces, is the `keccak256` of this exact string. This ERC therefore uses `safe`
+for the account member of every structure that reaches the wire (`PreApprovalRequest`,
+`PreApproval`, the Tier-2 commitment of [PA-46], the events of §9) and reads it as "the
+account" throughout, rather than carrying two names for one value.
 
 - **[PA-12]** The digest MUST be `hashTypedDataV4` under the domain of the contract that
   verifies it, so that the chain id and that contract's address are bound. `name` and `version`
@@ -192,12 +209,23 @@ matching tiers are specified; an implementation MUST support both.
   a transaction whose approval expired.
 
 **Tier 2 — field commitment queue.** If `txHash == 0`, the approval joins a FIFO queue keyed by
-a commitment to its bound fields:
+a commitment to its bound fields.
 
-```text
-TRANSFER: keccak256(abi.encode(account, class, token, recipient, amount))
-other:    keccak256(abi.encode(account, class, target, value, dataHash))
-```
+- **[PA-46]** The commitment MUST be computed as the standard ABI encoding of exactly these
+  values, in this order and with these types, hashed with `keccak256`:
+
+| class | ABI types | values |
+| --- | --- | --- |
+| `TRANSFER` | `(address,uint8,address,address,uint256)` | `safe`, `approvalClass`, `token`, `recipient`, `amount` |
+| `PAYLOAD`, `ADMIN` | `(address,uint8,address,uint256,bytes32)` | `safe`, `approvalClass`, `target`, `value`, `dataHash` |
+
+  i.e. `keccak256(abi.encode(safe, approvalClass, token, recipient, amount))` and
+  `keccak256(abi.encode(safe, approvalClass, target, value, dataHash))`, with each value
+  32-byte aligned as the ABI requires and `approvalClass` encoded as its `uint8` value from §2.
+  The types are normative because the hook recomputes this commitment from the executing
+  transaction and compares it: two implementations that pack it differently cannot serve the
+  same approval, and `abi.encodePacked` in particular MUST NOT be used, since the two field
+  lists would then be ambiguous against each other.
 
 - **[PA-24]** The commitment MUST include the account address, so one account's approvals can
   never be matched against another's transaction.
@@ -218,13 +246,11 @@ other:    keccak256(abi.encode(account, class, target, value, dataHash))
 - **[PA-30]** Post-execution hooks MUST NOT be authorisation gates: all checks happen before
   execution.
 - **[PA-31]** When nothing matches, the enforcement hook MUST revert. It SHOULD revert with a
-  plain `Error(string)` reason rather than a custom error, because widely deployed account
-  front-ends decode only string reasons, and this revert is the message a legitimate owner sees
-  when they forgot to approve. The reference reason is:
-
-```text
-FermionGuard: no quantum pre-approval for this transaction. Approve it in the FermionGuard app first.
-```
+  plain `Error(string)` reason rather than a custom error, and that reason SHOULD name the
+  missing pre-approval and where to obtain one, in words an account owner can act on. The
+  string itself is the implementation's; widely deployed account front-ends decode only string
+  reasons, and this particular revert is the one a legitimate owner hits, which is why the
+  clause constrains the *kind* of revert and not the copy. See the Rationale for an example.
 
 - **[PA-32]** An approval MUST be consumable only while `validFrom <= block.timestamp <= validTo`
   and its key is usable (`[PA-34]`).
@@ -253,8 +279,10 @@ FermionGuard: no quantum pre-approval for this transaction. Approve it in the Fe
 
 ### 8. Interface
 
-- **[PA-39]** A conforming implementation MUST expose these functions (types, order and
-  mutability normative; names informative):
+- **[PA-39]** A conforming implementation MUST expose these functions under exactly these
+  names, with these parameter types in this order and this mutability. Function *parameter*
+  names are informative — they do not enter the selector — but the function names do, so they
+  are normative, and [PA-45] additionally binds each creation entry point to one class.
 
 ```solidity
 interface IHybridPreApprovals {
@@ -292,12 +320,47 @@ interface IHybridPreApprovals {
 - **[PA-40]** `validatePreApproval` is a convenience view and MUST NOT be the consumption
   mechanism: an implementation MUST NOT accept its result in place of the checks of §5. Its
   `reason` string is informative.
-- **[PA-41]** `ADMIN_TIMELOCK` MUST be immutable after deployment. A system that also offers a
-  key-independent way to detach the enforcement hook MUST make that delay strictly longer than
-  `ADMIN_TIMELOCK`, so that the fast path is always the co-signed one.
-- **[PA-42]** The stored approval record MUST contain at least the fields of
-  `PreApprovalRequest` plus `id`, `approvalClass`, a hash of the post-quantum signature, and
-  the `used` and `revoked` flags, and MUST be readable through `getPreApproval`.
+- **[PA-41]** `ADMIN_TIMELOCK` MUST be immutable after deployment and MUST be at least 24
+  hours. That delay is the whole content of [PA-10]: a watcher that learns of an `ADMIN`
+  approval from an event has to notice it, reach a human and get a revoking transaction mined,
+  so a timelock of seconds makes the event decorative rather than actionable. A system that
+  also offers a key-independent way to detach the enforcement hook MUST make that delay
+  strictly longer than `ADMIN_TIMELOCK`, so that the fast path is always the co-signed one.
+- **[PA-42]** `getPreApproval` returns the stored record, so its layout is part of this ERC's
+  ABI and MUST be exactly:
+
+```solidity
+struct PreApproval {
+    bytes32 id;                // keccak256(abi.encodePacked(safe, nonce))  [PA-18]
+    address safe;              // the account
+    ApprovalClass class_;      // uint8 on the wire; the value of §2
+    // TRANSFER fields; zero for the other classes  [PA-06]
+    address token;
+    address recipient;
+    uint256 amount;
+    // PAYLOAD / ADMIN fields; zero for TRANSFER  [PA-06]
+    address target;
+    uint256 value;
+    bytes32 dataHash;          // keccak256 of the exact calldata
+    // common
+    uint64  validFrom;
+    uint64  validTo;
+    bytes32 nonce;
+    bytes32 quantumKeyId;
+    uint32  xmssLeafIndex;
+    bytes32 policyHash;
+    bytes32 txHash;            // Tier-1 pin; 0 = Tier-2 field queue
+    bytes32 signatureHash;     // keccak256 of the post-quantum signature  [PA-20]
+    bool    used;
+    bool    revoked;
+}
+```
+
+  The field *order* is normative, because the struct is returned by value and a caller decodes
+  it positionally. `id`, `class_`, `signatureHash`, `used` and `revoked` are the members that
+  are not in `PreApprovalRequest`; the rest carry the request's values unchanged. The name
+  `safe` here matches the `safe` member of the type string in [PA-11] and is read as "the
+  account".
 
 ### 9. Events and errors
 
@@ -329,29 +392,34 @@ error NotRevocable(bytes32 id);
 error NonZeroClassFields();
 ```
 
-### 10. Enforcement hook (informative)
+### 10. Enforcement hook
 
-This ERC specifies the authorisation object, not the hook that enforces it; the hook is
-necessarily specific to the account implementation (for Safe accounts, a transaction guard and
-a module guard). A conforming enforcement hook is expected to:
+This ERC does not specify *how* the hook attaches to an account — that is necessarily specific
+to the account implementation, and the Rationale gives the Safe case. The clauses below are
+normative because each one names a path by which value leaves the account with no approval
+consumed: without them the objects of §1–§9 authorise nothing, whatever the hook's mechanism.
 
-1. classify the executing transaction into exactly one class — self-calls and calls to the
-   enforcement contract are `ADMIN`; a bare native send is `PAYLOAD`; a token `transfer` is
-   `TRANSFER`; anything else is `PAYLOAD`;
-2. recompute the account's own transaction hash itself for Tier-1 matching, rather than trusting
-   a caller-supplied hash;
-3. refuse `delegatecall` except to a pinned, call-only batching library, and bind the whole
-   batch by hashing its calldata;
-4. refuse transactions whose parameters can pay out balances as "gas refunds";
-5. refuse the account-level constructs that would let a transaction bypass the hook entirely —
-   for Safe accounts: an installed fallback handler (which can answer ERC-1271 signature checks
-   with no transaction at all), and enabled modules on versions where module execution is not
-   guarded;
-6. keep a key-independent, time-locked path to detach itself (`[PA-41]`), so that a lost device
-   or an exhausted key can never permanently freeze the account.
-
-Items 4 and 5 are not decoration: each closes a path by which value leaves the account without
-any pre-approval being consumed.
+- **[PA-47]** The hook MUST derive the class from the executing transaction alone and
+  deterministically: the same transaction MUST always yield the same class, and the derivation
+  MUST NOT be influenced by any value the caller supplies for that purpose. A call whose target
+  is the account itself or the enforcement contract MUST be classified `ADMIN` ([PA-09]).
+- **[PA-48]** The hook MUST recompute the account's own transaction hash itself for Tier-1
+  matching, and MUST NOT accept a hash supplied by the caller.
+- **[PA-49]** The hook MUST refuse `delegatecall` except to addresses fixed at deployment whose
+  code cannot make arbitrary calls with the account's authority; a batch executed that way MUST
+  be bound by hashing the whole batch calldata into `dataHash`, not by inspecting its legs.
+- **[PA-50]** The hook MUST refuse a transaction whose own parameters can pay out the account's
+  balances outside the matched approval — for example a fee or gas-refund receiver, token and
+  amount chosen by the transaction.
+- **[PA-51]** The hook MUST NOT treat an account as protected while that account carries a
+  construct through which value can leave without the hook running: a fallback handler able to
+  answer signature checks with no transaction at all, or enabled modules on an account version
+  whose module execution the hook does not see. It MUST do one of two things — refuse
+  enrollment while the account is in that state, or refuse to authorise the account's
+  transactions while it is — and MUST NOT proceed as though the account were protected.
+- **[PA-52]** The hook MUST keep a path to detach itself that does not require the hash-based
+  key, time-locked as [PA-41] requires, so that a lost device or an exhausted key cannot
+  permanently freeze the account.
 
 ## Rationale
 
@@ -403,6 +471,26 @@ whether there is an emergency. The `ADMIN` exception exists because `ADMIN` appr
 mechanism for removing an owner, and a universal single-owner veto makes a rogue owner
 irremovable without falling back to the slow key-independent path. `[PA-36]`, `[PA-37]`.
 
+**How the hook attaches, and why that is not in §10.** §10 states properties; the mechanism
+that delivers them belongs to the account implementation. In the reference deployment the hook
+is a Safe transaction guard and module guard at one address, so [PA-48] is served by
+recomputing `getTransactionHash` from the guard's own arguments, [PA-49] by refusing
+`delegatecall` to anything but a pinned `MultiSendCallOnly`, [PA-50] by refusing non-zero
+`gasPrice`/`gasToken`/`refundReceiver`, and [PA-51] by reading the Safe's fallback-handler and
+module storage at enrollment and refusing to enrol an account that has either. A different
+account implementation will satisfy the same clauses through entirely different reads, which is
+why naming Safe's would have bound implementers to one account family. The classification of
+[PA-47] is likewise a property, not a taxonomy; the taxonomy that satisfies it in the reference
+deployment is: a call to the account or to the enforcement contract is `ADMIN`, a bare native
+send is `PAYLOAD`, a token `transfer` is `TRANSFER`, and anything else is `PAYLOAD`.
+
+**What the no-match revert should say.** [PA-31] constrains the kind of revert, not the words.
+The reference deployment's string is
+`"FermionGuard: no quantum pre-approval for this transaction. Approve it in the FermionGuard app first."`
+— it names what is missing and the next action, and it survives the round trip through a
+front-end that renders only `Error(string)`. A bare selector in the same place turns a
+recoverable mistake into a support ticket, which is the whole argument for the clause.
+
 **Why the signature bytes are not stored.** A hash-based signature is 2.6–2.9 kB. Storing it
 per approval would cost hundreds of thousands of gas, could be used to bloat state cheaply, and
 serves no on-chain purpose after verification; its hash is enough to prove later which
@@ -419,13 +507,14 @@ today and a contract signer later. The post-quantum half is specified by the com
 ERC; another stateful hash-based scheme could be substituted without changing this document's
 structure, provided its one-time state is accounted for as that ERC requires.
 
-Pre-approvals are orthogonal to ERC-4337: an approval is consumed by the account's own
+Pre-approvals are orthogonal to [ERC-4337](./eip-4337.md): an approval is consumed by the
+account's own
 execution path, whatever assembles that execution.
 
 ## Test Cases
 
-Behaviour every implementation SHOULD cover; the reference implementation's suite covers each
-of these:
+Behaviour worth covering in any implementation; the reference implementation's suite covers
+each of these:
 
 | case | expected |
 | --- | --- |
@@ -447,7 +536,7 @@ of these:
 | execution while the approval's key is `Rotated` | succeeds (`[PA-34]`) |
 | execution while the approval's key is `Revoked` | revert |
 | execution before `validFrom` or after `validTo` | revert |
-| ERC-20 `transfer` execution carrying non-zero native value | revert (`[PA-07]`) |
+| [ERC-20](./eip-20.md) `transfer` execution carrying non-zero native value | revert (`[PA-07]`) |
 | Tier-2 queue full of expired entries, new creation | succeeds after pruning (`[PA-27]`) |
 | a not-yet-valid entry at the queue head, a live entry behind it | the live entry is consumed, the scheduled one remains (`[PA-28]`) |
 | pin replacement while the pinned approval is live | revert `TxHashAlreadyPinned` |
@@ -486,8 +575,9 @@ and the string revert of `[PA-31]` when nothing matches.
 ## Security Considerations
 
 **The hook is the whole security boundary.** A pre-approval scheme protects an account only if
-every path by which value can leave passes through the hook. The paths that do not, and must be
-closed (§10), are: an installed fallback handler answering ERC-1271 signature checks off-chain
+every path by which value can leave passes through the hook. The paths that do not, and that
+`[PA-47]`–`[PA-52]` exist to close, are: an installed fallback handler answering ERC-1271
+signature checks off-chain
 (Permit, Permit2 and order protocols then move tokens with no transaction at all); modules
 executing on account versions that do not consult a module guard; `delegatecall` to arbitrary
 code; token allowances granted before enrollment or through `approve`/`increaseAllowance`/
@@ -499,8 +589,8 @@ only.
 amount) is matched by *any* transaction with those fields, once. That is what makes recurring
 payments usable and also what a careless integration gets wrong: an approval for a large amount
 sitting in a queue is a bearer instrument for exactly one transfer of that amount to that
-recipient. Deployments SHOULD prefer Tier-1 pins when the transaction is already known, and
-SHOULD keep windows short (`[PA-19]` is a floor, not a recommendation).
+recipient. Prefer Tier-1 pins when the transaction is already known, and keep windows short:
+`[PA-19]` is a floor, not a recommendation.
 
 **Windows and validator skew.** `block.timestamp` is manipulable within seconds; `MIN_WINDOW`
 exists so that no implementation depends on finer resolution. A window is not a rate limit: two
@@ -508,14 +598,16 @@ approvals with overlapping windows can both be consumed.
 
 **Revocation is a race, not a guarantee.** Revoking a pre-approval is a transaction, and it can
 lose to the execution it was meant to stop. The `ADMIN_TIMELOCK` is the only mechanism here
-that *guarantees* a reaction window, and only for `ADMIN` actions. Deployments SHOULD monitor
-`PreApprovalCreated` and `AdminPreApprovalCreated` events and alert immediately, and SHOULD
-treat the pause/freeze facilities of §10 as the primary response.
+that *guarantees* a reaction window, and only for `ADMIN` actions — which is why `[PA-41]`
+puts a floor under it. A deployment that does not monitor `PreApprovalCreated` and
+`AdminPreApprovalCreated` and alert immediately has no reaction at all; and because revocation
+races the execution, the reliable last resort is the time-locked detach path of `[PA-52]`, not
+revocation.
 
 **A consumed leaf is spent even on failure.** `[PA-29]` is deliberate — it is what makes leaf
 accounting sound — but it means a transaction that fails for an unrelated reason (slippage, a
-token's own revert) costs a one-time signature. Clients SHOULD simulate before consuming, and
-key heights SHOULD be chosen with a margin for failed executions.
+token's own revert) costs a one-time signature. A client is well advised to simulate before
+consuming, and to choose key heights with a margin for failed executions.
 
 **The administrator is a single point of compromise for *creating* approvals, not for
 executing them.** An attacker who holds both the device and the administrator's classical key
@@ -526,11 +618,10 @@ factors into one.
 
 **Class confusion.** If an enforcement hook classifies a transaction differently from the way
 the signer's client did, an approval for a benign-looking object can be consumed by a different
-action. Implementations MUST derive the class from the executing transaction alone, deterministically
-(`[PA-05]`), MUST refuse administrative selectors inside batches (`[PA-09]`), and SHOULD have a
-test for each dispatch branch — including the boundary cases: empty calldata, calldata shorter
-than four bytes, a self-call, a call to the enforcement contract, and a batch whose legs target
-the account.
+action. `[PA-05]` and `[PA-47]` are what forbid that, and `[PA-09]` is what keeps an
+administrative selector from riding inside a batch. Every dispatch branch wants its own test,
+including the boundary cases: empty calldata, calldata shorter than four bytes, a self-call, a
+call to the enforcement contract, and a batch whose legs target the account.
 
 **Queue griefing.** `[PA-26]`–`[PA-28]` together are what stop an adversary from making
 consumption expensive or a commitment unusable. Note that only the administrator's key can

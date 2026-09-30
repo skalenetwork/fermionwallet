@@ -16,6 +16,7 @@ signature nobody can call, fails here rather than in someone's integration.
 Usage: python3 eips/check_eips.py [--verbose]
 Exit code 0 = clean.
 """
+import json
 import os
 import re
 import shutil
@@ -68,6 +69,9 @@ ALLOWED_LINK_PATTERNS = [
 # EIP-1 `author` header: `Name <email>`, `Name (@handle)`, `Name (@handle) <email>` or a bare
 # `Name`, comma-separated, and at least one entry must carry a GitHub handle.
 AUTHOR_ENTRY = re.compile(r"^[^(<,]+?(?: \(@[A-Za-z0-9-]+\))?(?: <[^@>]+@[^@>]+>)?$")
+# A link to a sibling proposal. `./eip-165.md` resolves only inside ethereum/ERCs, so its
+# shape is checked and its existence is not.
+PROPOSAL_LINK = re.compile(r"^\.?/?(?:eip|erc)-[0-9]+\.md(?:#[\w-]+)?$")
 
 # Which Solidity each draft is checked against.
 SOURCES = {
@@ -219,10 +223,60 @@ def check_links(draft, path, text):
                 fail(draft, f"absolute link eipw's `markdown-relative-links` rejects: {target}")
         elif target.startswith("#"):
             continue
+        elif PROPOSAL_LINK.match(target):
+            # A reference to a sibling proposal: `./eip-165.md` is the form the ERCs
+            # repository uses (display `ERC-165`, target `eip-165.md`) and the form
+            # `markdown-link-first` wants. It resolves only once the draft sits in that
+            # repository, so it is checked for shape here, not for existence on disk.
+            continue
         else:
             resolved = os.path.normpath(os.path.join(os.path.dirname(path), target))
             if not os.path.exists(resolved):
                 fail(draft, f"relative link does not resolve: {target}")
+
+
+def strip_code(text):
+    """Drop fenced blocks and inline code, the way eipw's markdown visitors do.
+
+    `enter_code` and `enter_code_block` both return `SkipChildren` in eipw
+    (`eipw-lint/src/lints/markdown/{regex,link_first}.rs`), so a proposal reference
+    inside `IERC165` or inside a Solidity block is invisible to those lints. Matching
+    that is the difference between a useful check and a wall of false positives.
+    """
+    text = re.sub(r"^```.*?^```", "", text, flags=re.S | re.M)
+    return re.sub(r"`[^`\n]*`", "", text)
+
+
+def check_eipw_markdown(draft, text):
+    """The body lints in ethereum/ERCs `config/eipw.toml` that are pure pattern checks."""
+    body = strip_code(text.split("---\n", 2)[-1])
+
+    # markdown-link-first: the first prose mention of a proposal must be a link.
+    linked, seen = set(), set()
+    for m in re.finditer(r"\[([^\]]*)\]\([^)]*\)|((?i:eip|erc)-[0-9]+)", body):
+        if m.group(1) is not None:
+            linked.update(re.findall(r"(?i:eip|erc)-[0-9]+", m.group(1)))
+            continue
+        ref = m.group(2)
+        if ref not in linked and ref not in seen:
+            seen.add(ref)
+            fail(draft, f"the first mention of {ref} must be a link (eipw "
+                        f"`markdown-link-first`), e.g. [{ref}](./eip-{ref.split('-')[1]}.md)")
+
+    # markdown-re-eip-dash / markdown-re-erc-dash.
+    for bad in sorted(set(re.findall(r"(?i)((?:eip|erc)[\s]*[0-9]+)", body))):
+        fail(draft, f"proposals must be written `EIP-N`/`ERC-N`, found {bad!r}")
+
+    # markdown-no-backticks: a proposal reference must not be inside a code span. Code spans
+    # are paired left to right — a naive regex happily spans the gap between two of them.
+    prose = re.sub(r"^```.*?^```", "", text, flags=re.S | re.M)
+    for span in re.finditer(r"`([^`\n]*)`", prose):
+        for bad in sorted(set(re.findall(r"(?i:eip|erc)-[0-9]+", span.group(1)))):
+            fail(draft, f"proposal reference {bad} must not be inside backticks")
+
+    # markdown-no-smart-quotes.
+    for ch in sorted(set(text) & set("“”‘’")):
+        fail(draft, f"smart quote U+{ord(ch):04X} — use straight quotes")
 
 
 # ── fidelity to the Solidity ────────────────────────────────────────────────
@@ -349,6 +403,92 @@ def check_labels(drafts):
             fail(draft, f"clause numbering has gaps: {missing}")
 
 
+ASSET_VECTOR = "assets/erc-draft-xmss-verification/vector-xmss-sha2_10_256.json"
+LIBRARY_VECTOR = "contracts/lib/xmss-solidity/test/vectors/xmss_h10.json"
+XMSS_REF_PY = "contracts/lib/xmss-solidity/py"
+
+
+def check_asset_vector():
+    """Run the published test vector, instead of only checking that its link resolves.
+
+    A draft's Test Cases section is a promise about behaviour; an asset nothing executes is
+    a promise that rots. This loads the asset, checks that its key material is still the
+    library's own `h = 10` vector (so the file the ERC ships and the file the Solidity tests
+    use cannot drift apart), and verifies every case with the submodule's independent Python
+    transcription of RFC 8391 — each `accept` case must verify, each `reject` case must not.
+    """
+    draft = "erc-draft-xmss-verification.md"
+    path = os.path.join(HERE, ASSET_VECTOR)
+    if not os.path.exists(path):
+        fail(draft, f"the Test Cases asset is missing: {ASSET_VECTOR}")
+        return
+    with open(path) as f:
+        asset = json.load(f)
+
+    lib_path = os.path.join(REPO, LIBRARY_VECTOR)
+    if os.path.exists(lib_path):
+        with open(lib_path) as f:
+            lib = json.load(f)
+        for field in ("h", "root", "seed"):
+            if str(asset.get(field)).lower() != str(lib.get(field)).lower():
+                fail(draft, f"asset {field}={asset.get(field)!r} is no longer the library's "
+                            f"h=10 vector ({lib.get(field)!r})")
+        lib_by_idx = {v["idx"]: v for v in lib["vectors"]}
+        for v in asset["vectors"]:
+            ref = lib_by_idx.get(v["idx"])
+            if ref is None or v.get("mutation"):
+                continue
+            if v["msg"].lower() != ref["msg"].lower() or v["r"].lower() != ref["r"].lower() \
+                    or [w.lower() for w in v["wotsSig"]] != [w.lower() for w in ref["wotsSig"]] \
+                    or [w.lower() for w in v["auth"]] != [w.lower() for w in ref["auth"]]:
+                fail(draft, f"asset vector idx={v['idx']} differs from the library's vector")
+    else:
+        notes.append(f"{draft}: asset not cross-checked against {LIBRARY_VECTOR} (submodule "
+                     f"not checked out)")
+
+    # The draft says the reject case is a single-bit mutation of the first vector.
+    genuine = next((v for v in asset["vectors"] if not v.get("mutation")), None)
+    mutated = next((v for v in asset["vectors"] if v.get("mutation")), None)
+    if mutated is None:
+        fail(draft, "the asset has no `reject` case; the Test Cases table requires one")
+    elif genuine is not None:
+        def bits(v):
+            blob = bytes.fromhex(v["msg"][2:] + v["r"][2:]
+                                 + "".join(w[2:] for w in v["wotsSig"])
+                                 + "".join(w[2:] for w in v["auth"]))
+            return int.from_bytes(blob, "big")
+        if genuine["idx"] != mutated["idx"]:
+            fail(draft, "the asset's reject case is not a mutation of a genuine vector")
+        elif bin(bits(genuine) ^ bits(mutated)).count("1") != 1:
+            fail(draft, "the asset's reject case differs from the genuine vector in "
+                        f"{bin(bits(genuine) ^ bits(mutated)).count('1')} bits, "
+                        "not the single bit the draft claims")
+
+    ref_dir = os.path.join(REPO, XMSS_REF_PY)
+    if not os.path.isdir(ref_dir):
+        notes.append(f"{draft}: asset vectors not executed (no {XMSS_REF_PY})")
+        return
+    sys.path.insert(0, ref_dir)
+    try:
+        import xmss_ref
+    except Exception as exc:                                    # pragma: no cover
+        notes.append(f"{draft}: asset vectors not executed ({exc})")
+        return
+    finally:
+        sys.path.pop(0)
+
+    b = lambda s: bytes.fromhex(s[2:] if s.startswith("0x") else s)
+    root, seed = b(asset["root"]), b(asset["seed"])
+    for v in asset["vectors"]:
+        got = xmss_ref.verify(b(v["msg"]), v["idx"], b(v["r"]),
+                              [b(w) for w in v["wotsSig"]], [b(w) for w in v["auth"]],
+                              root, seed)
+        want = v["expect"] == "accept"
+        if got != want:
+            fail(draft, f"asset vector idx={v['idx']} expect={v['expect']} but RFC 8391 "
+                        f"verification returned {got}")
+
+
 def check_type_hashes(draft, text, sources):
     """A draft that quotes a type hash as a literal must quote the right one.
 
@@ -411,6 +551,7 @@ def main():
         check_preamble(draft, text)
         check_sections(draft, text)
         check_links(draft, path, text)
+        check_eipw_markdown(draft, text)
         flat_norm = check_fidelity(draft, text, SOURCES[draft])
         check_type_hashes(draft, text, SOURCES[draft])
         if draft == "erc-draft-xmss-verification.md":
@@ -420,6 +561,7 @@ def main():
                   f"against {', '.join(SOURCES[draft])}")
 
     check_labels(texts)
+    check_asset_vector()
 
     for note in notes:
         print(f"note: {note}")

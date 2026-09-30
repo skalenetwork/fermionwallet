@@ -9,15 +9,19 @@ and in the shape `ethereum/ERCs` expects. Three drafts, one per layer, each stan
 | [`ERCS/erc-draft-hash-based-key-registry.md`](ERCS/erc-draft-hash-based-key-registry.md) | key lifecycle | registration, rotation and time-locked revocation of a device-held one-time-signature key for a smart account, as a complete state machine |
 | [`ERCS/erc-draft-hybrid-pre-approvals.md`](ERCS/erc-draft-hybrid-pre-approvals.md) | authorisation | authorisations carrying one classical and one post-quantum signature over one EIP-712 digest, matched and consumed atomically at execution |
 
-They compose upwards — the registry requires the verification ERC's leaf rules, the pre-approval
-ERC requires the registry's key states — and each is independently implementable. The drafts are
-CC0 ([`LICENSE.md`](LICENSE.md)); the code they describe is not.
+They compose upwards, and they do it in normative text: `[KR-09]` and `[KR-12]` of the registry
+draft cite `[XV-19]`–`[XV-24]` of the verification draft, and `[PA-15]`, `[PA-17]` and `[PA-34]`
+of the pre-approval draft cite `[KR-06]`, `[KR-30]`–`[KR-32]` and `[KR-40]`. Those are MUSTs
+whose content lives in a sibling document, so the three are **not independently implementable
+and must be submitted together**: only the verification draft stands alone. Once numbers exist,
+each cross-citation becomes an `[ERC-N](./eip-N.md)` link and each sibling goes into `requires:`.
+The drafts are CC0 ([`LICENSE.md`](LICENSE.md)); the code they describe is not.
 
 ## What came from where
 
 | repository specification | became |
 | --- | --- |
-| `quantum-key-registry.md`, `contracts/src/QuantumKeyRegistry.sol`, `contracts/test/registry-proof/RegistrySpec.sol` | the registry draft (the proved state machine is its §5 table) |
+| `quantum-key-registry.md`, `contracts/src/QuantumKeyRegistry.sol`, `contracts/test/registry-proof/RegistrySpec.sol` | the registry draft (§5 is the specification's transition table; the draft's Test Cases section says which of its rows are proved and which are not — `rotate`'s post-state is not) |
 | `pre-approval-engine.md`, `contracts/src/PreApprovalEngine.sol` | the pre-approval draft |
 | `xmss-solidity` (`src/XMSS.sol`, `test/proof/RFC8391.sol`), `contracts/src/XmssVerifier.sol` | the verification draft |
 | `fermionguard-module.md`, `contracts/src/FermionGuard.sol` | the pre-approval draft's §10 (informative) and its Security Considerations |
@@ -56,18 +60,34 @@ The drafts are complete except for what only the EIP process can assign. To subm
    asset link in the Test Cases section.
 3. **Resolve the cross-references.** Each draft refers to its siblings by name ("the companion
    ERC on …") because no numbers exist yet. Once the numbers are assigned, replace those phrases
-   with `[ERC-N](./erc-N.md)` links and add the numbers to `requires:`. The `[XV-nn]`, `[KR-nn]`
+   with `[ERC-N](./eip-N.md)` links and add the numbers to `requires:`. The `[XV-nn]`, `[KR-nn]`
    and `[PA-nn]` labels are stable and can be cited across drafts as they are.
-4. **Lint.** The editors' linter is `eipw`:
+
+   The links the drafts already carry to published proposals — `[ERC-165](./eip-165.md)`,
+   `[EIP-712](./eip-712.md)` and so on — are the form `ethereum/ERCs` uses: the display text is
+   `ERC-N` or `EIP-N`, the target is always `eip-N.md`, and `eipw`'s `markdown-link-first`
+   requires the *first* prose mention of each proposal to be one. They resolve only once the
+   file sits in `ERCS/` next to the rest of the corpus, so nothing in this repository can
+   follow them; `check_eips.py` checks their shape and deliberately does not look for them on
+   disk.
+4. **Lint.** The editors' linter is `eipw`, configured by
+   `config/eipw.toml` in `ethereum/ERCs`:
    ```sh
    cargo install eipw          # needs a Rust toolchain
    eipw eips/ERCS/*.md
    ```
-   It is not run in this repository's CI (no Rust toolchain in the contracts job);
-   `check_eips.py` below covers the structural rules it enforces, plus fidelity checks `eipw`
-   cannot make. Expect `eipw` to complain about `eip: <to be assigned>` and the placeholder
-   `discussions-to:` until step 1 and step 2 are done — those two are the point of the
-   placeholders.
+   It is not run in this repository's CI (no Rust toolchain in the contracts job).
+   `check_eips.py` below reimplements the subset of `eipw` that is pure pattern matching —
+   preamble keys, order and lengths, section set and order, the RFC 2119 paragraph, the
+   `Copyright` line, the absolute-link allowlist, `markdown-link-first`, the `EIP-N`/`ERC-N`
+   spelling, proposal references in backticks, smart quotes — and adds fidelity checks `eipw`
+   cannot make. It does **not** reimplement the rest, so run `eipw` before submitting: in
+   particular `preamble-uint` on `eip`, `preamble-file-name`, `preamble-url` and the
+   Ethereum Magicians regex on `discussions-to`, `markdown-link-status` and
+   `preamble-requires-status` (which need the merged EIP/ERC corpus), `markdown-json-schema`
+   and `markdown-html-comments`. Expect `eipw` to complain about `eip: <to be assigned>` and
+   the placeholder `discussions-to:` until step 1 and step 2 are done — those two are the
+   point of the placeholders.
 5. **Expect the Specification to be questioned, not the Rationale.** The clauses most likely to
    draw review are `[XV-20]` (leaf records keyed by the public root), `[XV-24]` (the tree height
    comes from the registration, not the signature), `[KR-24]` (only the account may cancel a
@@ -84,18 +104,34 @@ python3 eips/check_eips.py
 It enforces, for each draft:
 
 - the EIP-1 preamble — required keys, their order, `title` ≤ 44 characters, `description` ≤ 140,
-  the `author` form, `status`/`type`/`category`, an ISO `created` date, ascending `requires`;
-- the required sections, in EIP-1's order, the RFC 2119/8174 boilerplate, and the exact
-  `Copyright` line;
-- that relative links resolve on disk and that external links are limited to the origins the
-  EIP editors allow;
+  the `author` forms EIP-1 lists (including `Name <email>` and multi-author lists, with at least
+  one GitHub handle), `status`/`type`/`category`, an ISO `created` date, ascending `requires`;
+- the required sections, in EIP-1's order, EIP-1's exact RFC 2119/8174 paragraph — the one that
+  includes `NOT RECOMMENDED` — and the exact `Copyright` line;
+- the `eipw` body lints that are pure pattern matching: `markdown-link-first`, the `EIP-N`
+  spelling, no proposal reference inside backticks, no smart quotes. These skip fenced blocks
+  and code spans, as `eipw`'s own visitors do;
+- links: relative ones must resolve on disk, except `eip-N.md`/`erc-N.md` proposal references,
+  which are checked for shape; absolute ones must match `eipw`'s `markdown-relative-links`
+  exception list, which does **not** include ethereum.org, eips.ethereum.org or
+  ethereum-magicians.org;
 - **fidelity to the code**: every error and event declaration, every EIP-712 type string, the
   function signatures of the interfaces, and the named constants quoted in a draft must exist,
-  byte for byte, in the Solidity the draft claims to describe.
+  byte for byte, in the Solidity the draft claims to describe;
+- **the published test vector, executed.** `assets/erc-draft-xmss-verification/` is run, not
+  merely linked: its key material must still be the library's own `h = 10` vector, its `reject`
+  case must differ from the genuine one in exactly one bit, and every case's verdict is checked
+  by verifying it with the submodule's independent Python transcription of RFC 8391.
 
-The last group is the one that matters over time. A specification and its implementation drift
-silently; a failing test says so. `check_eips.py` runs in CI next to the contract tests
-(`.github/workflows/contracts.yml`).
+The last two groups are the ones that matter over time. A specification and its implementation
+drift silently, and an asset nothing runs drifts fastest of all; a failing test says so.
+`check_eips.py` runs in CI next to the contract tests (`.github/workflows/contracts.yml`).
+
+What it still does not check, and a reviewer will: return types and mutability of the quoted
+interfaces, struct field types and order, enum ordinals, the identity and commitment formulas
+(`quantumKeyId`, `preApprovalId`, the Tier-2 commitment), and the XMSS draft's ADRS table and
+base-`w` digit formulas. Those are prose and tables, not declarations, so they are pinned by
+the drafts' own Test Cases sections and by the contracts' tests rather than by this script.
 
 ## Mapping to the repository's requirement index
 

@@ -1,6 +1,6 @@
 ---
 eip: <to be assigned>
-title: On-chain XMSS signature verification
+title: On-Chain XMSS Signature Verification
 description: Encoding, verification rules and leaf-index accounting for RFC 8391 XMSS signatures verified inside the EVM
 author: Konstantin Kladko (@kladkogex)
 discussions-to: <URL>
@@ -8,15 +8,15 @@ status: Draft
 type: Standards Track
 category: ERC
 created: 2026-09-30
-requires: 165, 712
+requires: 165, 712, 4337
 ---
 
 ## Abstract
 
 This ERC specifies how a contract verifies an XMSS signature (RFC 8391, `XMSS-SHA2_h_256`
 family) over a 32-byte message digest: the canonical ABI encoding of an XMSS public key and
-signature, the exact hash instantiation, the domain checks a verifier performs, an ERC-165
-identified verification interface, and — because XMSS is a *stateful one-time* scheme — the
+signature, the exact hash instantiation, the domain checks a verifier performs, an
+[ERC-165](./eip-165.md)-identified verification interface, and — because XMSS is a *stateful one-time* scheme — the
 leaf-index accounting that any contract deriving authority from such a signature is required
 to perform. It defines no key generation and no signing: those stay off-chain, on the signer's
 device.
@@ -78,10 +78,11 @@ The standardised parameter sets and their RFC 8391 OIDs are `XMSS-SHA2_10_256` (
 - **[XV-01]** A verifier MUST reject any signature whose tree height is `0` or greater
   than `20`. Height 20 is the tallest standardised single tree; taller trees are not a
   standardised parameter set.
-- **[XV-02]** A verifier MAY accept heights in `1..20` that are not standardised (used by
-  test vectors and by deployments that deliberately choose a smaller tree). Applications
-  SHOULD register only keys of a standardised height, and a deployment that accepts others
-  SHOULD document which ones.
+- **[XV-02]** A verifier MUST support the three standardised heights `10`, `16` and `20`: a
+  valid signature at any of them, under a key of that height, MUST be accepted. It MAY also
+  accept other heights in `1..20` (used by test vectors and by deployments that deliberately
+  choose a smaller tree); a deployment that does SHOULD document which ones, and applications
+  SHOULD register only keys of a standardised height.
 - **[XV-03]** Multi-tree XMSS^MT (RFC 8391 §4.2) is out of scope of this ERC. A verifier
   conforming to this ERC MUST NOT accept an XMSS^MT signature as an XMSS signature.
 
@@ -138,15 +139,31 @@ struct Signature {
 ```
 
 - **[XV-06]** The wire form of a signature MUST be `abi.encode(Signature)` — the standard
-  ABI encoding of that single tuple, with `wotsSig` inline as a static array and `authPath`
-  as a dynamic array whose element `k` is the sibling node at tree level `k` (level `0` is
-  the leaf's sibling). Its length is therefore exactly `2304 + 32 * h` bytes: 2624 at
+  ABI encoding of that single tuple, `Signature` being a dynamic type because of `authPath`,
+  so the encoding begins with an offset word pointing at the tuple. The canonical encoding is
+  exactly this, every field 32-byte aligned and big-endian, at height `h`:
+
+| word | byte offset | content |
+| --- | --- | --- |
+| 0 | 0x0000 | `0x20` — offset of the tuple from the start of the blob |
+| 1 | 0x0020 | `leafIdx`, left-padded to 32 bytes |
+| 2 | 0x0040 | `r` |
+| 3 … 69 | 0x0060 … 0x08a0 | `wotsSig[0]` … `wotsSig[66]`, inline (a static array of 67) |
+| 70 | 0x08c0 | `0x8c0` — offset of `authPath` from the start of the tuple (word 1), i.e. `70 * 32` |
+| 71 | 0x08e0 | `h` — `authPath.length` |
+| 72 … 71+h | 0x0900 … | `authPath[0]` … `authPath[h-1]` |
+
+  Element `k` of `authPath` is the sibling node at tree level `k`; level `0` is the leaf's
+  sibling. The blob is therefore `72 + h` words — exactly `2304 + 32 * h` bytes: 2624 at
   `h = 10`, 2816 at `h = 16`, 2944 at `h = 20`.
-- **[XV-07]** A verifier MUST NOT accept a blob of any other length, and MUST NOT accept a
-  non-canonical ABI encoding of the correct length. It MAY signal such a blob either by
-  returning `false` or by reverting; a verifier that is called with third-party data
-  SHOULD return `false` rather than revert, so that a malformed signature cannot grief the
-  caller's transaction.
+- **[XV-07]** A verifier MUST reject a blob whose length is not `2304 + 32 * h` for the height
+  it was given, and MUST reject one whose decoded `authPath.length` is not that height
+  ([XV-08]). It MAY signal such a blob either by returning `false` or by reverting; a verifier
+  that is called with third-party data SHOULD return `false` rather than revert, so that a
+  malformed signature cannot grief the caller's transaction. A verifier is NOT REQUIRED to
+  check word 0 and word 70 against the table in [XV-06]: at the required length an encoding
+  that sets them differently is harmless, for the reason given in the Rationale. Producers
+  MUST emit the canonical encoding.
 - **[XV-08]** `authPath.length` MUST equal the tree height supplied by the caller
   (see [XV-24]); it MUST NOT be used as the height.
 - **[XV-09]** A verifier MUST reject `root == 0` and `seed == 0`. This goes beyond RFC 8391:
@@ -188,8 +205,12 @@ d_i = (csum >> (12 - 4*(i - 64))) & 0xf              for i in 64 .. 66
 
 - **[XV-11]** For each chain `i in 0..66` the verifier MUST compute
   `pk[i] = chain(wotsSig[i], start = d_i, steps = 15 - d_i, ADRS(type = 0, word4 = leafIdx, word5 = i))`,
-  where one `chain` step at position `j` is
+  where `chain` starts from `x = wotsSig[i]` and applies, for
+  `j = start, start + 1, …, start + steps - 1` in that order (RFC 8391 Algorithm 2; no step at
+  all when `steps == 0`),
   `x <- F(PRF(seed, ADRS(keyAndMask = 0, word6 = j)), x XOR PRF(seed, ADRS(keyAndMask = 1, word6 = j)))`.
+  `j` is the absolute chain position, not a counter from zero: at `start = d_i` the first step
+  uses `word6 = d_i`. Since `start + steps = 15` for every `i`, `j` runs over `d_i .. 14`.
 
 The `<< 4` on `csum` is RFC 8391's `toByte(csum, 2)` with `w = 16` and `len2 = 3`: the
 checksum occupies the top 12 bits of the two-byte encoding.
@@ -214,14 +235,15 @@ RAND_HASH(left, right, seed, ADRS) =
        (left XOR PRF(seed, ADRS[keyAndMask=1])) ‖ (right XOR PRF(seed, ADRS[keyAndMask=2])) )
 ```
 
-- **[XV-14]** The verifier MUST clear the `keyAndMask` field before deriving the key and the
-  two bitmasks, so that the result does not depend on residue left in that field by the
-  caller.
+- **[XV-14]** The verifier MUST set the `keyAndMask` field explicitly before each `PRF` call
+  — `0` for the key, `1` for the first bitmask, `2` for the second — rather than relying on
+  whatever value the field already holds, so that the result never depends on residue left in
+  it by an earlier call.
 
 ### 5. Verification interface
 
-- **[XV-15]** A contract that offers XMSS verification to other contracts SHOULD expose it
-  as:
+- **[XV-15]** A contract that offers XMSS verification to other contracts MUST expose it under
+  this exact signature, so that callers are portable between verifiers:
 
 ```solidity
 interface IXmssVerifier {
@@ -244,7 +266,8 @@ interface IXmssVerifier {
   storage: verification is a pure function of its arguments, and a verifier whose answer can
   change is not one a second implementation can reproduce.
 - **[XV-18]** `messageDigest` is opaque to the verifier. When the signed object is a
-  structured message, applications SHOULD use an EIP-712 `hashTypedDataV4` digest, so that
+  structured message, applications SHOULD use an [EIP-712](./eip-712.md)
+  `hashTypedDataV4` digest, so that
   the signed bytes are bound to a domain (chain id and verifying contract) and can be
   displayed on the signing device.
 
@@ -280,16 +303,19 @@ property must be enforced on-chain.
 
 ### 7. Events
 
-- **[XV-26]** A contract that consumes leaves SHOULD emit, for each consumed leaf, an event
-  that identifies the key, the leaf index and the signed digest, so that an indexer can
-  reconstruct the consumed set and a signing device can be audited against the chain:
+- **[XV-26]** A contract that consumes leaves MUST emit, for each consumed leaf, an event
+  carrying the leaf index and the signed digest, whose indexed topics let an indexer aggregate
+  the consumed set *per key* — so that the log can be reconciled with a signing device's own
+  counter. It MUST therefore either index the XMSS public `root` itself, or index an identifier
+  of its own **together with** a public view that resolves that identifier to the `root` the
+  leaf was recorded under ([XV-20]). An event that indexes only an identifier whose relation to
+  `root` is not readable on-chain does not satisfy this clause: the consumed set of a key
+  registered twice cannot then be reconstructed from the log at all.
 
-```solidity
-event LeafConsumed(bytes32 indexed quantumKeyId, uint32 indexed leafIndex, bytes32 digest);
-```
-
-where `quantumKeyId` identifies the key record the leaf was consumed under. An indexer that
-needs the *key's* consumed set resolves those records to their `root` ([XV-20]).
+This ERC does not name the event, because the contract that emits it is the one holding the key
+records, not the verifier. The companion ERC on stateful hash-based key registries fixes a
+concrete event for registries, indexed by a registration identifier that the registry's own
+`getKey` view resolves to the root.
 
 ## Rationale
 
@@ -310,10 +336,22 @@ digests. Keying by `root` is the only choice that tracks the object whose state 
 `[XV-20]`.
 
 **Why `abi.encode` and not RFC 8391 §4.1.8 bytes.** The RFC's packed format has to be parsed
-by hand in the EVM, which means hand-written offset arithmetic in every implementation — and
-`abi.decode` already performs exactly the bounds and canonicity checks that parsing needs, at
-comparable gas. The fixed length `2304 + 32h` gives a cheap structural pre-check. Clients that
-hold RFC-format signatures convert by reading the fields in order.
+by hand in the EVM, which means hand-written offset arithmetic in every implementation, while
+`abi.decode` is a single audited decoder that bounds-checks every offset it reads. The fixed
+length `2304 + 32h` gives a cheap structural pre-check before that decode. Clients that hold
+RFC-format signatures convert by reading the fields in order.
+
+**Why [XV-07] does not require the offset words to be checked.** `abi.decode` bounds-checks;
+it does not require an encoding to be canonical. At the exact length of [XV-06] a blob can set
+word 70 to, say, `0x40` instead of `0x8c0`, so that `authPath` aliases the head of `wotsSig`
+(with `wotsSig[0]` read as the length) and the canonical tail becomes dead padding; `abi.decode`
+accepts it and reports `authPath.length == wotsSig[0]`. Such an encoding is harmless: whichever
+words the decoder hands to §4, they still have to hash to `root` for the signature to be
+accepted, and the aliasing gives an attacker no control it did not already have over the bytes
+it supplied. Requiring verifiers to reject it would cost every implementation two extra
+comparisons and rule out `abi.decode` as a conforming decoder, for no security gain — so
+[XV-06] pins the encoding for producers and [XV-07] asks verifiers only for the two checks
+that are load-bearing: the length, and `authPath.length == h`.
 
 **Why a `view` function returning `bool` rather than a reverting `require`-style check.** A
 verifier is frequently called speculatively (a wallet asking "would this be accepted?") and
@@ -335,7 +373,7 @@ approximately 800,000 gas in the reference implementation.
 ## Backwards Compatibility
 
 This ERC adds an interface and an encoding; it changes no existing behaviour and requires no
-consensus change. It is independent of ERC-4337 and of any particular account
+consensus change. It is independent of [ERC-4337](./eip-4337.md) and of any particular account
 implementation: an XMSS signature is verified by ordinary contract code.
 
 `IXmssVerifier` is a new interface, so nothing can already claim its ERC-165 identifier.
@@ -445,9 +483,9 @@ in the way the operator expects. Bind the height at registration, and reject a s
 `authPath` has any other length.
 
 **The digest must bind the context.** A bare 32-byte digest is replayable anywhere the same
-digest is meaningful. Applications SHOULD sign an EIP-712 digest that includes the chain id,
-the verifying contract, the account, and a nonce — otherwise a signature captured on one chain
-or one account authorises the same action on another. `[XV-18]`.
+digest is meaningful. `[XV-18]` is the clause: sign an EIP-712 digest that includes the chain
+id, the verifying contract, the account and a nonce, because otherwise a signature captured on
+one chain or one account authorises the same action on another.
 
 **Gas and denial of service.** A verification is on the order of `10^6` gas at `h = 10`
 (dominated by roughly two thousand SHA-256 precompile calls). A contract that verifies before checking
@@ -456,9 +494,10 @@ order the checks as in `[XV-22]`. Verification cost grows only with `h` in the t
 `h = 20` is a few percent more expensive than `h = 10`, not 1000×.
 
 **Key exhaustion is a liveness matter.** A key has `2^h` signatures and no more. At `h = 10` a
-key that signs ten times a day is exhausted in under three months. Deployments SHOULD monitor
-consumption and rotate before exhaustion; a registry SHOULD make rotation possible without the
-old key (behind a delay) so that exhaustion or device loss is not a lockout.
+key that signs ten times a day is exhausted in under three months. Monitor consumption and
+rotate before exhaustion, and make rotation possible without the old key — behind a delay — so
+that exhaustion or device loss is not a lockout. The companion registry ERC specifies that
+path; a deployment without one has traded a compromise risk for a lockout risk.
 
 **Randomiser reuse.** `r` is generated by the signer; a signer that reuses `r` across
 different messages at the same leaf has already violated the one-time rule. The verifier

@@ -1,6 +1,6 @@
 ---
 eip: <to be assigned>
-title: Stateful hash-based key registry
+title: Stateful Hash-Based Key Registry
 description: Registration, rotation and time-locked revocation of one-time-signature keys held by a device, for smart accounts
 author: Konstantin Kladko (@kladkogex)
 discussions-to: <URL>
@@ -17,7 +17,8 @@ This ERC specifies an on-chain registry that binds a stateful hash-based public 
 root (RFC 8391) held on a hardware device — to a smart account, and governs that key's whole
 life: a co-signed one-shot registration, a rotation that proves possession of the outgoing
 key, and a time-locked revocation that works when the key is lost. It fixes the key states and
-every permitted transition, the EIP-712 messages the account's owners and the device sign, the
+every permitted transition, the [EIP-712](./eip-712.md) messages the account's owners and
+the device sign, the
 per-account ceremony nonce, and the consumed-leaf record that makes a one-time-signature key
 safe to use more than once. It does not specify what the key authorises; that is the companion
 ERC on hybrid pre-approvals.
@@ -60,7 +61,7 @@ Normative statements are labelled `[KR-nn]`.
 | --- | --- | --- |
 | account | the smart account (`account`) | decides owner authorisation for itself; the only canceller of a pending revocation |
 | owners | whoever the account's own signature check accepts at threshold | co-sign registration, rotation and revocation requests |
-| administrator | the EOA or ERC-1271 signer that holds the device (`quantumAdmin`) | attests each key at registration; signs authorisations with the device's classical key |
+| administrator | the EOA or [ERC-1271](./eip-1271.md) signer that holds the device (`quantumAdmin`) | attests each key at registration; signs authorisations with the device's classical key |
 | device | the hardware that holds the hash-based private key | generates the key, signs, keeps its own leaf counter |
 | relayer | anyone | submits ceremony transactions; holds no authority |
 
@@ -68,16 +69,25 @@ Normative statements are labelled `[KR-nn]`.
   `msg.sender`, for every ceremony function, and MUST NOT grant the caller any authority by
   virtue of being the caller. The authorisation is carried entirely by the signatures.
 - **[KR-02]** The registry MUST decide owner authorisation by delegating to the account: it
-  MUST call the account's own signature-verification entry point (for a Safe account,
-  `checkSignatures(bytes32,bytes,bytes)`; in general an ERC-1271 `isValidSignature`) and MUST
-  treat a revert as a refusal. The registry MUST NOT maintain its own notion of who the
-  owners are, or of what threshold applies.
+  MUST call the account's own signature-verification entry point, and MUST treat both a
+  revert and a negative answer as a refusal. The registry MUST NOT maintain its own notion of
+  who the owners are, or of what threshold applies. Which entry point that is belongs to the
+  account implementation; an account that answers ERC-1271 `isValidSignature` satisfies this
+  clause, and an account implementation with its own threshold-checking entry point satisfies
+  it through that (see Rationale for the Safe family, whose entry point is not ERC-1271).
 - **[KR-03]** The registry MUST verify the administrator's attestation with an ERC-1271-aware
   check (accepting both an EOA signature and a contract signer), and MUST NOT use raw
   `ecrecover`.
 - **[KR-04]** There MUST be no registry-wide administrator, guardian, pauser, owner or
   upgrade authority. Every control this ERC defines is scoped to one account and held by that
   account's owners or its administrator.
+- **[KR-42]** The administrator MUST NOT be a signer the account's own signature check
+  accepts, and MUST NOT be controlled by a secret that also controls such a signer. The
+  registry cannot enforce this — `[KR-02]` denies it any knowledge of the owner set — so it
+  binds the deployment and whatever flow registers a key, which SHOULD verify it before the
+  ceremony is assembled. It is nevertheless normative: if one party can produce both halves of
+  a ceremony, the two-party property the rest of this ERC builds has already failed, and no
+  clause below restores it.
 
 ### 2. Key record and identity
 
@@ -85,8 +95,8 @@ Normative statements are labelled `[KR-nn]`.
 enum KeyStatus { None, Active, Rotated, Revoked }
 
 struct KeyRegistration {
-    bytes32 quantumKeyId; // keccak256(abi.encodePacked(account, xmssRoot, nonce))
-    address account;      // the account this registration serves
+    bytes32 quantumKeyId; // keccak256(abi.encodePacked(safe, xmssRoot, nonce))
+    address safe;         // the account this registration serves (see §7 on the name)
     address quantumAdmin; // classical co-signer that attested this key
     bytes32 xmssRoot;     // XMSS public root
     bytes32 xmssSeed;     // XMSS public SEED
@@ -100,7 +110,8 @@ struct KeyRegistration {
 ```
 
 - **[KR-05]** A key's registry identity MUST be
-  `quantumKeyId = keccak256(abi.encodePacked(account, xmssRoot, nonce))`, where `nonce` is the
+  `quantumKeyId = keccak256(abi.encodePacked(safe, xmssRoot, nonce))`, where `safe` is the
+  20-byte account address, `xmssRoot` the 32-byte root, and `nonce` is the
   account's ceremony nonce consumed by the registration. The identity therefore binds the
   account, the root and the ceremony, and a re-registration of the same root by the same
   account (after a revocation) yields a different identity.
@@ -169,10 +180,13 @@ is retained for compatibility with deployed verifiers and signing devices.
   never saw.
 - **[KR-17]** Every owner-signed ceremony message MUST carry a `validUntil` deadline, and the
   registry MUST reject it once `block.timestamp > validUntil`.
-- **[KR-18]** When the account's signature check requires the signed preimage (Safe v1.3.0 and
-  v1.4.1 pass `data`, not the digest, to contract owners, and v1.4.1 additionally requires
-  `keccak256(data) == dataHash`), the registry MUST pass the full preimage
-  `0x1901 ‖ domainSeparator ‖ structHash` as that argument.
+- **[KR-18]** Some account implementations' signature checks take the signed *preimage*
+  rather than the digest, and some additionally require that the digest they were given is
+  the hash of that preimage. A registry MUST therefore pass the full EIP-712 preimage
+  `0x1901 ‖ domainSeparator ‖ structHash` wherever the account's entry point accepts a
+  preimage argument, and MUST NOT pass the digest there, or the bare struct hash, or empty
+  bytes. The digest itself remains `keccak256` of that preimage. (Concrete account versions
+  that make this necessary are in the Rationale.)
 - **[KR-19]** The attestation message MUST NOT include `validUntil`: it is bound by the
   ceremony nonce, and the device signs it before the owners have finished collecting
   signatures.
@@ -230,8 +244,11 @@ these transitions and no others.
 
 ### 7. Interface
 
-- **[KR-34]** A conforming registry MUST expose these functions with these signatures
-  (parameter names are informative; the types, order and mutability are normative):
+- **[KR-34]** A conforming registry MUST expose these functions under exactly these names,
+  with these parameter types in this order and this mutability. Function *parameter* names are
+  informative — they do not enter the selector — but the function names do, so they are
+  normative: a caller compiled against this interface must be able to call any conforming
+  registry.
 
 ```solidity
 interface IHashBasedKeyRegistry {
@@ -277,15 +294,18 @@ interface IHashBasedKeyRegistry {
 }
 ```
 
-The view names `safeToQuantumKey` and `enrolledSafe` are the reference implementation's, which
-serves Safe accounts; they read "the account's active key" and "has this account ever enrolled".
-A later revision of this ERC may rename them, which is why `[KR-34]` fixes the types rather than
-insisting on the spelling.
+The views `safeToQuantumKey` and `enrolledSafe` read "the account's active key" and "has this
+account ever enrolled". The word `safe` in these names, in the `safe` member of every type
+string of §4, in the `KeyRegistration.safe` field and in the event and error parameters of §8
+is historical: the first implementation served Safe accounts, and those spellings are now
+frozen because deployed verifiers, indexers and signing devices reproduce them. They mean
+"account" throughout, and this ERC keeps one spelling rather than two.
 
 - **[KR-35]** `isLeafUsed(quantumKeyId, leafIndex)` MUST answer for the *key*, not the
   registration: two registrations of the same root MUST give the same answer. It MUST return
   `false` for an unknown `quantumKeyId` rather than revert.
-- **[KR-36]** A conforming registry SHOULD advertise this interface through ERC-165. The
+- **[KR-36]** A conforming registry SHOULD advertise this interface through
+  [ERC-165](./eip-165.md). The
   reference implementation does not, because it is deployed as part of a Safe guard whose
   `supportsInterface` answers for the guard interfaces the account checks; a registry deployed
   standalone SHOULD advertise it.
@@ -343,6 +363,18 @@ owners approve, device attests later — create a window in which one half is co
 other can be substituted, and they double the number of states an implementation must reason
 about. One transaction makes the ceremony atomic: either the account has the key both parties
 agreed on, or nothing changed. `[KR-02]`, `[KR-03]`.
+
+**Why the entry point and the preimage are left to the account (`[KR-02]`, `[KR-18]`).** The
+accounts these registries serve do not agree on how to be asked. The Safe family exposes
+`checkSignatures`, not ERC-1271, and its overloads differ by version: v1.3.0 and v1.4.1 pass
+`data` — the signed preimage — rather than the digest to contract owners, and v1.4.1
+additionally requires `keccak256(data) == dataHash`, so a registry that hands them the digest
+in the preimage argument is rejected by some owners and accepted by others. v1.5.0 changes the
+shape again. Naming one of those in normative text would bind every implementer to one account
+family and one release; naming none of them would leave `[KR-18]`'s trap open. So the clause
+states the property — pass the full `0x1901 ‖ domainSeparator ‖ structHash` preimage wherever
+a preimage is accepted — and the reference implementation picks the version-portable
+`checkSignatures(bytes32,bytes,bytes)` overload to satisfy it.
 
 **Why the owners sign the root and not an identifier.** An identifier is a hash of material
 the owners may never have seen; the substitution attack is then invisible to them. Signing
@@ -416,7 +448,7 @@ proved symbolically and is covered by concrete-vector tests instead. The proved 
 6. a root is one-shot: a second registration under a root the account already used fails and
    leaves the active key unchanged (`[KR-10]`).
 
-Additional cases every implementation SHOULD cover:
+Additional cases worth covering in any implementation:
 
 | case | expected |
 | --- | --- |
@@ -480,8 +512,9 @@ function _verifyAndConsumeXmss(bytes32 keyId, bytes32 digest, bytes calldata xms
 or replace a key: the owners cannot, because the device must attest; the device cannot, because
 the owners must co-sign. That claim fails if the same secret can produce both halves — for
 example if the administrator is also an owner of the account, or if the device and an owner key
-live on the same machine. Deployments MUST keep the administrator out of the owner set, and
-SHOULD verify it at onboarding.
+live on the same machine. `[KR-42]` forbids exactly that overlap; because no clause of this
+ERC can be enforced by the registry, an onboarding flow that does not check it is the single
+most likely way to deploy this scheme and get none of its benefit.
 
 **Ceremony front-running.** The root is public in the mempool before the ceremony lands.
 `[KR-11]` (per-account root records) removes the denial-of-service; the digest's binding of the
@@ -507,9 +540,9 @@ key, so a policy of frequent rotation shortens the useful life of each key. At `
 
 **Device counter versus chain counter.** The device's own counter is a usability feature; the
 chain's record is the security boundary. A device restored from backup may have a stale counter
-and will happily re-sign a spent leaf — the registry MUST refuse it (`[KR-12]`, `[XV-19]`), and
-deployments SHOULD treat such a refusal as a possible restore-from-backup incident rather than
-a transient error.
+and will happily re-sign a spent leaf. `[KR-12]` and `[XV-19]` are what make the registry
+refuse it; a deployment is well advised to treat such a refusal as a possible
+restore-from-backup incident rather than a transient error.
 
 **Status is not authority by itself.** `Active` means "this key may authorise new
 authorisations", not "this key's holder may do anything". What an authorisation permits, and
