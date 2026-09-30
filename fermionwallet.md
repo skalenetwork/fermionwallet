@@ -15,7 +15,7 @@ It is deliberately the simplest contract that can be called a wallet: one immuta
 | Governance | owners, timelocks, pause, emergency removal | none |
 | Recovery if the device is lost | owners remove the Guard after the emergency delay | **none — the funds are gone** |
 | On-chain state | keys, approvals, queues, policy | one used-leaf bitmap |
-| Ledger app | ships today | needs the additions in [FWL-033](#requirements) |
+| Ledger app | ships today | the four additions of [FWL-033](#requirements) are built |
 | Who it is for | desks that already run a Safe | a single holder who wants quantum-safe storage and nothing else |
 
 ## What it does
@@ -146,7 +146,7 @@ A single immutable, permissionless `LeafRegistry` per chain, keyed by XMSS root,
 | of which ECDSA check, leaf bookkeeping, token transfer, base cost | ~90k |
 
 Post-quantum verification on-chain is not cheap, and these are measured numbers rather than
-a target: 802k and 845k come from the test suite, not from adding up the parts. The supported tree heights are the RFC 8391 parameter sets 10, 16 and 20: h = 10 gives 1,024 transfers per key and is the sensible default for a personal wallet; h = 20 gives ~1.05M and costs ~33k more gas per transfer. [FWL-027] Receiving tokens costs the sender nothing extra — it is an ordinary ERC-20 transfer to an address. [FWL-028]
+a target: 802k and 845k come from the test suite, not from adding up the parts. The recommended tree heights are the RFC 8391 parameter sets 10, 16 and 20: h = 10 gives 1,024 transfers per key and is the sensible default for a personal wallet; h = 20 gives ~1.05M and costs ~33k more gas per transfer. The contract itself accepts any height from 1 to 20, exactly as `QuantumKeyRegistry` does, and deliberately does not whitelist the three standardized sets — the only Ledger build that exists uses h = 4, so a whitelist would satisfy this requirement by making the product unusable. Nothing about XMSS security distinguishes h = 4 from h = 10; what matters is that a leaf is used once, and that the height is bound to the key, which [FWL-018] requires. Choosing a height is a deployment decision, and choosing a small one costs you transfers, not safety. [FWL-027] Receiving tokens costs the sender nothing extra — it is an ordinary ERC-20 transfer to an address. [FWL-028]
 
 When the leaves run out, the wallet still works for exactly as long as it takes to move the balance to a new wallet: the last leaf signs the last transfer. Plan the move before the counter reaches the end; the device shows leaves remaining (`GET_LEAF_INDEX`). [FWL-029]
 
@@ -202,7 +202,7 @@ Optionally, a CREATE2 factory lets the address be computed before deployment, so
 | FWL-024 | Multiple wallets require multiple keys. |
 | FWL-025 | FWL-023 is device-enforced only; a rolled-back or cloned device defeats leaf accounting with no on-chain backstop. Documented residual risk. |
 | FWL-026 | A shared leaf registry is an optional, non-default mitigation for FWL-025. |
-| FWL-027 | Supported tree heights are the RFC 8391 sets 10, 16 and 20. |
+| FWL-027 | The RFC 8391 sets 10, 16 and 20 are recommended; the contract accepts 1..20, as the registry does. |
 | FWL-028 | Receiving costs the sender no more than an ordinary ERC-20 transfer. |
 | FWL-029 | The device reports remaining leaves so the balance can be moved before exhaustion. |
 | FWL-030 | Deployment binds the key at construction. |
