@@ -33,11 +33,41 @@ OPTIONAL_KEYS = ["requires", "withdrawal-reason"]
 SECTIONS = ["Abstract", "Motivation", "Specification", "Rationale", "Backwards Compatibility",
             "Test Cases", "Reference Implementation", "Security Considerations", "Copyright"]
 COPYRIGHT = "Copyright and related rights waived via [CC0](../LICENSE.md)."
-RFC2119 = 'The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD"'
-# Origins the EIP editors allow in external links (eipw's markdown-link-allowlist).
-ALLOWED_ORIGINS = ("https://ethereum.org", "https://ethereum-magicians.org",
-                   "https://eips.ethereum.org", "https://www.rfc-editor.org",
-                   "https://creativecommons.org/publicdomain/zero/1.0/")
+# EIP-1's key-words paragraph, verbatim (Style Guide → "RFC 2119 and RFC 8174"). Compared
+# whitespace-insensitively, since drafts wrap it. "NOT RECOMMENDED" is part of it: the
+# RFC 2119-only list, without it, is not what EIP-1 tells authors to insert.
+RFC2119 = ('The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", '
+           '"SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this '
+           'document are to be interpreted as described in RFC 2119 and RFC 8174.')
+# Absolute links eipw permits. `markdown-relative-links` forbids every other absolute URL —
+# including ethereum.org, eips.ethereum.org and ethereum-magicians.org, which must be written
+# as relative links or not at all. Transcribed from ethereum/ERCs `config/eipw.toml`.
+ALLOWED_LINK_PATTERNS = [
+    r"^https://(www\.)?github\.com/ethereum/consensus-specs/(blob|tree)/[a-f0-9]{40}/.+$",
+    r"^https://(www\.)?github\.com/ethereum/consensus-specs/commit/[a-f0-9]{40}$",
+    r"^https://(www\.)?github\.com/ethereum/execution-specs/(blob|tree)/[a-f0-9]{40}/.+$",
+    r"^https://(www\.)?github\.com/ethereum/execution-specs/commit/[a-f0-9]{40}$",
+    r"^https://(www\.)?github\.com/ethereum/execution-spec-tests/(blob|tree)/[a-f0-9]{40}/.+$",
+    r"^https://(www\.)?github\.com/ethereum/execution-spec-tests/commit/[a-f0-9]{40}$",
+    r"^https://(www\.)?github\.com/ethereum/yellowpaper/(blob|tree)/[a-f0-9]{40}/.+$",
+    r"^https://(www\.)?github\.com/ethereum/yellowpaper/commit/[a-f0-9]{40}$",
+    r"^https://(www\.)?github\.com/ethereum/devp2p/(blob|tree)/[0-9a-f]{40}/.+$",
+    r"^https://(www\.)?github\.com/ethereum/devp2p/commit/[0-9a-f]{40}$",
+    r"^https://(www\.)?github\.com/ethereum/portal-network-specs/(blob|tree)/[0-9a-f]{40}/.+$",
+    r"^https://(www\.)?github\.com/ethereum/portal-network-specs/commit/[0-9a-f]{40}$",
+    r"^https://(www\.)?github\.com/bitcoin/bips/(blob|tree)/[0-9a-f]{40}/bip-[0-9]+\.mediawiki$",
+    r"^https://(www\.)?github\.com/ChainAgnostic/CAIPs/(blob|tree)/[a-f0-9]{40}/.+$",
+    r"^https://(www\.)?github\.com/ChainAgnostic/CAIPs/commit/[0-9a-f]{40}$",
+    r"^https://www\.w3\.org/TR/[0-9][0-9][0-9][0-9]/.*$",
+    r"^https://[a-z]*\.spec\.whatwg\.org/commit-snapshots/[0-9a-f]{40}/$",
+    r"^https://www\.rfc-editor\.org/rfc/.*$",
+    r"^https://www\.unicode\.org/reports/tr[0-9]+/tr[0-9]+-[0-9]+\.html$",
+    r"^https://(www\.)?github\.com/ethereum/sys-asm/(blob|tree)/[a-f0-9]{40}/.+$",
+    r"^https://(www\.)?github\.com/ethereum/sys-asm/commit/[a-f0-9]{40}$",
+]
+# EIP-1 `author` header: `Name <email>`, `Name (@handle)`, `Name (@handle) <email>` or a bare
+# `Name`, comma-separated, and at least one entry must carry a GitHub handle.
+AUTHOR_ENTRY = re.compile(r"^[^(<,]+?(?: \(@[A-Za-z0-9-]+\))?(?: <[^@>]+@[^@>]+>)?$")
 
 # Which Solidity each draft is checked against.
 SOURCES = {
@@ -137,8 +167,13 @@ def check_preamble(draft, text):
     if title and title.lower() in desc.lower():
         fail(draft, "description must not repeat the title")
 
-    if not re.match(r"^[^(<]+ \(@[A-Za-z0-9-]+\)$", pre.get("author", "")):
-        fail(draft, f"author must be `Name (@githubhandle)`, got {pre.get('author')!r}")
+    author = pre.get("author", "")
+    entries = [e.strip() for e in author.split(",")] if author else []
+    if not entries or not all(AUTHOR_ENTRY.match(e) for e in entries):
+        fail(draft, f"author must be a comma-separated list of `Name`, `Name <email>`, "
+                    f"`Name (@handle)` or `Name (@handle) <email>`, got {author!r}")
+    elif not any("(@" in e for e in entries):
+        fail(draft, "at least one author must give a GitHub username (EIP-1 `author` header)")
     if pre.get("status") != "Draft":
         fail(draft, f"status must be Draft while unsubmitted, got {pre.get('status')!r}")
     if pre.get("type") != "Standards Track":
@@ -169,8 +204,10 @@ def check_sections(draft, text):
     for s in found:
         if s not in SECTIONS:
             fail(draft, f"unexpected top-level section `## {s}` (EIP-1 fixes the set)")
-    if RFC2119 not in text:
-        fail(draft, "missing the RFC 2119 / RFC 8174 key-words paragraph")
+    if norm(RFC2119) not in norm(text):
+        fail(draft, "the RFC 2119 / RFC 8174 key-words paragraph is missing or is not EIP-1's "
+                    "wording (it lists MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, "
+                    "SHOULD NOT, RECOMMENDED, NOT RECOMMENDED, MAY and OPTIONAL)")
     if COPYRIGHT not in text:
         fail(draft, f"Copyright section must contain exactly: {COPYRIGHT}")
 
@@ -178,8 +215,8 @@ def check_sections(draft, text):
 def check_links(draft, path, text):
     for target in re.findall(r"\]\((\S+?)\)", text):
         if target.startswith(("http://", "https://")):
-            if not target.startswith(ALLOWED_ORIGINS):
-                fail(draft, f"external link to a non-allowlisted origin: {target}")
+            if not any(re.match(p, target) for p in ALLOWED_LINK_PATTERNS):
+                fail(draft, f"absolute link eipw's `markdown-relative-links` rejects: {target}")
         elif target.startswith("#"):
             continue
         else:

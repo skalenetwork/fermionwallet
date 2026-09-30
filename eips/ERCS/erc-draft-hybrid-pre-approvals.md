@@ -40,7 +40,7 @@ than invented per deployment, because the details are where the money leaks:
   execute exactly these bytes" are different promises, and mixing them silently widens the
   second into the first.
 - **How does the enforcement hook find the approval at execution time?** It runs inside the
-  transaction, with a gas budget, and it MUST NOT be possible to make matching unbounded or to
+  transaction, with a gas budget, and it must not be possible to make matching unbounded or to
   starve a live approval with dead ones.
 - **What happens to an approval whose key was later rotated, or revoked?** Rotation is
   routine; revocation is an incident. Treating them alike either burns leaves needlessly or
@@ -51,8 +51,8 @@ than invented per deployment, because the details are where the money leaks:
 ## Specification
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT",
-"RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in
-RFC 2119 and RFC 8174.
+"RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted
+as described in RFC 2119 and RFC 8174.
 
 Normative statements are labelled `[PA-nn]`.
 
@@ -72,7 +72,7 @@ Normative statements are labelled `[PA-nn]`.
 - **[PA-01]** A pre-approval MUST carry two signatures over one digest: a *classical* half by
   the administrator (`quantumAdmin` of the key record), verified in an ERC-1271-aware way, and
   a *post-quantum* half by the hash-based key registered to the account. Both MUST be
-  verified at creation; neither half alone MUST be sufficient.
+  verified at creation; a single half MUST NOT be sufficient.
 - **[PA-02]** An account's own owner authorisation is independent of, and additional to, a
   pre-approval: the account still authorises its transaction its own way. A pre-approval is a
   *second* authorisation and MUST NOT be usable as a substitute for the first.

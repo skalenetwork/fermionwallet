@@ -49,8 +49,8 @@ standard is for.
 ## Specification
 
 The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT",
-"RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in
-RFC 2119 and RFC 8174.
+"RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted
+as described in RFC 2119 and RFC 8174.
 
 Normative statements are labelled `[KR-nn]`.
 
@@ -395,9 +395,15 @@ new deployment that accounts adopt by re-enrolling.
 ## Test Cases
 
 The reference implementation's state machine is transcribed as an executable specification and
-proved equivalent to the contract with the Halmos symbolic execution engine: for *all* callers,
-timestamps and key parameters, each ceremony succeeds exactly when the specification allows and
-leaves exactly the state the specification describes. The proved lemmas are
+checked against the contract with the Halmos symbolic execution engine: for *all* callers,
+timestamps, key parameters and prior states satisfying the specification's invariant, the
+transitions below succeed exactly when the specification allows and leave exactly the state it
+describes. Two things are abstracted, and the lemmas are conditional on them. The owner
+threshold and the administrator's attestation are stubbed to accept every signature, so
+"succeeds when allowed" means "given that both authorisations succeeded". And a valid XMSS
+signature is out of reach of the solver, so `rotate` is proved only to *reach* its possession
+proof exactly when the state preconditions hold; the post-state of a succeeding rotation is not
+proved symbolically and is covered by concrete-vector tests instead. The proved lemmas are
 
 1. `register` succeeds iff allowed, and the resulting state matches (including that the new key
    is `Active` and the height is recorded);
