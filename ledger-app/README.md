@@ -191,7 +191,7 @@ consumers (`src/session.rs` has the full argument):
 | the closure reads the outer `leaf` instead of its parameter | `error[E0308]: expected Signing, found Leaf` — and the two values are equal now anyway |
 | `session::commit(0, …)` | `error[E0308]: expected Reserved, found integer` |
 | reserve a fresh leaf inside the closure and sign under that | `error[E0308]: expected Signing, found Leaf` |
-| two `reserve`/`commit` pairs in a row | compiles, and the device refuses the second: the one thing a type cannot say is that a reservation still matches the counter, so `session::commit` checks it at run time |
+| two `reserve`/`commit` pairs in a row | compiles — the one thing a type cannot say is that a reservation still matches the counter, so `session::commit` checks it at run time. Against that build the device answers `0x6D00` on the second commit, having spent one leaf and released no signature at all: `?` propagates before `publish` is reached. Measured in Speculos, not argued |
 
 And it is **not** true that no test here can reach the binding. `test_app.py` spends
 every remaining leaf of the tree and verifies each signature under the leaf the device
@@ -202,11 +202,14 @@ FAIL  every leaf's XMSS half verifies, not just the first: failed at leaves
       [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] — suspect the auth path or ADRS
 ```
 
-The single-signature check at the top of the suite passes under that mutant — it signs
-leaf 0, which is the leaf the mutant hardcodes — and so does the one after it; it is
-the exhaustive loop that catches the rest. That loop was already there. The claim that
-nothing here could reach this was wrong about the suite as well as about the compiler,
-and it is why nobody looked.
+and nothing else. The checks above the loop pass under that mutant, and the loop starts
+at leaf 2, so be exact about why: the suite's one verified signature is leaf 0's, which
+is the leaf the mutant hardcodes, and leaf 1 is signed by the hand-streamed block,
+which reads the status word and pages the blob out but never puts it through
+`xmss_ref.verify`. The exhaustive loop is the only thing here that verifies a signature
+under a leaf other than 0, and it is what catches this. That loop was already there.
+The claim that nothing here could reach this was wrong about the suite as well as about
+the compiler, and it is why nobody looked.
 
 The full path — register the device's key on chain, sign on the device, relay to the
 Guard — is the demo's `LEDGER_TRANSPORT=speculos` profile; see
@@ -338,10 +341,13 @@ and a buffered signature never coexist, because `handle` answers `0x6986` to
 `GET_SIGNATURE_CHUNK` while a payload is half-streamed — so it is checked for the
 refusal and the session it must not leave behind.
 
-Two other ways out of the app used to leave the buffer populated and now do not:
-`home()`'s `Quit` page, on the way to `exit_app`, and the panic hook — `set_panic!` now
-takes `main.rs::wiping_panic`, which discards and then hands over to the SDK's
-`exiting_panic`.
+Two other ways out of the app used to leave the buffer populated: `home()`'s `Quit`
+page, on the way to `exit_app`, and a panic. Both now go through `discard` first —
+`set_panic!` takes `main.rs::wiping_panic`, which discards and then hands over to the
+SDK's `exiting_panic`. Belongs in the list above rather than in this one: the `Quit`
+path is code a test could drive, the panic hook is not. There is no way to stage a
+panic from the host, so what is checked is that the hook is installed and that `discard`
+touches nothing that can itself panic — not that it has been seen to fire.
 
 What is left, deliberately, is a host that simply stops talking: it keeps its half-read
 spent signature until another signing command arrives or the app closes. The wider rule

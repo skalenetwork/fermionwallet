@@ -29,8 +29,11 @@ not. The *other* half — that the leaf the counter consumed is the leaf the sig
 computed under — this suite reaches perfectly well, in the exhaustion loop at the
 bottom: it spends every remaining leaf and verifies each signature under the leaf the
 device reported. A build whose `xmss::sign` ignored the committed leaf and signed
-everything under leaf 0 failed that loop at leaves 2 through 15 while passing every
-single-signature check above it. The binding is a type property too now
+everything under leaf 0 failed that loop at leaves 2 through 15, with every other check
+here green. Which is also the measure of how thin the rest of this file is on that
+point: the only signature it verifies outside the loop is leaf 0's — the very leaf such
+a build gets right — and the hand-streamed approval below spends leaf 1 without ever
+putting its blob through `xmss_ref.verify`. The binding is a type property too now
 (`session::Signing`), but it was not when this paragraph first claimed it was, and the
 loop is what would have said so.
 
