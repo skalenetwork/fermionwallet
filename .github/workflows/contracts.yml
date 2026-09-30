@@ -61,11 +61,19 @@ jobs:
         # call. Also checks the EIP-1 preamble and section rules the editors' linter enforces.
         run: python3 eips/check_eips.py
 
-      - name: The registry binds the key's tree height when verifying
+      - name: Both verifying contracts bind the key's tree height
+        # Swapping either call for the three-argument form passes every test in this
+        # repository: the byte-length check does not bind the height, because ABI
+        # decoding bounds offsets and not the decoded array's length, so a blob of
+        # exactly the right size can still decode to an authentication path of any
+        # length that fits. Only `verify`'s own comparison rejects it — which is why
+        # this is a grep and not a test.
         working-directory: contracts
         run: |
           grep -qE 'XMSS\.verify\(digest, sig, XMSS\.PublicKey\(\{root: k\.xmssRoot, seed: k\.xmssSeed\}\), k\.treeHeight\)' src/QuantumKeyRegistry.sol \
             || { echo "QuantumKeyRegistry must call the four-argument XMSS.verify with the registered treeHeight"; exit 1; }
+          grep -qE 'XMSS\.verify\(digest, sig, XMSS\.PublicKey\(\{root: xmssRoot, seed: xmssSeed\}\), treeHeight\)' src/FermionWallet.sol \
+            || { echo "FermionWallet must call the four-argument XMSS.verify with its immutable treeHeight"; exit 1; }
 
       - name: The device's signing flow still satisfies its specification
         # demo/ledger-proof/device_spec.py is ledger-xmss-app.md's Flow 2 as a state

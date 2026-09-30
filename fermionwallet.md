@@ -87,7 +87,7 @@ leaf than the one it actually used would simply fail the ECDSA check. This is th
 1. `block.timestamp <= validUntil`, else revert. A signed transfer that was never relayed stops being valid. [FWL-015]
 2. `leafIdx` is decoded from `xmssSignature` (the `leafIdx` field of `XMSS.Signature`, at a fixed offset once the signature is decoded — no cryptography involved) and `isLeafUsed(leafIdx)` must be false, else revert. This comes **before** the ~700k-gas verification, so a replay is refused for about 122k rather than 800k. It is not free, and saying so matters: nearly all of that 122k is what EIP-7623 charges for carrying a 2.4 KB signature in calldata at all, which no contract-side check can avoid. Checking early saves the verification, not the transaction. [FWL-016]
 3. The ECDSA half recovers to `quantumAdmin` over the digest built with that `leafIdx` (via OpenZeppelin `SignatureChecker`, so an ERC-1271 signer also works). [FWL-017]
-4. The XMSS half verifies against `(xmssRoot, xmssSeed)` at `treeHeight`, using [`xmss-solidity`](https://github.com/skalenetwork/xmss-solidity)'s four-argument `XMSS.verify`, the form that binds the tree height to the key. [FWL-018]
+4. The XMSS half verifies against `(xmssRoot, xmssSeed)` at `treeHeight`, using [`xmss-solidity`](https://github.com/skalenetwork/xmss-solidity)'s four-argument `XMSS.verify`, the form that binds the tree height to the key. [FWL-018] No test can demonstrate this: swapping it for the three-argument form leaves the whole suite green, because the byte-length check does not bind the height — ABI decoding bounds offsets, not the decoded array's length, so a blob of exactly `2304 + 32·treeHeight` bytes can still decode to an authentication path of any length that fits, and only `verify`'s own comparison rejects it. It is enforced by a grep over `FermionWallet.sol` in `.github/workflows/contracts.yml`, exactly as [QKR-034a] is for the registry. [FWL-018a]
 5. The leaf is marked spent **before** the token call. [FWL-019]
 6. `SafeERC20.safeTransfer(token, to, amount)`. [FWL-020]
 
@@ -194,6 +194,7 @@ Optionally, a CREATE2 factory lets the address be computed before deployment, so
 | FWL-016 | The leaf-reuse check reads the index from the signature and precedes verification. |
 | FWL-017 | The ECDSA half must recover to `quantumAdmin`. |
 | FWL-018 | The XMSS half is verified with the height-bound `XMSS.verify`. |
+| FWL-018a | That the four-argument form is the one called is not testable — the suite is green either way — and is enforced by a CI grep. |
 | FWL-019 | The leaf is marked spent before the token call. |
 | FWL-020 | Transfers use `SafeERC20.safeTransfer`. |
 | FWL-021 | `msg.sender` carries no authority. |
