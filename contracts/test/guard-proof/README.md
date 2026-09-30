@@ -56,6 +56,26 @@ Tooling: Halmos 0.3.3 with z3 — passed explicitly as `--solver z3`, since the 
 
 Every lemma was run against deliberately broken copies of the contracts, and each mutation must produce a counterexample. The mutations and results are listed in [`planted-bugs.md`](planted-bugs.md).
 
+## Why there are no model-only lemmas here
+
+A file proving facts about `GuardSpec` alone — that consumable and dead are disjoint,
+that dead is monotone in time — was written during this work and removed. Its lemmas
+were true, cheap and fast, and every one of them is subsumed by a contract-level lemma
+in `GuardEquivalence.t.sol` that asks the engine itself at two timestamps rather than
+asking the specification what it believes.
+
+The reason for removing it rather than keeping it as a cheap extra is the name. It
+declared `contract GuardSpecLemmas`, so `halmos --match-contract GuardSpec` would have
+reported its passes alongside real ones, and a reader glancing at the output would have
+seen lemmas that prove nothing whatever about `FermionGuard.sol` presented as if they
+did. This directory exists because passing checks that prove less than they appear to
+are the failure mode that matters; a proof suite is not the place to keep one.
+
+If spec coherence ever needs its own checks — and it might, since an executable
+specification can be vacuous or self-contradictory in ways no equivalence lemma would
+notice — they belong in a file whose name cannot be confused with a proof about the
+contracts, with a header saying so in its first sentence.
+
 ## Running
 
 ```sh
