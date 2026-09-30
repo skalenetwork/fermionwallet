@@ -71,6 +71,21 @@ async function trustSafeIfAsked(page) {
     await page.getByRole('button', { name: 'Confirm' }).click();
   }
 }
+// The gas estimate that produces the fee row — and the "will most likely fail" warning
+// this recording is built around — is fetched after the dialog opens. Waiting a fixed
+// few seconds raced it on a cold stack and captured an empty dialog, so wait for the
+// estimate itself: the fee row resolves to a fee or to "Cannot estimate", and either
+// way it is no longer bare.
+const FEE_LABEL = 'Estimated fee';
+async function gasEstimateSettled(page) {
+  await page.waitForFunction((label) => {
+    const row = [...document.querySelectorAll('*')]
+      .find(e => (e.innerText || '').startsWith(label) && e.children.length < 8);
+    if (!row) return false;
+    return (row.innerText || '').replace(/\s+/g, ' ').trim().length > label.length + 1;
+  }, FEE_LABEL, { timeout: 60000 });
+}
+
 async function executeFromQueue(page) {
   await page.goto(`${WALLET}/transactions/queue?safe=fwdemo:${SAFE}`, { waitUntil: 'networkidle' });
   await clickIfShown(page.getByRole('button', { name: 'Accept all' }));
@@ -79,7 +94,7 @@ async function executeFromQueue(page) {
   await page.getByRole('button', { name: 'Continue', exact: true }).click({ timeout: 30000 });
   const execute = page.getByRole('button', { name: 'Execute', exact: true }).last();
   await execute.waitFor({ timeout: 30000 });
-  await page.waitForTimeout(4000); // let the gas estimation / simulation settle
+  await gasEstimateSettled(page);
   return execute;
 }
 
@@ -134,7 +149,10 @@ async function executeFromQueue(page) {
 
     step('execute without a quantum approval: Safe{Wallet} must warn and fail');
     let execute = await executeFromQueue(page);
-    if (!(await page.innerText('body')).includes('will most likely fail')) {
+    try {
+      await page.getByTestId('error-message').filter({ hasText: 'will most likely fail' })
+        .waitFor({ timeout: 30000 });
+    } catch {
       fail('Safe{Wallet} did not flag the unapproved transfer');
     }
     await page.getByText('will most likely fail').first().scrollIntoViewIfNeeded();

@@ -57,6 +57,33 @@ async function trustSafeIfAsked(page) {
   }
 }
 
+// One gas estimate decides both halves of what this test reads: the fee row, and the
+// "will most likely fail" warning that is the whole evidence the Guard blocks an
+// unapproved payout. It is fetched after the dialog opens, and until it lands the
+// dialog shows neither. Waiting a fixed few seconds raced it on a cold stack, and the
+// test then read an empty dialog and reported that Safe{Wallet} had not flagged the
+// transfer — a green demo failing the test. Wait for the estimate itself: the fee row
+// resolves to a fee or to "Cannot estimate", and either way it is no longer bare.
+const FEE_LABEL = 'Estimated fee';
+const feeRow = () => {
+  const row = [...document.querySelectorAll('*')]
+    .filter(e => e.childElementCount < 8)
+    .find(e => (e.innerText || '').startsWith('Estimated fee'));
+  return row ? (row.innerText || '').replace(/\s+/g, ' ').trim() : null;
+};
+async function gasEstimateSettled(page) {
+  await page.waitForFunction(
+    (label) => {
+      const row = [...document.querySelectorAll('*')]
+        .filter(e => e.childElementCount < 8)
+        .find(e => (e.innerText || '').startsWith(label));
+      return !!row && (row.innerText || '').replace(/\s+/g, ' ').trim().length > label.length + 1;
+    },
+    FEE_LABEL, { timeout: 60000 },
+  );
+  return page.evaluate(feeRow);
+}
+
 // Open the queued transaction in Safe{Wallet}'s queue and press Execute.
 async function executeFromQueue(page) {
   await page.goto(`${WALLET}/transactions/queue?safe=fwdemo:${SAFE}`, { waitUntil: 'networkidle' });
@@ -66,8 +93,8 @@ async function executeFromQueue(page) {
   await page.getByRole('button', { name: 'Continue', exact: true }).click({ timeout: 30000 });
   const execute = page.getByRole('button', { name: 'Execute', exact: true }).last();
   await execute.waitFor({ timeout: 30000 });
-  await page.waitForTimeout(3000); // let the gas estimation / simulation settle
-  return execute;
+  const fee = await gasEstimateSettled(page);
+  return { execute, fee };
 }
 
 (async () => {
@@ -119,8 +146,12 @@ async function executeFromQueue(page) {
     if (queued.status !== 'needs_approval') fail(`expected needs_approval, got ${queued.status}`);
 
     step('execute without a quantum approval: Safe{Wallet} must warn and fail');
-    let execute = await executeFromQueue(page);
-    if (!(await page.innerText('body')).includes('will most likely fail')) {
+    let { execute, fee } = await executeFromQueue(page);
+    step(`fee row without an approval: "${fee}"`);
+    try {
+      await page.getByTestId('error-message').filter({ hasText: 'will most likely fail' })
+        .waitFor({ timeout: 30000 });
+    } catch {
       fail('Safe{Wallet} did not flag the unapproved transfer');
     }
     await execute.click();
@@ -159,7 +190,14 @@ async function executeFromQueue(page) {
     step('approved on the Ledger; the Guard holds a pre-approval pinned to this Safe tx');
 
     step('execute from Safe{Wallet}: it must go through');
-    execute = await executeFromQueue(page);
+    ({ execute, fee } = await executeFromQueue(page));
+    step(`fee row with the approval: "${fee}"`);
+    // "Cannot estimate" is what an unapproved payout looks like: the fee simulation is
+    // the payout, and the Guard reverts it. Requiring a real fee here is what makes the
+    // next line meaningful — otherwise "no warning" could just mean "not estimated yet".
+    if (/Cannot estimate/.test(fee || '')) {
+      fail('Safe{Wallet} still cannot estimate the payout after the pre-approval');
+    }
     if ((await page.innerText('body')).includes('will most likely fail')) {
       fail('Safe{Wallet} still predicts failure after the pre-approval');
     }
