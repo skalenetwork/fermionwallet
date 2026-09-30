@@ -70,7 +70,8 @@ class Emulator:
     key with a clean binding.
     """
 
-    API, APDU = 15003, 19996
+    # `WALLET_TEST_PORTS=api,apdu` moves them when something else holds the defaults.
+    API, APDU = (int(p) for p in os.environ.get("WALLET_TEST_PORTS", "15003,19996").split(","))
 
     def __init__(self):
         self.container = None

@@ -19,6 +19,7 @@
 
 mod eip712;
 mod fmt;
+mod session;
 mod wallet;
 mod xmss;
 
@@ -63,17 +64,6 @@ const SW_BAD_FIELDS: u16 = 0x6A80;
 const P1_FIRST: u8 = 0x00;
 const P1_MORE: u8 = 0x80;
 const P1_LAST: u8 = 0x81;
-
-/// `r(32) ‖ wotsSig(67×32) ‖ auth(h×32) ‖ ecdsa(65)` — the blob
-/// `GET_SIGNATURE_CHUNK` hands back. No public key: the root and SEED are already
-/// on-chain from registration, and `contracts/script/Demo.s.sol::_decodeXmss`
-/// parses exactly this once the host has taken the ECDSA half off the end.
-///
-/// The ECDSA half is **last** so that a host which reads only the first chunk holds
-/// neither half whole: the classical signature cannot leave the device until the
-/// quantum one has been paged out in full.
-const BLOB_LEN: usize = xmss::SIG_LEN + 65;
-const CHUNK: usize = 255;
 
 enum Ins {
     /// 0x44 — root ‖ seed ‖ treeHeight ‖ parameterSet of the slot's key.
@@ -121,38 +111,17 @@ impl TryFrom<ApduHeader> for Ins {
 }
 
 // ── Device state ─────────────────────────────────────────────────────────────
+//
+// The leaf counter and the signature buffer live in `session.rs`, which owns them
+// privately so that "counter first, signature second" is something the compiler
+// checks rather than something this file remembers to do.
 
-/// The one-time-leaf counter, the app's odometer. Atomic storage: a power loss
-/// during the commit leaves either the old or the new value, never a torn one.
-/// `ledger-xmss-app.md`: committed *before* a signature is released.
-#[link_section = ".nvm_data"]
-static mut LEAF_COUNTER: NVMData<AtomicStorage<u32>> = NVMData::new(AtomicStorage::new(&0u32));
-
-/// The signing session: the streamed payload, and the blob the last approval
-/// produced. Static because 2.8 KB of locals would not fit the Nano's stack.
+/// The streamed payload of the signing session in flight. Static because 373 bytes of
+/// locals under the whole review would not fit the Nano's stack.
 static mut PAYLOAD: [u8; eip712::PAYLOAD_LEN] = [0; eip712::PAYLOAD_LEN];
 static mut PAYLOAD_LEN: usize = 0;
 static mut STREAMING: bool = false;
-static mut BLOB: [u8; BLOB_LEN] = [0; BLOB_LEN];
-static mut BLOB_READY: bool = false;
-/// How far `GET_SIGNATURE_CHUNK` has paged the blob out. `P1 = 0x00` puts it back to
-/// zero, so the host names its place in the stream rather than indexing into the
-/// buffer — the Ethereum app's `P1_FIRST`/`P1_MORE` convention, on the way out.
-static mut BLOB_CURSOR: usize = 0;
 static mut CHUNK_BUF: [u8; 255] = [0; 255];
-
-#[allow(static_mut_refs)]
-fn next_leaf() -> u32 {
-    unsafe { *LEAF_COUNTER.get_mut().get_ref() }
-}
-
-/// Commit `leaf + 1` durably. Returns once the NVM write has landed — this is the
-/// counter-before-signature invariant, and inverting it is the one ordering the
-/// spec calls catastrophic.
-#[allow(static_mut_refs)]
-fn consume_leaf(leaf: u32) {
-    unsafe { LEAF_COUNTER.get_mut().update(&(leaf + 1)) }
-}
 
 fn total_leaves() -> u32 {
     1u32 << xmss::HEIGHT
@@ -361,12 +330,32 @@ fn review_address(address: &[u8; 20]) {
     .show();
 }
 
+/// What a review does instead of showing a page it cannot draw honestly: say so on the
+/// device, and take the decision away.
+///
+/// The status word is `0x6A80`, not the `0x6985` of a human pressing Reject. That
+/// distinction is the whole point of having this function: nobody refused anything
+/// here — the firmware could not render a field — and a device whose one promise is
+/// that its screen does not lie must not report a decision the holder never made.
+/// `0x6A80` already covers it on the host side ("a field the device refuses to sign,
+/// or cannot show honestly", `demo/ledger_device.py`).
+///
+/// It draws a screen rather than answering silently because `ledger-ui.md`, "Errors",
+/// makes the clear-signing refusal one of the three cases the Administrator has to be
+/// told about on the device: there is no blind-signing setting to go and enable, so the
+/// screen is the whole explanation.
+fn refuse_to_display() -> Result<(), Reply> {
+    SingleMessage::new("Cannot display - rejected").show_and_wait();
+    Err(Reply(SW_BAD_FIELDS))
+}
+
 /// The pre-approval review: every signed field on its own page, in the order the
-/// Ethereum app uses, ending on Approve/Reject. Returns whether the human approved.
+/// Ethereum app uses, ending on Approve/Reject. `Ok(())` if the human approved; the
+/// status word to answer with if not.
 ///
 /// Nothing on these pages comes from anywhere but the signed struct — a Safe nonce
 /// or a host label would promise a binding the Guard does not enforce.
-fn review_pre_approval(f: &eip712::Fields, leaf: u32) -> bool {
+fn review_pre_approval(f: &eip712::Fields, leaf: u32) -> Result<(), Reply> {
     // One buffer, written and interned once per field, so the stack holds 128 bytes
     // of text at a time instead of every field of the flow at once.
     text_reset();
@@ -391,6 +380,8 @@ fn review_pre_approval(f: &eip712::Fields, leaf: u32) -> bool {
     let target = intern(buf.as_str());
     push_address(buf.clear(), f.safe());
     let safe = intern(buf.as_str());
+    push_address(buf.clear(), f.verifying_contract());
+    let guard = intern(buf.as_str());
 
     buf.clear().push_utc(f.valid_from());
     let valid_from = intern(buf.as_str());
@@ -415,11 +406,29 @@ fn review_pre_approval(f: &eip712::Fields, leaf: u32) -> bool {
     }
     let pinned = intern(buf.as_str());
 
+    // Every field of this review went through one `Buf`, and `overflowed` is sticky
+    // across `clear`, so this one question covers all of them: did any page end up
+    // saying less than the payload it is about to ask the holder to sign? If so there
+    // is nothing to ask — `ledger-ui.md`, "Errors": the clear-signing refusal has
+    // `Reject` as its only action, and there is no blind-signing setting to go and
+    // enable. Unreachable with the buffers as sized here, which is the point: it is
+    // the check that keeps it unreachable when a field is added or a buffer shrinks.
+    if buf.overflowed() {
+        return refuse_to_display();
+    }
     // The tail every class shows; only the three value pages differ.
+    //
+    // `Guard` is the EIP-712 `verifyingContract`, and it sits next to `Network`
+    // because the two are one fact: the binding this key slot takes on at its first
+    // approval is `chainId ‖ verifyingContract` together (`wallet.rs::commit_binding`),
+    // and with `MAX_KEYS = 1` and no retire command that binding is for the life of
+    // the key. It was the one signed field the review never drew, which made the
+    // permanent consequence of an approval the only thing the holder could not see.
     let tail = [
         Field { name: "Valid from", value: valid_from },
         Field { name: "Valid to", value: valid_to },
         Field { name: "Safe", value: safe },
+        Field { name: "Guard", value: guard },
         Field { name: "Network", value: network },
         Field { name: "Policy", value: policy },
         Field { name: "Binding", value: pinned },
@@ -436,7 +445,9 @@ fn review_pre_approval(f: &eip712::Fields, leaf: u32) -> bool {
         Field { name: "Value", value: value },
         Field { name: "Data hash", value: data_hash },
     ];
-    let mut fields: [Field; 10] = [
+    // As many pages as the flow has: the four head fields, then the seven of the tail.
+    let mut fields: [Field; 11] = [
+        Field { name: "", value: "" },
         Field { name: "", value: "" },
         Field { name: "", value: "" },
         Field { name: "", value: "" },
@@ -458,7 +469,7 @@ fn review_pre_approval(f: &eip712::Fields, leaf: u32) -> bool {
         1 => "Sign payload",
         _ => "ADMIN ACTION",
     };
-    MultiFieldReview::new(
+    let approved = MultiFieldReview::new(
         &fields,
         &[heading, leaf_text],
         Some(&APP_ICON),
@@ -467,7 +478,12 @@ fn review_pre_approval(f: &eip712::Fields, leaf: u32) -> bool {
         "Reject",
         Some(&CROSSMARK),
     )
-    .show()
+    .show();
+    if approved {
+        Ok(())
+    } else {
+        Err(StatusWords::UserCancelled.into())
+    }
 }
 
 // ── Command handlers ─────────────────────────────────────────────────────────
@@ -506,7 +522,7 @@ fn handle(comm: &mut Comm, ins: Ins) -> Result<(), Reply> {
             Ok(())
         }
         Ins::GetLeafIndex => {
-            comm.append(&next_leaf().to_be_bytes());
+            comm.append(&session::next_leaf().to_be_bytes());
             Ok(())
         }
         Ins::GetXmssRoot => {
@@ -520,23 +536,35 @@ fn handle(comm: &mut Comm, ins: Ins) -> Result<(), Reply> {
             Ok(())
         }
         Ins::SignPreApproval { chunk } => sign_pre_approval(comm, chunk),
-        Ins::GetSignatureChunk { first } => {
-            // Nothing to fetch until an approval has produced a blob.
-            if !unsafe { BLOB_READY } {
-                return Err(StatusWords::CmdNotAccepted.into());
-            }
-            let start = if first { 0 } else { unsafe { BLOB_CURSOR } };
-            if start >= BLOB_LEN {
-                // `P1 = 0x80` past the end of the buffer: the host asked for a chunk
-                // that does not exist. `P1 = 0x00` always restarts, so it never lands
-                // here.
-                return Err(StatusWords::BadP1P2.into());
-            }
-            let end = core::cmp::min(start + CHUNK, BLOB_LEN);
-            comm.append(unsafe { &BLOB[start..end] });
-            unsafe { BLOB_CURSOR = end };
-            Ok(())
-        }
+        Ins::GetSignatureChunk { first } => session::read_chunk(comm, first),
+    }
+}
+
+/// Every signed field the review does not draw for this approval class must be zero.
+///
+/// A `PreApproval` carries both the transfer triple (`token`, `recipient`, `amount`)
+/// and the payload triple (`target`, `value`, `dataHash`), and the class decides which
+/// of the two the Guard reads: `PreApprovalEngine::_commitment` and `_fieldsMatch`
+/// hash `(safe, class, token, recipient, amount)` for `TRANSFER` and
+/// `(safe, class, target, value, dataHash)` for `PAYLOAD`/`ADMIN`, and never look at
+/// the other three. The review follows the same split, drawing one triple and not the
+/// other.
+///
+/// So three fields of every pre-approval are signed, never shown, and never read
+/// on-chain. That is a small hole rather than a large one — the Guard would ignore
+/// whatever they said — but it is a hole of exactly the shape this app exists to close:
+/// a value covered by the digest that the holder was never asked about. Requiring them
+/// to be zero closes it without a page nobody can act on: an undrawn field can then
+/// carry nothing.
+///
+/// Every host in this repository already sends zeros there (`demo/app_api.py`,
+/// `demo/server.py`, `demo/ledger_device.py`'s own test vectors), and
+/// `demo/ledger_sim.py` refuses a class other than `TRANSFER` outright.
+fn unused_fields_are_zero(f: &eip712::Fields) -> bool {
+    if f.approval_class() == 0 {
+        f.target() == &[0u8; 20] && f.value() == &[0u8; 32] && f.data_hash() == &[0u8; 32]
+    } else {
+        f.token() == &[0u8; 20] && f.recipient() == &[0u8; 20] && f.amount() == &[0u8; 32]
     }
 }
 
@@ -554,17 +582,26 @@ fn review_and_digest(leaf: u32) -> Result<([u8; 32], u8, [u8; 32], [u8; 20]), Re
     match unsafe { PAYLOAD_LEN } {
         eip712::PAYLOAD_LEN => {
             let fields = eip712::Fields::new(payload);
-            if fields.approval_class() > 2 || fields.valid_from() > fields.valid_to() {
+            if fields.approval_class() > 2
+                || fields.valid_from() > fields.valid_to()
+                || !fmt::utc_renderable(fields.valid_to())
+                || !unused_fields_are_zero(&fields)
+            {
                 // "Payload rejected — field out of range", "Clock window invalid":
                 // there is no "review anyway" path.
+                //
+                // A `validTo` the formatter cannot draw as a date is refused here,
+                // before any screen, rather than shown as `NOT A DATE - REJECT`: the
+                // field is unreviewable either way and refusing costs no one a
+                // decision. `validFrom` needs no clause of its own — it is already
+                // required not to exceed `validTo`, so a renderable `validTo` makes
+                // it renderable too.
                 return Err(Reply(SW_BAD_FIELDS));
             }
             let contract = *fields.verifying_contract();
             wallet::check_binding(wallet::KIND_GUARD, fields.chain_id(), &contract)?;
             let digest = eip712::digest(&fields, leaf);
-            if !review_pre_approval(&fields, leaf) {
-                return Err(StatusWords::UserCancelled.into());
-            }
+            review_pre_approval(&fields, leaf)?;
             Ok((digest, wallet::KIND_GUARD, *fields.chain_id(), contract))
         }
         wallet::PAYLOAD_LEN => {
@@ -573,15 +610,19 @@ fn review_and_digest(leaf: u32) -> Result<([u8; 32], u8, [u8; 32], [u8; 20]), Re
             let fields = wallet::Fields::new(head);
             // A wallet with no address, or a window that has already closed, is a
             // signature that could never be used: refuse it unseen rather than ask.
-            if fields.wallet() == &[0u8; 20] || fields.valid_until() == 0 {
+            // So is a `validUntil` the formatter cannot draw as a date — and for a
+            // Transfer the window is the only control there is [FWL-036], so a field
+            // the holder cannot read is a control that is off while looking on.
+            if fields.wallet() == &[0u8; 20]
+                || fields.valid_until() == 0
+                || !fmt::utc_renderable(fields.valid_until())
+            {
                 return Err(Reply(SW_BAD_FIELDS));
             }
             let contract = *fields.wallet();
             wallet::check_binding(wallet::KIND_WALLET, fields.chain_id(), &contract)?;
             let digest = wallet::digest(&fields, leaf);
-            if !wallet::review(&fields, leaf, total_leaves(), &APP_ICON) {
-                return Err(StatusWords::UserCancelled.into());
-            }
+            wallet::review(&fields, leaf, total_leaves(), &APP_ICON)?;
             Ok((digest, wallet::KIND_WALLET, *fields.chain_id(), contract))
         }
         _ => Err(StatusWords::BadLen.into()),
@@ -606,14 +647,32 @@ fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
     };
     let data = unsafe { &CHUNK_BUF[..len] };
 
+    // A chunk with no data is refused before any state is touched, and in particular
+    // before a session is opened.
+    //
+    // This is the sharp edge an old host finds first. Before the renumbering, `0x04`
+    // was `GET_LEAF_INDEX`: no data, `P1 = 0x00`, and it now lands here as
+    // `SIGN_PREAPPROVAL` with `P1_FIRST` and `Lc = 0`. That used to answer `0x9000`
+    // with zero bytes — which a host reads as "leaf 0" — and leave a streaming session
+    // open, after which every read-only command came back `0x6986` and nothing said
+    // why. Failing here instead makes the first call the one that reports the problem.
+    //
+    // It is also why the refusal has to sit *above* the reset below: `P1_FIRST` throws
+    // away a buffered signature, so an empty first chunk would otherwise destroy a
+    // readout the host had not finished.
+    if data.is_empty() {
+        return Err(StatusWords::BadLen.into());
+    }
+
     unsafe {
         // `P1_LAST` with no session open is a payload that arrived whole: the wallet's
         // 132-byte `Transfer` fits in one APDU, and a host that sends it as a single
         // chunk is doing nothing wrong. `P1_MORE` with no session is still a bug.
         if chunk == P1_FIRST || (chunk == P1_LAST && !STREAMING) {
             PAYLOAD_LEN = 0;
-            BLOB_READY = false;
-            BLOB_CURSOR = 0;
+            // "The buffer is zeroized ... and on the next signing command"
+            // (ledger-xmss-app.md).
+            session::discard();
         } else if !STREAMING {
             // A continuation with nothing to continue.
             return Err(StatusWords::CmdNotAccepted.into());
@@ -631,33 +690,32 @@ fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
     }
 
     // ── The last chunk: everything below happens before any screen ──
-    let leaf = next_leaf();
+    let leaf = session::next_leaf();
     if leaf >= total_leaves() {
         return Err(Reply(SW_EXHAUSTED));
     }
     let (digest, kind, chain_id, contract) = review_and_digest(leaf)?;
 
     // Counter and binding first, durably, then the signatures — never the other way
-    // round. The binding is state a released signature depends on just as the counter
-    // is, so it is written under the same rule.
-    consume_leaf(leaf);
-    wallet::commit_binding(kind, &chain_id, &contract);
+    // round. `session::commit` is the only source of the `Committed` token and
+    // `session::publish` demands one by value, so this is the order the build enforces
+    // and not the order this line happens to be written in.
+    let committed = session::commit(leaf, kind, &chain_id, &contract);
     SingleMessage::new("Signing...").show();
 
     let ecdsa = sign_ecdsa(&digest).ok_or::<Reply>(StatusWords::Unknown.into())?;
     let key = xmss_key();
-    unsafe {
+    session::publish(committed, |leaf, blob: &mut [u8; session::BLOB_LEN]| {
         // XMSS first, ECDSA last: the host cannot hold the classical half without
-        // having already taken delivery of the whole quantum one.
-        xmss::sign(&key, leaf, &digest, &mut BLOB[..xmss::SIG_LEN]);
-        BLOB[xmss::SIG_LEN..].copy_from_slice(&ecdsa);
-        BLOB_READY = true;
-        BLOB_CURSOR = 0;
-    }
+        // having already taken delivery of the whole quantum one. `leaf` comes out of
+        // the commit token, so the leaf signed here is the leaf the counter consumed.
+        xmss::sign(&key, leaf, &digest, &mut blob[..xmss::SIG_LEN]);
+        blob[xmss::SIG_LEN..].copy_from_slice(&ecdsa);
+    });
 
     comm.append(&leaf.to_be_bytes());
     comm.append(&digest);
-    comm.append(&(BLOB_LEN as u16).to_be_bytes());
+    comm.append(&(session::BLOB_LEN as u16).to_be_bytes());
     Ok(())
 }
 
@@ -679,37 +737,71 @@ const fn parse_u8(s: &str) -> u8 {
     v
 }
 
+/// What this key slot is married to, in full: the contract, the chain, and which
+/// product they belong to.
+///
+/// Its own review rather than a home page, because a home page cannot hold it. The
+/// SDK's `Page` draws at most three lines of `MAX_CHAR_PER_LINE` — 51 characters — and
+/// drops the rest without a mark: `Safe guard ‹42-character address› on chain 31337`
+/// is 64 characters, so the chain id fell off the end of every binding this app has
+/// ever displayed, and a 78-digit chain id would have taken the address with it.
+/// `MultiFieldReview` paginates its values instead, so the address is drawn EIP-55 and
+/// whole, and the chain id is drawn whole however many digits it has — which is what
+/// `ledger-xmss-app.md` asks for ("no abbreviation of security-critical values") and
+/// what `ledger-ui.md` puts on `Settings → Keys`.
+fn review_binding() {
+    text_reset();
+    let mut buf = fmt::Buf::<128>::new();
+
+    push_address(&mut buf, &wallet::bound_contract());
+    let contract = intern(buf.as_str());
+    buf.clear().push_amount(&wallet::bound_chain(), 0);
+    let chain = intern(buf.as_str());
+
+    let name = if wallet::bound_kind() == wallet::KIND_GUARD { "Safe guard" } else { "Wallet" };
+    let fields =
+        [Field { name, value: contract }, Field { name: "Network", value: chain }];
+    MultiFieldReview::new(
+        &fields,
+        &["Key is for", name],
+        Some(&EYE),
+        "Done",
+        Some(&CHECKMARK),
+        "Done",
+        Some(&CHECKMARK),
+    )
+    .show();
+}
+
 /// The Ethereum app's home idiom: "<app> is ready", the version, and Quit, plus a
 /// FermionGuard page for the odometer — the leaf count the Administrator is meant
 /// to recognize (`ledger-xmss-app.md`: "the leaf index is always visible").
 fn home(comm: &mut Comm) -> Ins {
     let mut leaves = fmt::Buf::<24>::new();
-    leaves.push_u32_grouped(next_leaf());
+    leaves.push_u32_grouped(session::next_leaf());
     leaves.push_str(" of ");
     leaves.push_u32_grouped(total_leaves());
 
-    // Which contract this key is committed to, if any. Invisible state that decides
-    // whether a signature will be refused belongs on the home screen [FWL-023].
-    let mut bound = fmt::Buf::<128>::new();
-    match wallet::bound_kind() {
-        k @ (wallet::KIND_GUARD | wallet::KIND_WALLET) => {
-            bound.push_str(if k == wallet::KIND_GUARD { "Safe guard " } else { "Wallet " });
-            push_address(&mut bound, &wallet::bound_contract());
-            bound.push_str(" on chain ");
-            bound.push_amount(&wallet::bound_chain(), 0);
-        }
-        _ => {
-            bound.push_str("not used yet");
-        }
-    }
+    // Which product this key is committed to, if any: invisible state that decides
+    // whether a signature will be refused belongs where the holder can find it
+    // [FWL-023]. Only the short answer goes on the page — press both buttons for the
+    // contract and the chain, which need a widget that paginates. Everything a `Page`
+    // shows here is a fixed string or the leaf count, so nothing on the home screen
+    // can be cut off mid-value again.
+    let bound = match wallet::bound_kind() {
+        wallet::KIND_GUARD => "a Safe guard",
+        wallet::KIND_WALLET => "a FermionWallet",
+        _ => "not used yet",
+    };
 
     let pages = [
         &Page::new(PageStyle::PictureNormal, ["FermionGuard", "is ready"], Some(&APP_ICON)),
         &Page::new(PageStyle::BoldNormal, ["Leaves used", leaves.as_str()], None),
-        &Page::new(PageStyle::BoldNormal, ["Key is for", bound.as_str()], None),
+        &Page::new(PageStyle::BoldNormal, ["Key is for", bound], None),
         &Page::new(PageStyle::BoldNormal, ["Version", env!("CARGO_PKG_VERSION")], None),
         &Page::new(PageStyle::BoldNormal, ["Quit", ""], None),
     ];
+    let binding = 2;
     let quit = pages.len() - 1;
 
     loop {
@@ -717,6 +809,9 @@ fn home(comm: &mut Comm) -> Ins {
             EventOrPageIndex::Event(Event::Command(ins)) => return ins,
             EventOrPageIndex::Event(_) => (),
             EventOrPageIndex::Index(i) if i == quit => ledger_device_sdk::exit_app(0),
+            EventOrPageIndex::Index(i) if i == binding && wallet::bound_kind() != wallet::KIND_UNBOUND => {
+                review_binding()
+            }
             EventOrPageIndex::Index(_) => (),
         }
     }

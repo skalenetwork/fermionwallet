@@ -205,8 +205,13 @@ pub fn digest(f: &Fields, leaf: u32) -> [u8; 32] {
 /// Every signed field on its own page, ending on Approve/Reject — the pre-approval
 /// flow's screens for token, amount, recipient and validity, with the Safe/pin/policy
 /// pages replaced by the one thing that takes their place: the wallet being spent
-/// from. Returns whether the human approved.
-pub fn review(f: &Fields, leaf: u32, total_leaves: u32, icon: &ledger_device_sdk::ui::bitmaps::Glyph) -> bool {
+/// from. `Ok(())` if the human approved; the status word to answer with if not.
+pub fn review(
+    f: &Fields,
+    leaf: u32,
+    total_leaves: u32,
+    icon: &ledger_device_sdk::ui::bitmaps::Glyph,
+) -> Result<(), Reply> {
     // One buffer, written and interned once per field. Seven field strings as stack
     // locals is what made the pre-approval review overflow the Nano S Plus's stack and
     // kill the app mid-session; this review had the same shape and the same fate
@@ -236,6 +241,13 @@ pub fn review(f: &Fields, leaf: u32, total_leaves: u32, icon: &ledger_device_sdk
     buf.clear().push_amount(f.chain_id(), 0);
     let network = crate::intern(buf.as_str());
 
+    // One question for the whole review: `Buf::overflowed` is sticky across `clear`,
+    // so it is true if any field above ended up saying less than the payload. A page
+    // the device cannot draw honestly is not a page to ask a decision on.
+    if buf.overflowed() {
+        return crate::refuse_to_display();
+    }
+
     let fields = [
         Field { name: "Leaf", value: leaf_text },
         Field { name: "Token", value: token },
@@ -245,7 +257,7 @@ pub fn review(f: &Fields, leaf: u32, total_leaves: u32, icon: &ledger_device_sdk
         Field { name: "Wallet", value: wallet },
         Field { name: "Network", value: network },
     ];
-    MultiFieldReview::new(
+    let approved = MultiFieldReview::new(
         &fields,
         // Short enough not to scroll on a Nano's 16-character line, and it cannot be
         // mistaken for the Safe flow's "Sign approval".
@@ -256,5 +268,10 @@ pub fn review(f: &Fields, leaf: u32, total_leaves: u32, icon: &ledger_device_sdk
         "Reject",
         Some(&CROSSMARK),
     )
-    .show()
+    .show();
+    if approved {
+        Ok(())
+    } else {
+        Err(ledger_device_sdk::io::StatusWords::UserCancelled.into())
+    }
 }

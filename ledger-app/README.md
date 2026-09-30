@@ -73,13 +73,18 @@ from registration, and `contracts/script/Demo.s.sol` decodes exactly the XMSS ha
 the host takes off the front.
 
 Status words: `0x9000` ok, `0x6985` rejected on the device, `0x6986` a signing
-session is already in flight, `0x6A84` no one-time leaves left, `0x6901` nothing
-buffered to read out, `0x6E00` wrong CLA, `0x6E01` an instruction number the
-dispatcher does not know — including the commands `ledger-xmss-app.md` defines that
-this build does not implement, and including a host that still speaks the old
-numbering — `0x6E02` impossible P1/P2 (including a slot this build does not have),
-`0x6E03` bad length. These are the Rust SDK's `StatusWords` values, checked against
-the built app rather than assumed.
+session is already in flight, `0x6A80` a field the device will not sign or cannot show
+honestly, `0x6A81` the key slot belongs to a different contract, `0x6A84` no one-time
+leaves left, `0x6901` nothing buffered to read out, `0x6E00` wrong CLA, `0x6E01` an
+instruction number the dispatcher does not know — including the commands
+`ledger-xmss-app.md` defines that this build does not implement, and including a host
+that still speaks the old numbering — `0x6E02` impossible P1/P2 (including a slot this
+build does not have), `0x6E03` bad length, including a chunk of `SIGN_PREAPPROVAL`
+with no data. These are the Rust SDK's `StatusWords` values, checked against the built
+app rather than assumed.
+
+Four of them differ from `ledger-xmss-app.md`; see [Where this build differs from the
+spec](#where-this-build-differs-from-the-spec).
 
 ## What is checked
 
@@ -99,11 +104,51 @@ signs is one the Guard accepts:
    a device that emitted one would produce approvals the Guard always refuses.
 
 Plus the firmware behaviour that is easy to get wrong: the leaf counter advances by
-exactly one per signature, a rejection consumes nothing, the review really shows
-every field, and an exhausted key refuses to sign.
+exactly one per signature, a rejection consumes nothing, the review really shows every
+field — including the `verifyingContract` the slot marries itself to — a spent
+signature cannot be read out a second time, a chunk with no data is refused instead of
+opening a session, and an exhausted key refuses to sign.
+
+`test/test_wallet.py` does the same for the FermionWallet `Transfer` path and the
+one-key-one-contract binding, and `test/test_fmt_utc.py` checks that no screen says
+less than the payload: the calendar arithmetic against Python's own, on the host, and
+on the device the two places a value is refused rather than drawn short.
 
 ```sh
-./build.sh && python3 test/test_app.py    # needs docker and Foundry's cast
+./build.sh && python3 test/test_app.py      # needs docker and Foundry's cast
+python3 test/test_wallet.py                 # its own ports and container
+python3 test/test_fmt_utc.py                # --host for the parts needing no device
+```
+
+Each suite owns its Speculos ports so they can run together; `APP_TEST_PORTS`,
+`WALLET_TEST_PORTS` and `FMT_UTC_PORTS` move them.
+
+### The one invariant no test here can reach
+
+`ledger-xmss-app.md` calls one ordering catastrophic to invert: the leaf counter must
+commit to NVM **before** a signature is released. No host-side test can observe it.
+Speculos keeps NVM in RAM, so there is no power cut to stage and nothing to look at
+afterwards — move the commit to after the signature is published and all three suites
+stay green, which is exactly why the claim used to sit in a docstring that was not
+earning it.
+
+It is a property of the build instead. `src/session.rs` owns the counter and the
+signature buffer privately and hands out a `Committed` token that only `commit` can
+produce; `publish`, the only writer of the flag `GET_SIGNATURE_CHUNK` reads, takes that
+token **by value**. A build that released the signature first has no token to pass.
+The committed leaf travels inside the token, so "commit leaf N, sign leaf M" is not
+expressible either.
+
+To falsify it, swap the two statements in `main.rs::sign_pre_approval` — put the
+`session::publish(...)` call above the `session::commit(...)` that produces its
+argument — and build:
+
+```
+error[E0425]: cannot find value `committed` in this scope
+   --> src/main.rs:...
+    |
+    |     session::publish(committed, |leaf, blob: &mut [u8; session::BLOB_LEN]| {
+    |                      ^^^^^^^^^ not found in this scope
 ```
 
 The full path — register the device's key on chain, sign on the device, relay to the
@@ -143,11 +188,45 @@ None of these is a shortcut in the signing path: the counter-before-signature
 commit, the recomputed digest, and the field-by-field review are implemented as
 specified, because those are what the Guard's security rests on.
 
+## Where this build differs from the spec
+
+The list above is about commands and flows that are absent. These are places where a
+command that *is* here behaves differently from `ledger-xmss-app.md`. They are recorded
+rather than fixed because each one would break `demo/ledger_device.py`, the host half
+of this protocol, and the two have to ship together; none of them is a difference the
+Guard's security rests on.
+
+| `ledger-xmss-app.md` | This build | Why it is left |
+|---|---|---|
+| `GET_SIGNATURE_CHUNK` takes `P2 = 00` (it names no key) | `P2 = slot`, like every other command | The dispatcher checks the slot once for the whole APDU surface, which is what makes "no command can act on a key other than the one it names" a single line rather than a per-command argument. The readout names no key, so the check is redundant there — but `demo/ledger_device.py::_send` puts the slot in `P2` of every command it sends, so accepting only `00` would reject the host in the tree. |
+| Read-only commands are answered while a signing session is in flight, as the Ethereum app answers GET APP CONFIGURATION regardless | All commands but `SIGN_PREAPPROVAL` answer `0x6986` while a payload is half-streamed | Two of the read-only commands are not read-only in this build: `GET_XMSS_ROOT` has no display flag and always draws "Reading key…", and on a fresh device it *generates* the key. Drawing a screen over a half-streamed session is worse than refusing it. Answering the two that really are inert (`GET_APP_CONFIG`, `GET_LEAF_INDEX`) while refusing the others would be the spec's behaviour for a build that has the display flag. |
+| A signing command arriving mid-session is refused with `0x6980` | `0x6986` | `0x6986` is the Rust SDK's own `StatusWords::Busy`, and `demo/ledger_device.py` has a sentence for it. `0x6980` has no SDK constant here. |
+| `GET_SIGNATURE_CHUNK` with nothing buffered returns `0x6A88` | `0x6901` | `0x6901` is the SDK's `StatusWords::CmdNotAccepted`. `0x6A88` is also the spec's code for a root-prefix mismatch, which this build does not implement (it has one slot and takes no root prefix), so the two meanings cannot be told apart here. |
+
+One further difference has been closed rather than recorded: the spec requires the
+signature buffer to be zeroized once its last byte has been delivered and again on the
+next signing command, and it now is (`src/session.rs::discard`). A spent one-time
+signature used to sit in 2.8 KB of RAM until the app was closed, and `P1 = 0x00` would
+serve it again on demand. `test/test_app.py` checks the consequence — there is nothing
+to read after a complete readout, by either `P1` — because Speculos cannot show a test
+the device's RAM.
+
+Nothing here argues the spec is wrong. The `P2` and status-word rows are the spec
+being right and this build being one host-side release behind it; the read-only row is
+the spec assuming `GET_XMSS_ROOT`'s display flag, which this build does not have.
+
 ## Layout
 
 | Path | |
 |---|---|
-| `src/main.rs` | APDU dispatch, home screen, command handlers |
+| `src/main.rs` | APDU dispatch, home screen, command handlers, the pre-approval review |
+| `src/session.rs` | the leaf counter and the signature buffer, and the type that orders them |
+| `src/eip712.rs` | the `PreApproval` field layout and the digest, recomputed on the device |
+| `src/wallet.rs` | FermionWallet's `Transfer`: fields, digest, review, and the key's contract binding |
+| `src/xmss.rs` | the stateful half: key derivation, one-time signing, authentication path |
 | `src/fmt.rs` | screen formatting with no allocator: amounts, addresses, UTC times |
+| `test/test_app.py` | the Safe pre-approval path end to end, in Speculos |
+| `test/test_wallet.py` | the FermionWallet path and the one-key-one-contract binding |
+| `test/test_fmt_utc.py` | that no screen says less than the payload: host and device |
 | `build.sh` | build in Ledger's container, ELF where Speculos and the demo expect it |
 | `ledger_app.toml` | manifest for Ledger's tooling and CI |

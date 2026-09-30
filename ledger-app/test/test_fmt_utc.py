@@ -24,8 +24,16 @@ function draws `validFrom`/`validTo` on the Safe pre-approval review, so the Gua
 product carried it too.
 
 `Buf::overflowed` is the same class of bug one step away: a field that did not fit
-its buffer used to render as the prefix that did, and nothing read the flag. A
-truncated chain id on the home screen is host-reachable today (see D4).
+its buffer used to render as the prefix that did, and nothing read the flag. Both
+reviews now ask it once, after their last field, and answer `0x6A80` rather than draw
+a page that says less than the payload.
+
+And the flag only ever covered half the problem, because a `Buf` can be well within
+its capacity and still be cut in half by the widget it is handed to. The SDK's `Page`
+draws three lines of seventeen characters and drops the rest with no mark at all, so
+the home screen's `Key is for` — a 64-character string in a 128-byte buffer — lost its
+chain id on every device this app has ever run on, untainted and unflagged. `fmt.rs`
+cannot see that; only the caller can. D4 checks the shape that fixes it.
 
 ## What is checked
 
@@ -40,16 +48,22 @@ Host, against `src/fmt.rs` compiled on its own — no device needed, runs in sec
 * a field that overflows its buffer reads `TOO_LONG`, never its own prefix, and the
   taint survives `clear()` so one review-wide check sees it.
 
-Device, in Speculos, on ports and a container of this file's own:
+Device, in Speculos, on ports and a container of this file's own. `push_utc`'s own
+advice is to refuse such a timestamp *before* the review rather than put `NOT_A_DATE`
+in front of the holder, and `main.rs::review_and_digest` now does: both arms ask
+`fmt::utc_renderable` among the pre-checks that answer `0x6A80` before a single
+screen. So on the device the marker is unreachable — which is the point of it, and
+why the checks below read the refusal rather than the page:
 
-* D1 a Safe pre-approval whose `validTo` is a wrapped twin: the Valid-to page draws
-  no date, `Valid from` still draws its real one, and rejecting it costs no leaf;
+* D1 a Safe pre-approval whose `validTo` is a wrapped twin: no review is drawn at
+  all, neither Valid-to nor Valid-from, the answer is `0x6A80` and not the status
+  word for a human's rejection, and it costs no leaf;
 * D2 a transfer with a plausible `validUntil` still reviews and signs exactly as
   before, digest confirmed against `cast` — the fix must not break the normal path;
-* D3 the same transfer with the wrapped twin: no date on the screen, refused;
-* D4 a truncated field: `chainId = 2^256 - 1` overflows the home screen's "Key is
-  for" buffer, which must read `TOO_LONG` rather than the first 128 characters of a
-  78-digit number.
+* D3 the same transfer with the wrapped twin: refused unseen, no page, no leaf;
+* D4 the widest value the app can draw, `chainId = 2^256 - 1`: 103 characters, drawn
+  whole on the review page that paginates and nowhere near a home-screen `Page`,
+  which draws three lines of seventeen characters and drops the rest unmarked.
 
 ## Running it
 
@@ -71,8 +85,16 @@ fix is a flag. Each one must turn the suite red:
 `show-prefix` puts the truncated prefix back in `as_str`. `forget-taint` makes
 `clear()` reset the flag, so a review-wide check stops seeing anything. The mutation
 patches a *copy* of `fmt.rs` in a temporary directory; the file in the tree is not
-touched. The device checks are falsified by building an app from a mutated `fmt.rs`
-and pointing `FMT_UTC_ELF` at it.
+touched.
+
+The device checks are falsified differently now that they read the gate rather than
+the marker: mutating `fmt.rs` alone no longer reaches them, because the payload is
+refused before `push_utc` is ever called. Build an app with the two
+`fmt::utc_renderable` clauses removed from `main.rs::review_and_digest` and point
+`FMT_UTC_ELF` at it — D1a/D1b/D1c, D3a/D3c and D5b/D5c must all go red, because that
+app draws the review and answers `0x6985` when the walker rejects it. That is the
+build this suite's device half was first written against, and it is exactly what the
+gate is there to prevent.
 """
 import argparse
 import datetime
@@ -103,7 +125,7 @@ sys.path.insert(0, os.path.join(REPO, "demo"))
 # suite depends on the order of the two halves.
 from ledger_device import (  # noqa: E402
     CHUNK, CLA, INS_GET_LEAF_INDEX, INS_SIGN_PREAPPROVAL, P1_FIRST, P1_LAST, P1_MORE,
-    SW_DENIED, SW_OK, encode_payload, transport,
+    SW_BAD_FIELDS, SW_DENIED, SW_OK, encode_payload, transport,
 )
 
 SEED = "test test test test test test test test test test test junk"
@@ -535,8 +557,9 @@ HOME_PAGES = ("is ready", "Leaves used", "Key is for", "Version", "Quit")
 # swallow `Valid until`.
 TITLES = sorted((
     "Leaf", "Token", "Amount", "Recipient", "Valid until", "Valid from", "Valid to",
-    "Wallet", "Network", "Safe", "Policy", "Binding", "Target", "Value", "Data hash",
-    "Administrator", "Key is for", "Leaves used", "Version", "Quit", "Approve", "Reject",
+    "Wallet", "Network", "Safe guard", "Safe", "Guard", "Policy", "Binding", "Target",
+    "Value", "Data hash", "Administrator", "Key is for", "Leaves used", "Version",
+    "Quit", "Approve", "Reject", "Done",
 ), key=len, reverse=True)
 
 
@@ -590,15 +613,23 @@ def review(tr, decision, dwell=0.4):
     In a thread, because the device answers the last chunk only once the human has
     decided. Every page is dwelt on, so all of its lines reach the event log before
     the next press.
+
+    Returns the thread and a `stop` event. A payload that `review_and_digest` refuses
+    before any screen — which is now most of what this file sends — never draws a
+    review for the walker to find, so the caller must be able to call it off. Without
+    that it waits out its whole deadline, outlives the emulator it is polling, and
+    prints a `Connection refused` traceback that reads like a device crash.
     """
+    stop = threading.Event()
+
     def home(text):
         return not text or any(p in text for p in HOME_PAGES)
 
     def run():
         deadline = time.time() + 180
-        while time.time() < deadline and home(" ".join(tr.screen())):
+        while time.time() < deadline and not stop.is_set() and home(" ".join(tr.screen())):
             time.sleep(0.1)
-        while time.time() < deadline:
+        while time.time() < deadline and not stop.is_set():
             text = " ".join(tr.screen())
             if home(text):
                 return
@@ -614,7 +645,7 @@ def review(tr, decision, dwell=0.4):
 
     t = threading.Thread(target=run, daemon=True)
     t.start()
-    return t
+    return t, stop
 
 
 def stream(tr, payload, decision, chunk=CHUNK):
@@ -624,7 +655,7 @@ def stream(tr, payload, decision, chunk=CHUNK):
     drew while asking.
     """
     clear_events()
-    walker = review(tr, decision)
+    walker, stop = review(tr, decision)
     pieces = [payload[i:i + chunk] for i in range(0, len(payload), chunk)] or [b""]
     out, sw = b"", SW_OK
     for i, piece in enumerate(pieces):
@@ -633,6 +664,9 @@ def stream(tr, payload, decision, chunk=CHUNK):
         out, sw = send(tr, INS_SIGN_PREAPPROVAL, p1, piece, 240 if last else 30)
         if sw != SW_OK:
             break
+    # The device has answered, so there is nothing left for the walker to press —
+    # whether it decided, or the payload was refused before a screen was ever drawn.
+    stop.set()
     walker.join(timeout=30)
     return out, sw, screens()
 
@@ -710,14 +744,13 @@ def device_checks():
         start = next_leaf(tr)
         fields = dict(PRE_APPROVAL, validTo=twin)
         out, sw, seen = stream(tr, encode_payload(fields, CHAIN_ID, GUARD), "reject")
-        to, frm = seen.get("Valid to", ""), seen.get("Valid from", "")
-        check("D1a: the Guard review draws no date for a validTo in year 4,294,969,322",
-              reads(to, APP["not_a_date"]) and not looks_like_a_date(to), f"{to!r}")
-        check("D1b: and still draws the real validFrom beside it — one bad field, one bad page",
-              all(reads(frm, t) for t in utc_oracle(PRE_APPROVAL["validFrom"]).split()),
-              f"{frm!r} wanted {utc_oracle(PRE_APPROVAL['validFrom'])!r}")
-        check("D1c: rejecting it is refused with the rejection status word",
-              sw == SW_DENIED, f"0x{sw:04x}")
+        check("D1a: the Guard review is never drawn — no page names a date to misread",
+              not seen and not looks_like_a_date(" ".join(seen.values())),
+              f"pages drawn: {sorted(seen)!r}")
+        check("D1b: the holder is not asked at all: no Valid-to and no Valid-from page",
+              "Valid to" not in seen and "Valid from" not in seen, f"{sorted(seen)!r}")
+        check("D1c: it is refused as a bad field, not as a human's rejection",
+              sw == SW_BAD_FIELDS, f"0x{sw:04x}")
         check("D1d: and costs no one-time leaf", next_leaf(tr) == start, f"leaf {next_leaf(tr)}")
 
         # ── D2 the normal path, unchanged ─────────────────────────────────────
@@ -746,59 +779,97 @@ def device_checks():
             tr, encode_transfer(WALLET, dict(TRANSFER, validUntil=FOREVER_UNTIL), CHAIN_ID),
             "reject")
         twin_until = seen.get("Valid until", "")
-        check("D3a: the transfer review draws no date for validUntil 135536078592187200",
-              reads(twin_until, APP["not_a_date"]) and not looks_like_a_date(twin_until),
-              f"{twin_until!r}")
-        check("D3b: so it no longer renders identically to the 2026 window it wrapped onto",
+        check("D3a: the transfer review draws no Valid-until page for validUntil "
+              "135536078592187200 — it draws no page at all",
+              not seen and not looks_like_a_date(" ".join(seen.values())),
+              f"pages drawn: {sorted(seen)!r}")
+        check("D3b: so nothing on screen can render as the 2026 window it wrapped onto",
               tight(twin_until) != tight(until), f"{twin_until!r} vs {until!r}")
-        check("D3c: rejecting it is refused and costs no leaf",
-              sw == SW_DENIED and next_leaf(tr) == start, f"0x{sw:04x}")
+        check("D3c: it is refused as a bad field before any screen, and costs no leaf",
+              sw == SW_BAD_FIELDS and next_leaf(tr) == start,
+              f"0x{sw:04x}, leaf {next_leaf(tr)}, expected {start}")
 
         # ── D5 the boundary itself, on the device ─────────────────────────────
         #
-        # The last second that still draws, and the first one that does not. Both are
-        # rejected, so neither costs a leaf; what is being read is the screen.
+        # The last second that still draws, and the first one that does not. The first
+        # is reviewed and rejected by hand; the second never reaches a screen, because
+        # the gate refuses it. Neither costs a leaf.
         edge = {}
         for label, secs in (("last", APP["max"]), ("first refused", APP["max"] + 1)):
             _, sw, seen = stream(
                 tr, encode_transfer(WALLET, dict(TRANSFER, validUntil=secs), CHAIN_ID), "reject")
-            edge[label] = (seen.get("Valid until", ""), sw)
-        page, sw = edge["last"]
+            edge[label] = (seen.get("Valid until", ""), sw, sorted(seen))
+        page, sw, pages = edge["last"]
         check(f"D5a: validUntil {APP['max']} still draws its date, {utc_oracle(APP['max'])}",
               all(reads(page, t) for t in utc_oracle(APP["max"]).split())
               and not reads(page, APP["not_a_date"]), f"{page!r}")
-        page, sw = edge["first refused"]
-        check(f"D5b: and one second later, {APP['max'] + 1}, draws no date at all",
-              reads(page, APP["not_a_date"]) and not looks_like_a_date(page), f"{page!r}")
-        check("D5c: neither of the two cost a leaf",
-              edge["last"][1] == SW_DENIED and edge["first refused"][1] == SW_DENIED
-              and next_leaf(tr) == start, f"leaf {next_leaf(tr)}, expected {start}")
+        page, sw, pages = edge["first refused"]
+        check(f"D5b: and one second later, {APP['max'] + 1}, draws no page at all",
+              not pages and not looks_like_a_date(page), f"pages drawn: {pages!r}")
+        check("D5c: the renderable one is a human's rejection, the other a bad field, "
+              "and neither cost a leaf",
+              edge["last"][1] == SW_DENIED and edge["first refused"][1] == SW_BAD_FIELDS
+              and next_leaf(tr) == start,
+              f"0x{edge['last'][1]:04x} / 0x{edge['first refused'][1]:04x}, "
+              f"leaf {next_leaf(tr)}, expected {start}")
     finally:
         emu.stop()
 
-    # ── D4 a field that does not fit, on a device with a clean binding ────────
+    # ── D4 the binding, drawn whole, on a device with a clean binding ─────────
     #
-    # `chainId = 2^256 - 1` is 78 digits and 25 separators. The review's own Network
-    # field holds that; the home screen's "Key is for" line, which is the contract
-    # this key is now married to *plus* the chain, does not — 162 characters into 128.
+    # `chainId = 2^256 - 1` is the widest value this app can be asked to draw: 78
+    # digits and 25 separators, 103 characters. The review's own Network field holds it
+    # because `MultiFieldReview` paginates a value over as many pages as it needs. The
+    # home screen's `Page` does not paginate at all — it draws three lines of
+    # `MAX_CHAR_PER_LINE` and silently drops the rest — so `Safe guard ‹address› on
+    # chain ‹id›` used to lose the chain id at 51 characters even on chain 31337, and
+    # would have lost most of the address here. The binding therefore lives in a review
+    # of its own, opened from the home page, and the home page itself carries nothing
+    # but a fixed string.
     try:
         tr = emu.start()
         out, sw, _ = stream(tr, encode_transfer(WALLET, TRANSFER, HUGE_CHAIN_ID), "approve")
         check("D4a: a transfer on chain 2^256-1 is signed — the review's own fields fit",
               sw == SW_OK, f"0x{sw:04x}")
-        # Any APDU rebuilds the home menu at page 0; walk the carousel once.
+
+        # Any APDU rebuilds the home menu at page 0. Right twice to "Key is for", both
+        # buttons to open the binding review, then right through its pages: the value of
+        # a 103-character chain id is spread over several of them, and only the event
+        # log holds all the lines.
         clear_events()
         next_leaf(tr)
-        for _ in range(7):
+        for _ in range(2):
             tr.press("right")
             time.sleep(0.4)
-        bound = screens().get("Key is for", "")
-        check("D4b: the home page whose text no longer fits its buffer reads TOO_LONG",
-              reads(bound, APP["too_long"]), f"{bound!r}")
-        check("D4c: and shows no part of what it could not finish saying",
-              not reads(bound, "Wallet")
-              and not reads(bound.replace(",", ""), str(HUGE_CHAIN_ID)[:12]),
-              f"{bound!r}")
+        page = " ".join(tr.screen())
+        check("D4b: the home page carries a fixed string, with no value to cut short",
+              reads(page, "Key is for") and reads(page, "a FermionWallet")
+              and not reads(page, APP["too_long"]), f"{page!r}")
+
+        tr.press("both")
+        time.sleep(0.5)
+        for _ in range(14):
+            tr.press("right")
+            time.sleep(0.35)
+        seen = screens()
+        wallet_page = seen.get("Wallet", "")
+        network_page = seen.get("Network", "")
+        check("D4c: opening it draws the bound contract in full, EIP-55 and unabbreviated",
+              reads(wallet_page, WALLET), f"{wallet_page!r} wanted {WALLET}")
+        # A value too wide for one page comes back as `(1/3)…(2/3)…(3/3)…`: the SDK's
+        # own page markers, plus `push_amount`'s thousands separators and the line
+        # breaks the Nano wraps at. Strip all three and what is left must be the number
+        # itself, to the last digit — that is the whole claim.
+        digits = re.sub(r"\(\d+/\d+\)|[,\s]", "", network_page)
+        check("D4d: and all 78 digits of the chain id, every one of 2^256-1",
+              digits == str(HUGE_CHAIN_ID) and not reads(network_page, APP["too_long"]),
+              f"{digits!r} wanted {HUGE_CHAIN_ID}")
+
+        # Out of the review and back to a device that still answers.
+        tr.press("both")
+        time.sleep(0.5)
+        check("D4e: and the device is still answering afterwards", next_leaf(tr) == 1,
+              f"leaf {next_leaf(tr)}")
     finally:
         emu.stop()
 
