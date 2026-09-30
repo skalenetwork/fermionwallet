@@ -174,10 +174,13 @@ Guard or the engine is formally verified.
 **Ledger app — a first Rust app exists, and must not hold real funds.** It builds, and the
 demo can drive it in Ledger's Speculos emulator. It is a subset of
 [`ledger-xmss-app.md`](./ledger-xmss-app.md): one key slot, a demo tree height of 4, no
-key-generation or rotation commands, Nano screens only — and an XMSS seed derived from the
-recovery phrase, which [`hardware-security-policy.md`](./hardware-security-policy.md)
-forbids precisely because a restorable stateful key can sign one leaf twice.
+key-generation, rotation, attestation or retire commands, and Nano screens only.
 `ledger-app/README.md` lists every gap. The default demo still uses the simulated Ledger.
+
+The seed it signs with is generated on the device from its own entropy and never leaves —
+it was briefly derived from the recovery phrase, which
+[`hardware-security-policy.md`](./hardware-security-policy.md) forbids precisely because a
+restorable stateful key can be rolled back onto a second device and sign one leaf twice.
 
 **Also here:** an early JavaScript prototype of the key, policy and pre-approval flows,
 which is not the enforcement layer and not post-quantum (below).
