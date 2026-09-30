@@ -714,7 +714,8 @@ contract FermionGuard is
         return (false, address(0));
     }
 
-    function _isDeniedSelector(bytes4 selector) private pure returns (bool) {
+    /// @dev `internal` so the equivalence proof can check it directly (test/guard-proof).
+    function _isDeniedSelector(bytes4 selector) internal pure returns (bool) {
         return selector == SEL_APPROVE || selector == SEL_TRANSFER_FROM || selector == SEL_INCREASE_ALLOWANCE
             || selector == SEL_PERMIT;
     }
