@@ -86,14 +86,26 @@ Within the 0.4–1M target set in `../fermionguard-module.md`
   of those primitives into an accepting `verify` is a hand argument, checked
   symbolically only at h = 2 and by concrete vectors at h = 4, 10 and 20. It
   is not machine-checked for general h. See `lib/xmss-solidity/PROOF.md` for
-  what is proven and assumed. The registry's state machine is proven
-  equivalent to the executable specification in `test/registry-proof/` with
-  Halmos (authorization and XMSS verification abstracted). That proof is run
-  offline — `halmos --match-contract RegistryEquivalence --loop 32
-  --solver-timeout-assertion 0` — and is not a CI gate yet: Halmos drives the
-  `check_*` functions, so `forge test` does not exercise it. Beyond that, the
-  Guard, registry and engine are fuzz and invariant tested, not formally
-  verified.
+  what is proven and assumed.
+- The registry's state machine — the Active key, per-key status, sticky
+  enrollment, one-shot roots, the ceremony nonce and the emergency-revocation
+  time lock — is proven equivalent to the executable specification in
+  `test/registry-proof/` with Halmos. Each lemma starts from an *arbitrary*
+  registry state satisfying `RegistrySpec.invariant` and proves the invariant
+  again afterwards, so the proof covers every reachable state and not just the
+  ones a short call sequence happens to reach. Abstracted, with reasons, in the
+  header of `RegistrySpec.sol`: owner-threshold signatures and the Ledger
+  attestation (permissive stubs), the Guard's enrollment posture check (a
+  specification parameter, refused by the harness's hook), and XMSS
+  verification. The last one is why a *succeeding* rotation is not covered: a
+  valid XMSS possession proof is unreachable symbolically, so `check_rotate`
+  proves only that the registry reaches the possession proof exactly when its
+  state preconditions hold, and the rotation's effects rest on the concrete
+  Foundry tests. The proof is run offline — `halmos --match-contract
+  RegistryEquivalence --loop 32 --solver-timeout-assertion 0` — and is not a CI
+  gate yet: Halmos drives the `check_*` functions, so `forge test` does not
+  exercise it. Beyond that, the Guard, registry and engine are fuzz and
+  invariant tested, not formally verified.
 - Not audited yet; audit is an acceptance criterion before mainnet.
 
 ## Usage

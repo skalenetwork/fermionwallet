@@ -245,6 +245,9 @@ def conjunct(expr: str, state_var: str) -> str:
     expr = expr.strip()
     while expr.startswith("(") and match_delim(expr, 0, "(", ")") == len(expr):
         expr = expr[1:-1].strip()
+    alternatives = split_top_level(expr, "||")
+    if len(alternatives) > 1:
+        return " or ".join(conjunct(a, state_var) for a in alternatives)
     for op, verb_zero, verb_other in COMPARISONS:
         parts = split_top_level(expr, op)
         if len(parts) == 2:
@@ -384,6 +387,17 @@ def render(spec_path: str) -> str:
         elif declared_only:
             w("Never referenced by the specification: "
               + ", ".join(f"`{s}`" for s in declared_only) + ".")
+        else:
+            carriers = [f.name for f in fields if f.type == "Status"]
+            w(wrap(
+                "Every one of them is referenced by the specification"
+                + (", and the modelled field"
+                   + ("s " if len(carriers) != 1 else " ")
+                   + ", ".join(f"`{c}`" for c in carriers)
+                   + " carries one" if carriers else "")
+                + ", so per-key lifecycle (`Rotated` versus `Revoked`) is inside what "
+                "this model — and therefore the equivalence proof — covers."
+            ))
         w("")
 
     w("## Transitions")

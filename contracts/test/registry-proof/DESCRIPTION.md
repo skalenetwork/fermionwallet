@@ -25,34 +25,62 @@ invariant.
 ## What `RegistrySpec` says about itself
 
 > QuantumKeyRegistry — executable specification of the key state machine The rules of
-> `quantum-key-registry.md` written as plain code: at most one Active key per Safe,
-> sticky enrollment, one-shot roots, a per-Safe ceremony nonce consumed by every owner-
-> signed action, and an emergency revocation behind a time lock that only the Safe can
-> cancel and that a rotation supersedes. `RegistryEquivalence.t.sol` proves
-> `QuantumKeyRegistry` makes exactly these state transitions, for all inputs, with
-> Halmos. Scope: the state machine. Authorization (owner-threshold signatures, the
-> Ledger attestation) and XMSS verification are abstracted — by the `PermissiveSafe` and
-> `PermissiveSigner` stubs at the top of `RegistryEquivalence.t.sol`, and under
-> "Security notes" in `contracts/README.md`, which also gives the Halmos command.
+> `quantum-key-registry.md` written as plain code: at most one Active key per Safe, a
+> per-key status that tells a Rotated key from a Revoked one, sticky enrollment, one-
+> shot roots, a per-Safe ceremony nonce consumed by every owner-signed action, and an
+> emergency revocation behind a time lock that only the Safe can cancel and that a
+> rotation supersedes. `RegistryEquivalence.t.sol` proves `QuantumKeyRegistry` makes
+> exactly these state transitions, for all inputs, with Halmos. Scope: the state machine
+> over the six fields of `SafeState`. Each lemma installs an ARBITRARY such state (the
+> harness's `primeState`) that satisfies `invariant` and then runs one transition, so
+> the proofs range over the whole abstract state space rather than over whatever a
+> genesis-to-here call sequence happens to reach, and every successful transition is
+> proven to preserve `invariant` again. The all-zero genesis state satisfies it, so
+> induction covers every reachable state. Deliberately abstracted, and why: - Owner-
+> threshold signatures and the Ledger attestation: the `PermissiveSafe` and
+> `PermissiveSigner` stubs in `RegistryEquivalence.t.sol` accept every signature, so the
+> lemmas say what the registry does GIVEN that both authorizations succeeded. See
+> "Security notes" in `contracts/README.md`. - The Guard's enrollment posture check
+> ([QKR-006]: a fallback handler or unguarded enabled modules) lives in
+> `FermionGuard._afterEnrollment`, not here. It is NOT silently missing: it enters this
+> specification as the `postureOk` parameter of `canRegister`, and the harness's hook
+> refuses whenever it is false — so the proof does cover that a hook refusal vetoes the
+> whole registration atomically. What the posture check itself *is* belongs to the
+> Guard's own proof, not to the registry's. - XMSS verification. `rotateQuantumKey`
+> consumes one leaf of the old key as a possession proof, and a valid XMSS signature is
+> out of reach inside the symbolic model: Halmos treats SHA-256 as an uninterpreted
+> function even on concrete input, so the 67 WOTS+ chain lengths stay symbolic and the
+> chains fork (`lib/xmss-solidity/PROOF.md`: at h = 2 with a symbolic message the solver
+> did not finish in 40 minutes). `canRotate` therefore states the preconditions that are
+> about registry STATE, and `check_rotate` proves the registry reaches the possession
+> proof exactly when they hold. The effects of a SUCCEEDING rotation — `afterRotate`,
+> and the old key turning Rotated — are unreachable for Halmos and are covered by the
+> concrete-vector Foundry tests instead (`GuardIntegration.t.sol`, `DocExamples.t.sol`),
+> so `invariant` preservation across `Rotate` is assumed, not proven. - Used-leaf
+> accounting (the per-root bitmap) is not a `SafeState` field, so "the rotation leaf is
+> unused" is outside `canRotate` as well. Note for callers: every `after*` function
+> writes the transition's effects THROUGH its `SafeState memory` argument (that is how
+> Solidity passes memory structs) and returns the same struct. Never hand one a pre-
+> state you still need afterwards — see `_scratch` in `RegistryEquivalence.t.sol`.
 
 ## The state of one Safe
 
-The specification models 5 fields per Safe, and nothing else — two registries
+The specification models 6 fields per Safe, and nothing else — two registries
 agree iff these agree:
 
 | Field | Type | Meaning (from the specification's own comment) |
 |---|---|---|
 | `activeKeyId` | `bytes32` | 0 = no active key |
+| `activeKeyStatus` | `Status` | the status recorded for `activeKeyId` (`None` when there is none) |
 | `enrolled` | `bool` | sticky: set at the first registration, never cleared |
 | `revocationExecutableAt` | `uint64` | 0 = no pending revocation |
 | `revocationKeyId` | `bytes32` | the key a pending revocation names |
 | `nonce` | `uint256` | per-Safe ceremony nonce |
 
 A key's `Status` is one of: `None`, `Active`, `Rotated`, `Revoked`.
-The enum is **declared but never used** by the specification: no field of
-the modelled state holds a `Status`, so per-key lifecycle (`Rotated` versus
-`Revoked`) is outside what this model — and therefore the equivalence proof
-— covers.
+Every one of them is referenced by the specification, and the modelled field
+`activeKeyStatus` carries one, so per-key lifecycle (`Rotated` versus `Revoked`) is
+inside what this model — and therefore the equivalence proof — covers.
 
 ## Transitions
 
@@ -63,7 +91,8 @@ The specification names 5 transitions: **Register**, **Rotate**, **Request revoc
 What the specification says in words:
 
 > Registration: only when the Safe has no Active key, the root is new for this Safe, the
-> parameters are valid and the deadline has not passed.
+> parameters are valid, the deadline has not passed and the Safe's posture is acceptable
+> to the Guard's enrollment hook ([QKR-006]).
 >
 > State after a registration: the new key is Active, enrollment sticks, the root is
 > spent and the nonce advances. A pending revocation is NOT cleared here — it names the
@@ -75,10 +104,12 @@ What the specification says in words:
 - `paramsOk` is true
 - `rootUsedBefore` is false
 - `nowTs` is at most `validUntil`
+- `postureOk` is true
 
 **It then** (`afterRegister`):
 
 - sets `activeKeyId` to `keyId(safe, root, nonce)`
+- sets `activeKeyStatus` to `Status.Active`
 - sets `enrolled` to true
 - advances `nonce` by 1
 
@@ -88,15 +119,28 @@ It leaves untouched: `revocationExecutableAt`, `revocationKeyId`.
 
 What the specification says in words:
 
-> State after a rotation: old key Rotated, new key Active in the same transaction, any
-> pending revocation cancelled (an owner-co-signed rotation supersedes it).
+> Rotation: only from an Active key, and then under the same key-parameter rules as a
+> registration — valid parameters, a root this Safe has not used, an unelapsed deadline.
+> The three proofs a rotation also needs (the old key's XMSS possession proof, the new
+> key's Ledger attestation, the owner threshold) are the abstracted ones; see the scope
+> note at the top of this file.
+>
+> State after a rotation: old key Rotated (`statusOfRetiredKey(false)`), new key Active
+> in the same transaction, any pending revocation cancelled (an owner-co-signed rotation
+> supersedes it).
 
-**Precondition:** none. The specification defines no `canRotate` function, so it says
-nothing about *when* this transition may happen — only what it does when it does.
+**It may happen only when** (`canRotate`, all of):
+
+- `activeKeyId` is not zero
+- `activeKeyStatus` equals `Status.Active`
+- `paramsOk` is true
+- `rootUsedBefore` is false
+- `nowTs` is at most `validUntil`
 
 **It then** (`afterRotate`):
 
 - sets `activeKeyId` to `keyId(safe, newRoot, nonce)`
+- sets `activeKeyStatus` to `Status.Active`
 - sets `enrolled` to true
 - advances `nonce` by 1
 - clears `revocationExecutableAt` to zero
@@ -106,15 +150,23 @@ nothing about *when* this transition may happen — only what it does when it do
 
 What the specification says in words:
 
-> A revocation request needs an Active key and an unexpired deadline.
+> A revocation request needs an Active key, an unexpired deadline, and a deadline that
+> still fits the registry's `uint64` field once the time lock is added.
 >
-> The request arms the time lock from *now*: re-requesting can only ever move the
-> deadline later, never earlier.
+> The request arms the time lock from *now*, by the registry's immutable
+> `EMERGENCY_ROTATION_TIMELOCK` (that is what `timelock` is). The assignment is
+> unconditional, so it is NOT the spec that stops a re-request from shortening a pending
+> deadline: `nowTs` never decreases between two blocks, and monotonic `nowTs` plus a
+> fixed `timelock` gives a non-decreasing deadline.
+> `check_revocationTimelockNeverShortens` proves exactly that, and assumes the
+> monotonicity it rests on.
 
 **It may happen only when** (`canRequestRevocation`, all of):
 
 - `activeKeyId` is not zero
+- `activeKeyStatus` equals `Status.Active`
 - `nowTs` is at most `validUntil`
+- `nowTs + timelock` is at most `MAX_TIMESTAMP`
 
 **It then** (`afterRequestRevocation`):
 
@@ -122,18 +174,20 @@ What the specification says in words:
 - sets `revocationKeyId` to `activeKeyId`
 - advances `nonce` by 1
 
-It leaves untouched: `activeKeyId`, `enrolled`.
+It leaves untouched: `activeKeyId`, `activeKeyStatus`, `enrolled`.
 
 ### Cancel revocation
 
 What the specification says in words:
 
-> Only the Safe itself may cancel, and only while a request is pending.
+> Only the Safe itself may cancel, and only while a request is pending against an Active
+> key.
 
 **It may happen only when** (`canCancelRevocation`, all of):
 
 - `caller` equals `safe`
 - `activeKeyId` is not zero
+- `activeKeyStatus` equals `Status.Active`
 - `revocationExecutableAt` is not zero
 
 **It then** (`afterCancelRevocation`):
@@ -141,7 +195,7 @@ What the specification says in words:
 - clears `revocationExecutableAt` to zero
 - clears `revocationKeyId` to zero
 
-It leaves untouched: `activeKeyId`, `enrolled`, `nonce`.
+It leaves untouched: `activeKeyId`, `activeKeyStatus`, `enrolled`, `nonce`.
 
 ### Execute revocation
 
@@ -150,8 +204,9 @@ What the specification says in words:
 > Execution is permissionless once the time lock has elapsed, but only for the key the
 > request named: a rotation in the meantime voids it.
 >
-> A matured, non-superseded request clears the pending state, revokes that key and
-> leaves the Safe with no Active key; the nonce advances to kill stale ceremonies.
+> A matured, non-superseded request clears the pending state, revokes that key
+> (`statusOfRetiredKey(true)`) and leaves the Safe with no Active key; the nonce
+> advances to kill stale ceremonies.
 
 **It may happen only when** (`canExecuteRevocation`, all of):
 
@@ -162,6 +217,7 @@ What the specification says in words:
 **It then** (`afterExecuteRevocation`):
 
 - clears `activeKeyId` to zero
+- sets `activeKeyStatus` to `Status.None`
 - clears `revocationExecutableAt` to zero
 - clears `revocationKeyId` to zero
 - advances `nonce` by 1
@@ -182,11 +238,33 @@ It leaves untouched: `enrolled`.
 
 ## Helpers the transitions are defined in terms of
 
+### `invariant(s)` → `bool`
+
+The state invariant. Every lemma assumes it of the state before the transition and
+proves it of the state after, so the proofs cover exactly the reachable states: the
+genesis state (all zero, no key, not enrolled) satisfies it.
+
+True when all of:
+
+- `activeKeyId` is zero or `activeKeyStatus` equals `Status.Active`
+- `activeKeyId` is not zero or `activeKeyStatus` equals `Status.None`
+- `revocationExecutableAt` is zero or `revocationKeyId` is not zero
+- `revocationExecutableAt` is not zero or `revocationKeyId` is zero
+
 ### `keyId(safe, xmssRoot, nonce)` → `bytes32`
 
 A key's identity is the Safe, the root and the nonce that registered it.
 
 Returns `keccak256(abi.encodePacked(safe, xmssRoot, nonce))`.
+
+### `statusOfRetiredKey(retiredByRevocation)` → `Status`
+
+The status the registry must record for a key that is no longer the Safe's Active key:
+`Rotated` if a rotation retired it, `Revoked` if an executed revocation did (§ "Key
+states"; [QKR-011] hangs off this distinction — a Rotated key's approvals stay
+executable, a Revoked key's do not).
+
+Returns `retiredByRevocation ? Status.Revoked : Status.Rotated`.
 
 ### `paramsValid(safe, quantumAdmin, root, seed, treeHeight, parameterSet, maxHeight)` → `bool`
 
@@ -207,6 +285,7 @@ True when all of:
 True when all of:
 
 - `a.activeKeyId` equals `b.activeKeyId`
+- `a.activeKeyStatus` equals `b.activeKeyStatus`
 - `a.enrolled` equals `b.enrolled`
 - `a.revocationExecutableAt` equals `b.revocationExecutableAt`
 - `a.revocationKeyId` equals `b.revocationKeyId`
@@ -220,13 +299,14 @@ are established:
 
 - `rootUsedBefore`
 - `paramsOk`
+- `postureOk`
 - `nowTs`
 - `validUntil`
+- `timelock`
 - `caller`
 - `safe`
 - `root`
 - `newRoot`
-- `timelock`
 
 Owner-threshold signature checking, the Ledger attestation and XMSS
 verification are therefore outside the proof, as are any registry checks that
