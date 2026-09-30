@@ -39,7 +39,7 @@ A FermionGuard release is a set of versioned artifacts published together under 
 
 | # | Artifact | Source | Distribution | Owner doc |
 |---|---|---|---|---|
-| A1 | `XMSS` verifier library (internal, inlined into A3 — not deployed separately) | [skalenetwork/xmss-solidity](https://github.com/skalenetwork/xmss-solidity) `src/XMSS.sol`, submodule `contracts/lib/xmss-solidity` (formally verified against RFC 8391, see its `PROOF.md`) | part of A3 | [contracts/README](./contracts/README.md) |
+| A1 | `XMSS` verifier library (internal, inlined into A3 — not deployed separately) | [skalenetwork/xmss-solidity](https://github.com/skalenetwork/xmss-solidity) `src/XMSS.sol`, submodule `contracts/lib/xmss-solidity` (primitives and reject paths proven against RFC 8391 in Halmos; accept path by hand argument plus vectors at h = 4, 10 and 20 — see its `PROOF.md`) | part of A3 | [contracts/README](./contracts/README.md) |
 | A2 | `QuantumKeyRegistry` and `PreApprovalEngine` (abstract bases compiled into A3 — not deployed separately) | `contracts/src/QuantumKeyRegistry.sol`, `contracts/src/PreApprovalEngine.sol` | part of A3 | [Key Registry](./quantum-key-registry.md), [Pre-approval Engine](./pre-approval-engine.md) |
 | A3 | `FermionGuard` (transaction guard + module guard; the only deployed contract) | `contracts/src/FermionGuard.sol` | CREATE2 deployment, verified source; ABI, bytecode, immutable references and manifest attached to the GitHub Release | [Guard](./fermionguard-module.md) |
 | A4 | `deployments.json` | repository root | Git (signed tag), mirrored to `fermionwallet.eth` ENS text records | [Service deployment §2.3](./fermionguard-gnosis-service-deployment.md#23-canonical-deployments--address-verification) |

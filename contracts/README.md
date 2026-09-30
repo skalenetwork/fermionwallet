@@ -13,8 +13,10 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
 
 - `lib/xmss-solidity` (submodule) — the stateless XMSS verification library
   `XMSS.sol` (`XMSS-SHA2_*_256`: n = 32, w = 16, len = 67; tree height from
-  the auth-path length, max 20), **formally verified** against RFC 8391 with
-  Halmos (see its `PROOF.md`), plus its tests, reference vectors and the
+  the auth-path length, max 20), whose RFC 8391 primitives and `verify` reject
+  paths are **proven** with Halmos while its accept path rests on a hand
+  composition argument and concrete vectors at h = 4, 10 and 20 (see its
+  `PROOF.md`), plus its tests, reference vectors and the
   Python reference implementation (`py/xmss_ref.py`, `py/gen_h20.py`,
   `py/sign_digest.py`). Imported as `xmss-solidity/XMSS.sol`.
 - `src/QuantumKeyRegistry.sol` — owns leaf-index consumption:
@@ -78,8 +80,12 @@ Within the 0.4–1M target set in `../fermionguard-module.md`
   leaf indices** — use the FermionGuard's registry as the
   enforcement point. Index reuse breaks XMSS entirely.
 - `verify` rejects zero roots/seeds and tree heights outside 1..20.
-- The XMSS verifier is formally verified against RFC 8391 (functional
-  correctness, SHA-256 abstracted); see `lib/xmss-solidity/PROOF.md` for
+- The XMSS verifier is *partly* machine-checked against RFC 8391 (functional
+  correctness, SHA-256 abstracted): its primitives and the paths on which
+  `verify` rejects are proven for all inputs with Halmos, but the composition
+  of those primitives into an accepting `verify` is a hand argument, checked
+  symbolically only at h = 2 and by concrete vectors at h = 4, 10 and 20. It
+  is not machine-checked for general h. See `lib/xmss-solidity/PROOF.md` for
   what is proven and assumed. The registry's state machine is proven
   equivalent to the executable specification in `test/registry-proof/` with
   Halmos (authorization and XMSS verification abstracted). That proof is run
