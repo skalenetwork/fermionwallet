@@ -73,6 +73,20 @@ contract FalseReturningToken {
     }
 }
 
+/// An ERC-1271 contract signer standing in for a `quantumAdmin` that is not an EOA —
+/// the case `SignatureChecker` exists for [FWL-017].
+contract Erc1271Signer {
+    mapping(bytes32 => bool) public approved;
+
+    function approve(bytes32 hash) external {
+        approved[hash] = true;
+    }
+
+    function isValidSignature(bytes32 hash, bytes calldata) external view returns (bytes4) {
+        return approved[hash] ? this.isValidSignature.selector : bytes4(0);
+    }
+}
+
 /// FermionWallet — the suite `fermionwallet.md` specifies. XMSS signatures come from the
 /// RFC 8391 reference implementation over FFI (`lib/xmss-solidity/py/sign_digest.py`),
 /// the same deterministic test key the Guard suites use.
@@ -404,6 +418,28 @@ contract FermionWalletTest is Test {
         // The original still works, so nothing above was a partial consumption.
         wallet.transfer(address(token), recipient, 1 ether, validUntil, abi.encodePacked(r, s, v), xmss);
         assertEq(token.balanceOf(recipient), 1 ether);
+    }
+
+    /// The classical half goes through `SignatureChecker`, never raw `ecrecover`, so a
+    /// `quantumAdmin` that is a contract authorizes through ERC-1271 instead.
+    ///
+    /// Covers: [FWL-017]
+    function test_anErc1271SignerCanBeTheQuantumAdmin() public {
+        Erc1271Signer signer = new Erc1271Signer();
+        FermionWallet w = new FermionWallet(root, seed, H, address(signer));
+        token.mint(address(w), 10 ether);
+
+        bytes32 digest = _digest(w, address(token), recipient, 1 ether, 0, validUntil);
+        (,, bytes memory xmss) = _xmss(H, 0, digest);
+        bytes memory blessing = bytes("attested out of band");
+
+        vm.expectRevert(FermionWallet.InvalidEcdsaSignature.selector);
+        w.transfer(address(token), recipient, 1 ether, validUntil, blessing, xmss);
+
+        signer.approve(digest);
+        w.transfer(address(token), recipient, 1 ether, validUntil, blessing, xmss);
+        assertEq(token.balanceOf(recipient), 1 ether);
+        assertTrue(w.isLeafUsed(0));
     }
 
     /// The length check is not the only thing binding the tree height: a signature whose
