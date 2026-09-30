@@ -207,9 +207,12 @@ def sign_on_device(fields, xmss_root, guard):
             msg = ("The Ledger is already showing a signing request — approve or reject it on "
                    "the device first.")
         elif msg.startswith("Key exhausted"):
-            msg = ("Key exhausted — the Ledger has signed with all of its one-time XMSS leaves. "
-                   "Rotate the key (for this local demo: restart it — docker restart, or "
-                   "docker compose down -v && up for the Safe{Wallet} stack).")
+            # No demo instructions here: this is the message a real operator would read,
+            # and telling them to restart a container is scaffolding leaking into a
+            # product error path. How to reset the demo belongs in demo/README.md.
+            msg = ("Key exhausted — the Ledger has signed with all of its one-time XMSS leaves, "
+                   "so it can sign nothing further. Rotate to a new key: generate one on the "
+                   "device, have the owners co-sign the rotation, and register it.")
         raise ValueError(msg) from None
 
 
@@ -325,6 +328,57 @@ def insufficient_balance_error():
 
 GENERIC_ERROR = "Flow failed — see log."
 
+# Reverts the Guard, the registry or the engine can raise that a person can act on.
+# Keyed by the name forge prints; the value says what happened and what to do about it.
+# An error missing from here is still shown by name rather than swallowed — see
+# `friendly_error` — because "Flow failed" tells nobody anything.
+KNOWN_REVERTS = {
+    "LeafAlreadyUsed": (
+        "that one-time XMSS leaf has already been spent on-chain. The device and the chain "
+        "disagree about which leaf is next, which happens after the device is restored from "
+        "a backup or interrupted mid-signature. Read the next unused leaf from the device "
+        "and let it sign again; the spent leaf is gone either way."
+    ),
+    "SafePausedError": (
+        "the Safe is paused. Any single owner can pause it, and only the owner threshold can "
+        "lift it after the admin timelock. Nothing executes until then except removing the "
+        "Guard, so find out who paused it before doing anything else."
+    ),
+    "GasRefundForbidden": (
+        "the transaction offers a gas refund, and the Guard refuses every one of those before "
+        "any other check — a refund is a payout from the Safe's own balance that no "
+        "pre-approval covers. Re-sign it with gasPrice, gasToken and refundReceiver unset."
+    ),
+    "DeniedSelector": (
+        "that function can never be approved: approve, transferFrom, increaseAllowance and "
+        "permit all let tokens leave later, outside any transaction the Guard would see. "
+        "There is no way to permit one — replace the transaction with a plain transfer."
+    ),
+    "InvalidEcdsaSignature": (
+        "the classical half of the signature does not recover to the registered Quantum "
+        "Administrator. Either a different device signed, or the fields were altered between "
+        "the device and the chain."
+    ),
+    "InvalidXmssSignature": (
+        "the post-quantum half of the signature did not verify against the registered key. "
+        "The signature, the key or the digest is not the one it claims to be."
+    ),
+    "ApprovalExists": (
+        "an approval with this nonce already exists. Ceremony nonces are one-shot; use a new one."
+    ),
+    "TxHashAlreadyPinned": (
+        "another live approval is already pinned to that Safe transaction. Let it expire, "
+        "revoke it, or execute it."
+    ),
+    "NoActiveKey": (
+        "this Safe has no active quantum key — it was revoked, or never registered. "
+        "Register one before approving anything."
+    ),
+    "BatchTooLarge": (
+        "the batch has more legs than the Guard accepts. Split it."
+    ),
+}
+
 
 def failure(out, prefix=""):
     """Error response: the forge trace only when the error wasn't recognised — a
@@ -346,6 +400,15 @@ def friendly_error(out):
     if "CommitmentQueueFull" in out:
         return ("the Guard already holds the maximum number of pending pre-approvals for this "
                 "exact transfer — execute one of them first, or approve a different amount.")
+    for name, meaning in KNOWN_REVERTS.items():
+        if name in out:
+            return f"{name}: {meaning}"
+    # Not in the table: name it anyway. A reader can search for a revert name; nobody can
+    # search for "Flow failed".
+    unknown = re.search(r"\b([A-Z][A-Za-z0-9]*)\((?:[^()]*)\)", out)
+    if unknown:
+        return (f"the transaction was rejected with {unknown.group(0)}, which this demo has no "
+                "explanation for. The trace below is the whole of what the chain said.")
     return GENERIC_ERROR
 
 
