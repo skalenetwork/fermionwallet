@@ -5,14 +5,32 @@ Per-Safe, product-shaped endpoints used by the Safe App (demo/ui/safe-app):
   GET  /api/v1/safes/<safe>/status     Guard and quantum-key status
   GET  /api/v1/safes/<safe>/queue      pending Safe transactions + their quantum status
   GET  /api/v1/safes/<safe>/approvals  pre-approvals recorded by the Guard
-  POST /api/v1/safes/<safe>/approvals  {"safeTxHash", "validForSeconds"}: have the
-                                       Ledger sign a pre-approval pinned to that exact
-                                       queued Safe transaction, then relay it
+  POST /api/v1/safes/<safe>/approvals  {"safeTxHash", "validForSeconds",
+                                       "overrideNonce"?}: have the Ledger sign a
+                                       pre-approval pinned to that exact queued Safe
+                                       transaction, then relay it
 
 Everything is read from the chain and the Safe Transaction Service; nothing is taken
 from the browser except which queued transaction to approve and for how long. The
 transaction's fields are loaded from the Transaction Service and its safeTxHash is
 recomputed on-chain before anything is sent to the Ledger (two independent sources).
+
+Two rules of the specification are enforced here rather than in the browser, because a
+rule enforced only in the browser is not a rule:
+
+  * nonce order (fermionguard-add-on-service.md, "Nonce-order discipline"): the
+    Administrator may approve the lowest unapproved nonce freely; approving any other
+    row requires the caller to name that row's nonce in `overrideNonce`, which is what
+    the app's full-screen override modal makes the operator type.
+  * simulate before spending a leaf (Stage D): the relay is dry-run against the chain
+    before the Ledger is asked for a signature, and again — with the signature, and with
+    byte-identical arguments — before the broadcast. The device commits its one-time
+    counter before releasing a signature, so a relay that was never going to land costs
+    a leaf permanently.
+
+The Ledger can hold a decision for up to an hour, so POST does not wait for it: it
+returns a pending job and the job's progress rides on every `queue` response, which
+means a closed tab loses nothing.
 Stdlib only.
 """
 import json
@@ -20,6 +38,8 @@ import os
 import re
 import secrets
 import subprocess
+import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -31,6 +51,21 @@ HASH_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
 
 MIN_VALIDITY = 15 * 60  # PreApprovalEngine.MIN_WINDOW
 MAX_VALIDITY = 7 * 24 * 3600
+
+# How long one queued Safe transaction ahead of yours is assumed to take to clear:
+# gather the remaining owner signatures, then execute. The specification asks for
+# "estimated time for all earlier queued nonces to clear + policy margin" rather than a
+# flat minimum; this add-on service keeps no execution history to learn a real
+# distribution from, so the estimate is these two constants and is labelled an estimate
+# everywhere it is shown. A service with history should replace PER_NONCE_SECONDS with
+# the Safe's own median.
+PER_NONCE_SECONDS = 30 * 60
+POLICY_MARGIN_SECONDS = 60 * 60
+
+RELAY_SIG = "relayPreApproval(bytes,bytes,bytes)"
+# 65 zero bytes: a syntactically well-formed ECDSA half that can never recover to the
+# registered Quantum Administrator. It is what makes the pre-signature dry run possible.
+PROBE_ECDSA = "0x" + "00" * 65
 
 SEL_SAFE_TO_KEY = "0xe056ccae"
 SEL_SAFE_PAUSED = "0xfa309153"
@@ -255,6 +290,81 @@ STUCK_NONCE = (
 )
 
 
+# ── nonce-order discipline ───────────────────────────────────────────────────
+
+# A nonce no longer needs the Administrator: a row at it either already holds a live
+# pre-approval ("approved"/"waiting") or needs none at all ("free" — an owners' escape
+# call, or an unguarded Safe). Every other state — needing approval, blocked by the
+# Guard, unsupported, hash-mismatched — leaves the nonce standing in the way, which is
+# the whole point: the Safe executes in strict nonce order.
+SETTLED_STATUSES = ("approved", "waiting", "free")
+
+
+def _queue_sort_key(row):
+    # Primarily by Safe nonce, never by expiry urgency. Rows sharing a nonce — competing
+    # replacement candidates — sort by proposal time, oldest first, so "the row above"
+    # means the same row in this service and in the app. safeTxHash breaks a tie between
+    # two proposals recorded in the same instant, so the order is never random.
+    return (row["nonce"], row.get("submitted") or "", row["safeTxHash"])
+
+
+def apply_nonce_order(rows, now):
+    """Fill in the nonce-order fields the specification makes mandatory, and return the
+    lowest unapproved nonce.
+
+    `authorize` is the only thing that may put an Authorize action on a row:
+      "direct"   — this is the lowest unapproved nonce (and, among rivals for it, the
+                   oldest proposal): approve it freely.
+      "override" — approving this first leaves it un-executable behind an earlier nonce,
+                   or hands one nonce to the newer of two rivals. It needs the
+                   full-screen override and a typed confirmation.
+      None       — nothing here can be approved.
+    """
+    rows.sort(key=_queue_sort_key)
+    settled = {r["nonce"] for r in rows if r["status"] in SETTLED_STATUSES}
+    open_nonces = sorted({r["nonce"] for r in rows} - settled)
+    target = open_nonces[0] if open_nonces else None
+    claimed = False
+    previous = None
+    for row in rows:
+        row["conflictsWithAbove"] = previous is not None and previous["nonce"] == row["nonce"]
+        earlier = [n for n in open_nonces if n < row["nonce"]]
+        row["earlierUnapprovedNonces"] = earlier
+        # Estimated time for the queue ahead of this row to clear, and the validity
+        # window to suggest for it: that estimate, plus a slot for this transaction
+        # itself, plus the policy margin.
+        row["aheadSeconds"] = (len(earlier) * PER_NONCE_SECONDS
+                               + (POLICY_MARGIN_SECONDS if earlier else 0))
+        row["suggestedSeconds"] = min(
+            MAX_VALIDITY, row["aheadSeconds"] + PER_NONCE_SECONDS + POLICY_MARGIN_SECONDS)
+        if row["status"] != "needs_approval":
+            row["authorize"] = None
+        elif row["nonce"] == target and not claimed:
+            row["authorize"] = "direct"
+            claimed = True
+        else:
+            row["authorize"] = "override"
+            if not earlier:
+                # Not held up by an earlier nonce, so it is a rival for its own: either
+                # another row at this nonce already holds an approval, or one was queued
+                # first and is the row the Authorize action sits on.
+                row["rivalHolds"] = "approval" if any(
+                    r["nonce"] == row["nonce"] and r["status"] in SETTLED_STATUSES for r in rows
+                ) else "queue-position"
+        # Re-evaluation of the rows behind an earlier nonce. Recomputed on every poll
+        # rather than on an event, so a rejection or replacement of an earlier nonce
+        # shows up here within one refresh whether or not this service saw the event.
+        a = row["approval"]
+        if (row["status"] in ("approved", "waiting") and a
+                and a["status"] in ("active", "scheduled")
+                and a["validTo"] - now < row["aheadSeconds"]):
+            row["windowRisk"] = {"remainingSeconds": max(0, a["validTo"] - now),
+                                 "aheadSeconds": row["aheadSeconds"],
+                                 "leaf": a["leaf"]}
+        previous = row
+    return target
+
+
 # ── queue ────────────────────────────────────────────────────────────────────
 
 def _onchain_tx_hash(host, safe, tx):
@@ -305,7 +415,9 @@ def queue(host, safe):
     nonce = host.as_int(host.eth_call(safe, host.SEL_NONCE))
     page = txs_get(f"/api/v1/safes/{safe}/multisig-transactions/?executed=false&nonce__gte={nonce}"
                    "&ordering=nonce&limit=50") or {"results": []}
-    now = _now(host)
+    head = host.rpc("eth_getBlockByNumber", ["latest", False])
+    now = host.as_int(head["timestamp"])
+    block = host.as_int(head["number"])
     guard_word = host.rpc("eth_getStorageAt", [safe, host.GUARD_SLOT, "latest"])
     protected = _addr(guard_word[2:].rjust(64, "0")).lower() == guard.lower()
     paused = protected and host.as_int(host.eth_call(guard, SEL_SAFE_PAUSED + _pad(safe))) == 1
@@ -388,8 +500,14 @@ def queue(host, safe):
                              "Guard requires a quantum pre-approval for this transaction too." + STUCK_NONCE)
         else:
             row["status"] = "needs_approval"
+
+    target = apply_nonce_order(rows, now)
+    attach_jobs(rows, block)
     return {"nonce": nonce, "protected": protected, "paused": paused,
-            "transactions": rows, "now": now}
+            "transactions": rows, "now": now, "block": block,
+            "lowestUnapprovedNonce": target,
+            "perNonceEstimateSeconds": PER_NONCE_SECONDS,
+            "policyMarginSeconds": POLICY_MARGIN_SECONDS}
 
 
 # ── relay failures ───────────────────────────────────────────────────────────
@@ -477,6 +595,121 @@ def relay_error(out):
             "Approvals tab before approving again: the signature may or may not have landed.")
 
 
+# ── signing jobs (the device can hold a decision for an hour) ────────────────
+
+# The Ledger's decision screen belongs to a human, and the POST that starts it used to
+# wait for them: close the tab and the device session was still live with nothing left
+# to relay its result to. The work runs in a thread instead, and its progress is kept
+# here, keyed by Safe transaction hash, so every client — including a tab opened after
+# the fact — sees it on the next `queue` poll.
+_jobs = {}
+_jobs_lock = threading.Lock()
+# How long a finished job stays visible after it ends. Long enough that a reloaded tab
+# still learns what happened; short enough that the queue does not become a log.
+JOB_KEEP_SECONDS = 300
+
+JOB_TEXT = {
+    "device": "Confirm on your Ledger. Check every screen against the fields above: token, "
+              "recipient, amount, validity, and the Safe transaction it is pinned to.",
+    "simulating": "Signed on the Ledger. Asking the chain whether the Guard will accept it, "
+                  "before anything is submitted…",
+    "submitting": "Submitting the approval to the chain…",
+}
+
+
+def _job_set(job, **fields):
+    with _jobs_lock:
+        job.update(fields)
+
+
+def _job_finish(job, outcome, **fields):
+    _job_set(job, phase="done", outcome=outcome, finishedAt=time.time(), **fields)
+
+
+def attach_jobs(rows, block):
+    """Put each row's in-flight (or just-finished) signing job on the row, and forget
+    jobs whose result has been readable for long enough. Jobs are dropped by age only:
+    one Safe's poll must never discard another Safe's running job."""
+    now = time.time()
+    with _jobs_lock:
+        for h, j in list(_jobs.items()):
+            if j.get("finishedAt") and now - j["finishedAt"] > JOB_KEEP_SECONDS:
+                del _jobs[h]
+        live = {h: dict(j) for h, j in _jobs.items()}
+    for row in rows:
+        job = live.get(row["safeTxHash"])
+        if not job:
+            continue
+        if job.get("relayBlock"):
+            job["confirmations"] = max(1, block - job["relayBlock"] + 1)
+        row["signing"] = job
+
+
+def _relay_receipt(host, guard, approval_id):
+    """Where the approval landed: the Guard's own creation event carries the id, so the
+    relaying transaction is found without parsing forge's output for it."""
+    try:
+        logs = host.rpc("eth_getLogs", [{"address": guard, "fromBlock": "0x0",
+                                         "toBlock": "latest",
+                                         "topics": [TOPIC_CREATED, approval_id]}])
+    except Exception:  # noqa: BLE001  (a confirmation count is never worth failing over)
+        return None, None
+    if not logs:
+        return None, None
+    return logs[-1]["transactionHash"], host.as_int(logs[-1]["blockNumber"])
+
+
+# ── simulation (Stage D: eth_call before submission) ─────────────────────────
+
+def _encode_request(fields, leaf):
+    """The ABI-encoded PreApprovalRequest, exactly as the relayer script decodes it."""
+    req = "(" + ",".join([
+        fields["safe"], fields["token"], fields["recipient"], fields["amount"], ZERO_ADDR, "0",
+        ZERO32, str(fields["validFrom"]), str(fields["validTo"]), fields["nonce"],
+        fields["quantumKeyId"], str(leaf), fields["policyHash"], fields["txHash"],
+    ]) + ")"
+    return subprocess.run(
+        ["cast", "abi-encode", "f((address,address,address,uint256,address,uint256,bytes32,uint64,uint64,"
+         "bytes32,bytes32,uint32,bytes32,bytes32))", req],
+        capture_output=True, text=True, check=True).stdout.strip()
+
+
+def _revert_name(out):
+    m = re.search(r"script failed:\s*([A-Za-z_][A-Za-z0-9_]*)\(", out)
+    return m.group(1) if m else None
+
+
+def simulate_before_signing(host, fields, next_leaf, tree_height):
+    """Dry-run the relay before the device is asked for a signature, and raise if the
+    Guard would refuse it for any reason other than the missing signature.
+
+    The one thing this cannot carry is a valid signature, so the run is expected to end
+    at `InvalidEcdsaSignature` — and reaching that line means everything the contract
+    checks before it passed: the Safe's key is the Active one and is the key named here,
+    the class fields are well formed, the validity window is legal and not already over,
+    and the approval id is free. The probe differs from the submission in the leaf index
+    and the two signature blobs only, and no check before the signature line reads
+    either of them (`PreApprovalEngine._create`). Anything else is a revert the real
+    relay would hit too, and it is worth more than the leaf it saves.
+    """
+    probe = _encode_request(fields, next_leaf)
+    blob = "0x" + "00" * (32 * (1 + 67 + tree_height))
+    with host.FLOW_LOCK:
+        code, out = host.forge_script(RELAY_SIG, [probe, PROBE_ECDSA, blob], broadcast=False)
+    name = _revert_name(out)
+    if code == 0 or name is None:
+        # Neither can happen: 65 zero bytes never recover to the Administrator, so the
+        # run must reach the signature check and stop there. Refuse rather than guess.
+        raise ApiError(
+            "The pre-approval could not be checked against the chain before signing, so the "
+            "Ledger was not asked to spend a one-time signature. The simulated relay "
+            "neither succeeded nor reported a reason; check the service log and retry.")
+    if name != "InvalidEcdsaSignature":
+        raise ApiError(
+            "The Guard would refuse this approval, so the Ledger was not asked to sign it and "
+            "no one-time signature was spent. " + relay_error(out))
+
+
 # ── create (Ledger signs, relayer submits) ───────────────────────────────────
 
 def create_approval(host, safe, payload):
@@ -489,6 +722,17 @@ def create_approval(host, safe, payload):
     valid_for = payload.get("validForSeconds")
     if isinstance(valid_for, bool) or not isinstance(valid_for, int) or not (MIN_VALIDITY <= valid_for <= MAX_VALIDITY):
         raise ApiError("validForSeconds must be a whole number between 900 (15 min) and 604800 (7 days)")
+    override = payload.get("overrideNonce")
+    if override is not None and (isinstance(override, bool) or not isinstance(override, int)):
+        raise ApiError("overrideNonce must be the Safe nonce of the transaction being approved")
+
+    # One device session per Safe transaction. A second click, or a second tab, joins
+    # the running job instead of asking the device to sign the same thing twice.
+    with _jobs_lock:
+        running = _jobs.get(h)
+        if running and running.get("phase") != "done":
+            return {"ok": True, "outcome": "pending", "job": dict(running),
+                    "note": "This transaction is already being signed."}
 
     st = safe_status(host, safe)
     if not st["protected"]:
@@ -498,6 +742,40 @@ def create_approval(host, safe, payload):
         raise ApiError("This Safe has no active quantum key.")
     if key["leavesLeft"] <= 0:
         raise ApiError("The quantum key has no one-time leaves left. Rotate the key first.")
+
+    # Nonce order. The queue this service builds is the authority on which row may be
+    # approved: the app's Authorize button and its override modal are how an operator
+    # reaches this, but a caller that skips the app gets the same answer.
+    q = queue(host, safe)
+    row = next((r for r in q["transactions"] if r["safeTxHash"].lower() == h.lower()), None)
+    if row is None:
+        raise ApiError("That transaction is not in this Safe's pending queue.")
+    if row["authorize"] is None:
+        raise ApiError(row.get("reason") or "This transaction cannot be approved from this app.")
+    if row["authorize"] == "override":
+        earlier = row["earlierUnapprovedNonces"]
+        if override != row["nonce"]:
+            if earlier:
+                raise ApiError(
+                    f"Safe transaction #{earlier[0]} is still unapproved, and a Safe executes in "
+                    f"strict nonce order, so an approval of #{row['nonce']} could not execute until "
+                    f"#{', #'.join(str(n) for n in earlier)} {'have' if len(earlier) > 1 else 'has'} "
+                    "cleared — its validity window would start burning now. Approve the lowest "
+                    f"unapproved nonce (#{q['lowestUnapprovedNonce']}) instead, or confirm the "
+                    "override in the app, which requires typing the nonce.")
+            raise ApiError(
+                (f"Nonce #{row['nonce']} already carries a quantum approval on another queued "
+                 "transaction. " if row.get("rivalHolds") == "approval" else
+                 f"Another transaction was queued at nonce #{row['nonce']} before this one. ")
+                + "Only one of them can ever take that nonce, so the other's one-time signature "
+                "is spent for nothing. Approve the one the app offers, or confirm the override "
+                "in the app, which requires typing the nonce.")
+        # There is no audit log in this service yet, so the override is recorded where
+        # this service records everything: its log, with the queue state it overrode.
+        print(f"[fermionguard] NONCE OVERRIDE safe={safe} nonce=#{row['nonce']} tx={h} "
+              f"earlierUnapproved={earlier} lowestUnapproved=#{q['lowestUnapprovedNonce']} "
+              f"aheadEstimateSeconds={row['aheadSeconds']} chosenWindowSeconds={valid_for}",
+              flush=True)
 
     tx = txs_get(f"/api/v1/multisig-transactions/{h}/")
     if not tx or tx.get("safe", "").lower() != safe.lower():
@@ -533,33 +811,70 @@ def create_approval(host, safe, payload):
         "validFrom": now, "validTo": now + valid_for, "nonce": "0x" + secrets.token_hex(32),
         "quantumKeyId": key["id"], "policyHash": host.DEMO_POLICY_HASH, "txHash": h,
     }
-    try:
-        res = host.sign_on_device(fields, key["root"], guard)
-    except OSError as e:  # the device did not answer at all (urllib raises URLError/OSError)
-        raise ApiError(
-            "The FermionGuard Ledger did not answer, so nothing was signed and no one-time "
-            "signature was spent. Check that the device is connected and the FermionGuard app "
-            f"is open on it, then try again. ({e})") from None
-    if res.get("status") != "approved":
-        return {"ok": True, "outcome": "rejected", "reason": res.get("status", "rejected")}
+    # Stage D, before the leaf: everything the Guard checks ahead of the signature is
+    # checked against the chain now, while refusing still costs nothing.
+    simulate_before_signing(host, fields, key["leavesUsed"], key["treeHeight"])
 
-    req = "(" + ",".join([
-        fields["safe"], fields["token"], fields["recipient"], fields["amount"], ZERO_ADDR, "0", ZERO32,
-        str(fields["validFrom"]), str(fields["validTo"]), fields["nonce"], fields["quantumKeyId"],
-        str(res["leaf"]), fields["policyHash"], fields["txHash"],
-    ]) + ")"
-    enc = subprocess.run(
-        ["cast", "abi-encode", "f((address,address,address,uint256,address,uint256,bytes32,uint64,uint64,"
-         "bytes32,bytes32,uint32,bytes32,bytes32))", req],
-        capture_output=True, text=True, check=True).stdout.strip()
-    with host.FLOW_LOCK:
-        code, out = host.forge_script("relayPreApproval(bytes,bytes,bytes)",
-                                      [enc, res["ecdsaSignature"], res["xmssSignature"]], broadcast=True)
-    m = re.search(r"APPROVAL_ID\s*\n\s*(0x[0-9a-f]{64})", out)
-    if code == 0 and m:
-        return {"ok": True, "outcome": "approved", "approvalId": m.group(1), "leaf": res["leaf"],
-                "digest": res["digest"], "validTo": fields["validTo"]}
-    return {"ok": False, "outcome": "relay_failed", "leaf": res["leaf"],
-            "error": (f"The Ledger signed with one-time signature #{res['leaf']} — which is now spent, "
-                      "because the device commits its counter before it releases a signature — but the "
-                      "Guard refused to record the approval. " + relay_error(out))}
+    job = {"safeTxHash": h, "nonce": row["nonce"], "phase": "device", "outcome": None,
+           "startedAt": time.time(), "validTo": fields["validTo"],
+           "overridden": row["authorize"] == "override"}
+    with _jobs_lock:
+        running = _jobs.get(h)
+        if running and running.get("phase") != "done":
+            return {"ok": True, "outcome": "pending", "job": dict(running),
+                    "note": "This transaction is already being signed."}
+        _jobs[h] = job
+    threading.Thread(target=_run_approval, args=(host, job, fields, key, guard),
+                     daemon=True, name="approval-" + h[:10]).start()
+    # The device now owns the decision, for as long as the reviewer takes. The job's
+    # progress rides on every `queue` response, so this request does not wait for it.
+    return {"ok": True, "outcome": "pending", "job": dict(job)}
+
+
+def _run_approval(host, job, fields, key, guard):
+    """Ask the device, simulate the exact submission, then submit. Runs in its own
+    thread; every outcome ends up on the job, never only in an HTTP response."""
+    h = fields["txHash"]
+    try:
+        try:
+            res = host.sign_on_device(fields, key["root"], guard)
+        except OSError as e:  # the device did not answer (urllib raises URLError/OSError)
+            _job_finish(job, "error", error=(
+                "The FermionGuard Ledger did not answer, so nothing was signed and no one-time "
+                "signature was spent. Check that the device is connected and the FermionGuard "
+                f"app is open on it, then try again. ({e})"))
+            return
+        except ValueError as e:  # the device refused the session (busy, key exhausted)
+            _job_finish(job, "error", error=str(e))
+            return
+        if res.get("status") != "approved":
+            _job_finish(job, "rejected", reason=res.get("status", "rejected"))
+            return
+
+        leaf = res["leaf"]
+        _job_set(job, phase="simulating", leaf=leaf, digest=res["digest"])
+        args = [_encode_request(fields, leaf), res["ecdsaSignature"], res["xmssSignature"]]
+        spent = (f"The Ledger signed with one-time signature #{leaf} — which is now spent, "
+                 "because the device commits its counter before it releases a signature — but ")
+        with host.FLOW_LOCK:
+            # The same script and the same three arguments as the broadcast below: the
+            # only difference is that this run is not broadcast. A simulation over
+            # different calldata would prove nothing about the submission.
+            code, out = host.forge_script(RELAY_SIG, args, broadcast=False)
+            if code != 0:
+                _job_finish(job, "relay_failed", leaf=leaf, error=(
+                    spent + "the Guard would refuse to record the approval, so nothing was "
+                    "submitted and no gas was spent on it. " + relay_error(out)))
+                return
+            _job_set(job, phase="submitting")
+            code, out = host.forge_script(RELAY_SIG, args, broadcast=True)
+        m = re.search(r"APPROVAL_ID\s*\n\s*(0x[0-9a-f]{64})", out)
+        if code == 0 and m:
+            tx_hash, block = _relay_receipt(host, guard, m.group(1))
+            _job_finish(job, "approved", leaf=leaf, approvalId=m.group(1),
+                        relayTx=tx_hash, relayBlock=block)
+            return
+        _job_finish(job, "relay_failed", leaf=leaf, error=(
+            spent + "the Guard refused to record the approval. " + relay_error(out)))
+    except Exception as e:  # noqa: BLE001  (a thread that dies silently is the worst case)
+        _job_finish(job, "error", error=f"The approval failed unexpectedly: {e}")

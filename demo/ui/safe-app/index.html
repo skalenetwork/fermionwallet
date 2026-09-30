@@ -86,6 +86,30 @@
   /* The default focus ring is a dark hairline, invisible on this dark surface. */
   :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   [hidden] { display:none !important; }
+  /* A row that shares its nonce with the row above it: only one of them can ever
+     execute, and nothing else on the row would say so. */
+  .pill.conflict { background:rgba(251,191,36,.12); color:var(--warn); }
+  /* The re-evaluation warning on an approval whose window is now too short for the
+     queue ahead of it to clear. */
+  .risk { margin-top:8px; padding:10px 12px; border-radius:8px; border:1px solid rgba(251,191,36,.4);
+          background:rgba(251,191,36,.06); color:var(--warn); font-size:13px; }
+  .risk .acts { margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; }
+  /* The nonce override. Deliberately a full-screen modal and not a checkbox: skipping
+     the queue is the one action here that spends a one-time signature on a transaction
+     that may never be executable. */
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.72); z-index:50;
+           display:flex; align-items:flex-start; justify-content:center; overflow:auto; padding:24px 16px; }
+  .modal-box { background:var(--panel); border:1px solid rgba(248,113,113,.5); border-radius:14px;
+               padding:20px 22px 22px; max-width:640px; width:100%; }
+  .modal-box h2 { margin:0 0 4px; font-size:18px; color:var(--bad); }
+  .modal-box .lead { color:var(--muted); font-size:13px; margin:0 0 14px; }
+  .modal-box p { margin:0 0 12px; }
+  .modal-box .cost { border-left:3px solid var(--bad); padding-left:12px; }
+  .modal-box label { display:block; margin:14px 0 6px; color:var(--muted); }
+  .modal-box input[type=text] { background:var(--bg); color:var(--text); border:1px solid var(--border);
+                                border-radius:8px; padding:9px 11px; font:600 15px ui-monospace,Menlo,monospace;
+                                width:140px; }
+  .modal-box .acts { margin-top:18px; display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap; }
 </style>
 </head>
 <body>
@@ -98,6 +122,10 @@
 
   <div class="banner" id="banner" role="status" hidden></div>
   <div class="banner info" id="notice" role="status" hidden></div>
+
+  <!-- The full-screen nonce override lives here; it is position:fixed, so it covers
+       the app wherever in the document it sits. -->
+  <div id="override" hidden></div>
 
   <section id="main" hidden>
     <div class="cards">
@@ -182,7 +210,47 @@ let safe = null;           // address of the Safe this app is opened for
 let status = null;         // /status response
 let queueData = null;      // /queue response
 const reviewOpen = new Set();
-const busy = new Map();    // safeTxHash -> {cls, text}
+const busy = new Map();    // safeTxHash -> {cls, text}; a local overlay, shown only until
+                           // the service reports the signing job on the row itself
+// The Safe transactions whose out-of-order approval the operator has confirmed by
+// typing the nonce. The service requires the nonce on the request too, so clearing this
+// set is not a way past the rule — it only closes the review screen.
+const overrideGranted = new Set();
+const windowChoice = new Map();   // safeTxHash -> chosen validity window, in seconds
+const keepWaiting = new Set();    // pre-approval ids whose expiry warning was accepted
+let overrideFor = null;           // safeTxHash the override modal is open for
+
+// Validity windows the operator can pick from. The service suggests a length derived
+// from the queue ahead; these are the offers, and the smallest one that covers the
+// suggestion is what the app pre-selects.
+const WINDOWS = [[3600, '1 hour'], [6 * 3600, '6 hours'], [86400, '24 hours'],
+                 [3 * 86400, '3 days'], [7 * 86400, '7 days']];
+function suggestedWindow(t) {
+  const want = t.suggestedSeconds || 86400;
+  const offer = WINDOWS.find(([s]) => s >= want);
+  return offer ? offer[0] : WINDOWS[WINDOWS.length - 1][0];
+}
+function chosenWindow(t) {
+  return windowChoice.has(t.safeTxHash) ? windowChoice.get(t.safeTxHash) : suggestedWindow(t);
+}
+// Durations are estimates, so they read as estimates: "about 2.5 hours", never "9000 s".
+function dur(s) {
+  s = Math.max(0, Math.round(s));
+  if (s >= 86400) { const d = s / 86400; return trim(d) + (d === 1 ? ' day' : ' days'); }
+  if (s >= 3600) { const h = s / 3600; return trim(h) + (h === 1 ? ' hour' : ' hours'); }
+  const m = Math.max(1, Math.round(s / 60));
+  return m + (m === 1 ? ' minute' : ' minutes');
+}
+const trim = n => Number.isInteger(n) ? String(n) : n.toFixed(1);
+const nonceList = ns => ns.map(n => '#' + n).join(', ');
+// Why a row that nothing earlier is holding up still needs the override: it is a rival
+// for its own nonce, and only one transaction can ever take a nonce.
+const rivalReason = t => t.rivalHolds === 'approval'
+  ? 'Nonce #' + t.nonce + ' already carries a quantum approval on another queued transaction.'
+  : 'Another transaction was queued at nonce #' + t.nonce + ' before this one.';
+// The one-time signature the device would spend next, as the Guard's own leaf counter
+// reports it. Named in the override modal because that is the thing being risked.
+const nextLeaf = () => status && status.key ? status.key.leavesUsed : null;
 const api = (what, opts) => fetch('/api/v1/safes/' + safe + '/' + what, opts).then(r => r.json());
 
 function banner(text, bad) {
@@ -349,10 +417,33 @@ function cannotApprove() {
 function focusKey() {
   const a = document.activeElement;
   if (!a || !$('queue').contains(a)) return null;
-  return a.id ? '#' + CSS.escape(a.id)
-    : a.dataset.review ? '[data-review="' + a.dataset.review + '"]'
-    : a.dataset.sign ? '[data-sign="' + a.dataset.sign + '"]'
-    : a.dataset.revoke ? '[data-revoke="' + a.dataset.revoke + '"]' : null;
+  for (const k of ['review', 'sign', 'revoke', 'override', 'keep']) {
+    if (a.dataset[k]) return '[data-' + k + '="' + a.dataset[k] + '"]';
+  }
+  return a.id ? '#' + CSS.escape(a.id) : null;
+}
+
+// What the service says is happening to this transaction right now. It comes from the
+// service and not from this tab, so closing the tab while the Ledger is being read
+// loses nothing: whoever opens the app next sees the same thing.
+function jobMessage(j) {
+  if (j.phase === 'device') return {cls: 'wait', text:
+    'Confirm on your Ledger. Check every screen against the fields above: token, recipient, '
+    + 'amount, validity, and the Safe transaction it is pinned to. Then approve on the device. '
+    + 'This screen can be closed; the approval carries on without it.'};
+  if (j.phase === 'simulating') return {cls: 'wait', text:
+    'Signed on the Ledger with one-time signature #' + j.leaf + '. Asking the chain whether the '
+    + 'Guard will accept it — nothing has been submitted yet.'};
+  if (j.phase === 'submitting') return {cls: 'wait', text:
+    'The simulation passed. Submitting the approval to the chain…'};
+  if (j.outcome === 'approved') return {cls: 'ok', text:
+    '✓ Approved on the Ledger (one-time signature #' + j.leaf + ') and recorded by the Guard'
+    + (j.relayTx ? ' in transaction ' + j.relayTx : '')
+    + (j.confirmations ? ' · ' + j.confirmations + (j.confirmations === 1 ? ' confirmation' : ' confirmations') : '')
+    + '. Execute the transaction in Safe{Wallet} → Transactions → Queue.'};
+  if (j.outcome === 'rejected') return {cls: 'bad', text:
+    (j.reason === 'timeout' ? 'Timed out on the Ledger.' : 'Rejected on the Ledger.') + ' Nothing was signed.'};
+  return {cls: 'bad', text: j.error || 'The approval failed.'};
 }
 function renderQueue(q) {
   if (!q) return;
@@ -363,15 +454,27 @@ function renderQueue(q) {
       'It appears here for quantum approval.</div>';
     return;
   }
-  const firstNeeding = q.transactions.find(t => t.status === 'needs_approval');
   const blocker = cannotApprove();
   $('queue').innerHTML = q.transactions.map(t => {
     const [cls, label] = STATUS[t.status] || ['muted', t.status];
     const who = t.kind === 'transfer' ? 'to <span class="mono">' + esc(t.recipient) + '</span>' : '';
     const a = t.approval;
+    const job = t.signing;
+    const working = job && job.phase !== 'done';
     let actions = '';
-    if (t.status === 'needs_approval' && protectedWithKey()) {
+    // The Authorize action sits on the lowest unapproved nonce and nowhere else; every
+    // other row that needs approval offers the override instead. Which is which is the
+    // service's answer (t.authorize), and the service refuses an out-of-order approval
+    // that does not carry the nonce the operator typed — so this is where the rule is
+    // shown, not where it is enforced.
+    if (working) {
+      actions = '<button class="btn" disabled>Signing…</button>';
+    } else if (t.authorize === 'direct' && protectedWithKey()) {
       actions = '<button class="btn" data-review="' + t.safeTxHash + '">' + (reviewOpen.has(t.safeTxHash) ? 'Close' : 'Review') + '</button>';
+    } else if (t.authorize === 'override' && protectedWithKey()) {
+      actions = overrideGranted.has(t.safeTxHash)
+        ? '<button class="btn danger" data-review="' + t.safeTxHash + '">' + (reviewOpen.has(t.safeTxHash) ? 'Close' : 'Review out of order') + '</button>'
+        : '<button class="btn ghost" data-override="' + t.safeTxHash + '">Authorize out of order…</button>';
     } else if (a && (a.status === 'active' || a.status === 'scheduled')) {
       // Revoking is an escape call, so it works even while the Safe is paused — which is
       // exactly when someone is most likely to want it.
@@ -380,6 +483,17 @@ function renderQueue(q) {
     let extra = '';
     if (t.reason) extra += '<div class="sub">' + esc(t.reason) + '</div>';
     if (t.status === 'needs_approval' && blocker) extra += '<div class="sub">' + esc(blocker) + '</div>';
+    // Why this row has no Authorize button. Without it the row looks the same as one
+    // that is simply waiting for someone to get to it.
+    if (t.authorize === 'override' && !overrideGranted.has(t.safeTxHash) && !blocker) {
+      extra += '<div class="sub">' + (t.earlierUnapprovedNonces.length
+        ? 'Not next in line: ' + nonceList(t.earlierUnapprovedNonces) + ' must be approved and '
+          + 'executed first, because the Safe executes in strict nonce order. Approving this one '
+          + 'now spends a one-time signature that cannot be used until they clear.'
+        : rivalReason(t) + ' Only one of them can ever take this nonce, so approving this row '
+          + 'risks spending a one-time signature that can never be used.')
+        + '</div>';
+    }
     // An approval that ran out, or was revoked, is the most expensive thing that can
     // happen quietly: the one-time signature is gone either way. Say so on the row.
     if (t.status === 'needs_approval' && a && (a.status === 'expired' || a.status === 'revoked')) {
@@ -397,14 +511,29 @@ function renderQueue(q) {
         ' · it cannot execute until every lower nonce has, and if the window runs out first the ' +
         'one-time signature is spent for nothing</div>';
     }
-    const b = busy.get(t.safeTxHash);
+    // Re-evaluation: the queue ahead of an already-approved row changed, and its window
+    // no longer covers it. The service recomputes this on every poll, so a rejected or
+    // replaced earlier nonce shows up here without anyone asking.
+    let risk = '';
+    if (t.windowRisk && a && !keepWaiting.has(a.id)) {
+      const r = t.windowRisk;
+      risk = '<div class="risk" role="status">Nonce ' + nonceList(t.earlierUnapprovedNonces) +
+        ' still pending, estimated about ' + dur(r.aheadSeconds) + ' to clear; your window ends in ' +
+        dur(r.remainingSeconds) + '. This approval will likely expire unexecuted, and one-time ' +
+        'signature #' + r.leaf + ' is spent either way.' +
+        '<div class="acts"><button class="btn danger" data-revoke="' + a.id + '">Revoke now</button>' +
+        '<button class="btn ghost" data-keep="' + a.id + '">Keep waiting</button></div></div>';
+    }
+    const b = job ? jobMessage(job) : busy.get(t.safeTxHash);
     return '<div class="row" data-row="' + t.safeTxHash + '"><div class="row-head">' +
       '<div class="nonce">#' + t.nonce + '</div>' +
       '<div style="min-width:0"><div class="title">' + esc(t.summary) + '</div><div class="sub">' + who + '</div>' + extra + '</div>' +
       '<div class="right"><span class="pill ' + cls + '">' + label + '</span>' +
+      (t.conflictsWithAbove ? '<span class="pill conflict">Conflicts with the row above</span>' : '') +
       '<span class="sub">' + t.confirmations + '/' + (t.confirmationsRequired ?? '?') + ' signed</span></div>' +
       '<div class="right">' + actions + '</div></div>' +
-      (reviewOpen.has(t.safeTxHash) ? reviewPanel(t, firstNeeding, q)
+      (risk ? '<div class="review" style="border-top:0;padding-top:0">' + risk + '</div>' : '') +
+      (reviewOpen.has(t.safeTxHash) ? reviewPanel(t, q, b)
         : b ? '<div class="review"><div class="msg ' + b.cls + '" role="status">' + esc(b.text) + '</div></div>' : '') +
       '</div>';
   }).join('');
@@ -414,12 +543,18 @@ function renderQueue(q) {
   }
 }
 
-function reviewPanel(t, firstNeeding, q) {
-  const b = busy.get(t.safeTxHash);
+function reviewPanel(t, q, b) {
   const ahead = t.nonce - q.nonce;
-  const prev = document.getElementById('w-' + t.safeTxHash);
-  const chosen = prev ? Number(prev.value) : 86400;
+  const chosen = chosenWindow(t);
+  const working = t.signing && t.signing.phase !== 'done';
   return '<div class="review">' +
+    (overrideGranted.has(t.safeTxHash)
+      ? '<p class="msg bad">Out-of-order approval confirmed for nonce #' + t.nonce + '. ' +
+        (t.earlierUnapprovedNonces.length
+          ? 'Nonce ' + nonceList(t.earlierUnapprovedNonces) + ' must still be approved and executed ' +
+            'before this can, and the validity window below starts running the moment you sign.'
+          : rivalReason(t) + ' Only one of the two can ever execute.') + '</p>'
+      : '') +
     '<dl class="fields">' +
     '<dt>Token</dt><dd>' + esc(t.token.symbol || 'Unknown token') + ' <span class="mono muted">' + esc(t.token.address) + '</span></dd>' +
     '<dt>Recipient</dt><dd class="mono">' + esc(t.recipient) + '</dd>' +
@@ -435,37 +570,122 @@ function reviewPanel(t, firstNeeding, q) {
     '<p class="check">✓ The Safe itself confirms these fields: the Safe Transaction Service supplied ' +
     'them, and the Safe contract hashes them, on-chain, to exactly this transaction hash. The approval ' +
     'will be pinned to that hash, so it can authorize no other transaction than the one shown here.</p>' +
-    (firstNeeding && firstNeeding.safeTxHash !== t.safeTxHash ? '<p class="msg">Transaction #' + firstNeeding.nonce + ' is still waiting for approval. This one cannot execute before it; choose a validity window long enough for it to clear, or the one-time signature you are about to spend will expire unused.</p>' : '') +
     '<div class="controls">' +
     '<label class="muted" for="w-' + t.safeTxHash + '">Valid for</label>' +
-    '<select id="w-' + t.safeTxHash + '">' +
-    [[3600, '1 hour'], [6 * 3600, '6 hours'], [86400, '24 hours'], [3 * 86400, '3 days'], [7 * 86400, '7 days']]
-      .map(([s, l]) => '<option value="' + s + '"' + (s === chosen ? ' selected' : '') + '>' + l + '</option>').join('') +
-    '</select>' +
+    windowSelect('w-' + t.safeTxHash, chosen) +
     // The Ledger shows absolute UTC times, so the app must too — otherwise there is
     // nothing on this screen to compare the device's "To …" line against.
     '<span class="muted">until about <b>' + esc(when((q.now || Math.floor(Date.now() / 1000)) + chosen)) +
     '</b>, which is what the Ledger will show</span>' +
-    '<button class="btn" data-sign="' + t.safeTxHash + '"' + (b && b.cls === 'wait' ? ' disabled' : '') + '>Sign on Ledger</button>' +
+    '<button class="btn" data-sign="' + t.safeTxHash + '"' + (working ? ' disabled' : '') + '>Sign on Ledger</button>' +
     '</div>' +
-    (b ? '<div class="msg ' + b.cls + '">' + esc(b.text) + '</div>' : '') +
+    windowAdvice(t, chosen) +
+    (b ? '<div class="msg ' + b.cls + '" role="status">' + esc(b.text) + '</div>' : '') +
     '</div>';
 }
 
+function windowSelect(id, chosen) {
+  return '<select id="' + id + '">' + WINDOWS
+    .map(([s, l]) => '<option value="' + s + '"' + (s === chosen ? ' selected' : '') + '>' + l + '</option>')
+    .join('') + '</select>';
+}
+
+// The suggested window is not a flat minimum: it is the estimated time for everything
+// queued ahead of this row to clear, plus a slot for this transaction and the policy
+// margin. Say what it is built from, because the operator is being asked to accept it.
+function windowAdvice(t, chosen) {
+  const suggestion = suggestedWindow(t);
+  const ahead = t.earlierUnapprovedNonces.length;
+  const basis = ahead
+    ? 'Suggested: ' + WINDOWS.find(([s]) => s === suggestion)[1] + ' — ' + ahead +
+      ' earlier queued nonce' + (ahead > 1 ? 's' : '') + ' (' + nonceList(t.earlierUnapprovedNonces) +
+      ') must clear first, estimated at about ' + dur(t.aheadSeconds) + ', plus the policy margin.'
+    : 'Suggested: ' + WINDOWS.find(([s]) => s === suggestion)[1] +
+      ' — nothing is queued ahead of this transaction, so this is one execution slot plus the policy margin.';
+  const short = chosen < t.aheadSeconds
+    ? ' <b>Your window (' + dur(chosen) + ') is shorter than the queue ahead of it is estimated to take (' +
+      dur(t.aheadSeconds) + '), so this approval will most likely expire unexecuted' +
+      (nextLeaf() !== null ? ' and burn one-time signature #' + nextLeaf() : '') + '.</b>'
+    : '';
+  return '<p class="sub" style="margin:10px 0 0">' + basis + ' These are estimates, not promises.' + short + '</p>';
+}
+
+// ── the nonce override (full screen, typed confirmation) ──
+// The specification is explicit that this is a modal and not a checkbox, and that the
+// operator types the nonce rather than clicking OK. The typed value is also what the
+// service requires on the request, so there is nothing here to click past.
+function renderOverride() {
+  const box = $('override');
+  if (!overrideFor || !queueData) { box.hidden = true; box.innerHTML = ''; overrideFor = null; return; }
+  const t = queueData.transactions.find(x => x.safeTxHash === overrideFor);
+  if (!t || t.authorize !== 'override') { closeOverride(); return; }
+  const chosen = chosenWindow(t);
+  const earlier = t.earlierUnapprovedNonces;
+  const leaf = nextLeaf();
+  const burned = leaf === null ? 'a one-time signature is burned'
+    : 'one-time signature #' + leaf + ' of ' + status.key.leavesTotal.toLocaleString() + ' is burned';
+  const cost = earlier.length
+    ? 'Nonce ' + nonceList(earlier) + ' ' + (earlier.length > 1 ? 'are' : 'is') + ' still unapproved. ' +
+      'This approval cannot execute until ' + (earlier.length > 1 ? 'they clear' : 'it clears') + ', and its ' +
+      'validity window starts burning the moment you sign. The queue ahead is estimated at about ' +
+      dur(t.aheadSeconds) + '; you have chosen ' + dur(chosen) + '. If the queue ahead takes longer than ' +
+      'that, this approval expires unexecuted and <b>' + burned + '</b>.'
+    : rivalReason(t) + ' Only one of the two can ever take this nonce. If the other one executes, ' +
+      'this approval can never be used and <b>' + burned + '</b>.';
+  const ok = chosen >= t.aheadSeconds;
+  box.innerHTML = '<div class="modal" role="dialog" aria-modal="true" aria-labelledby="ov-title">' +
+    '<div class="modal-box">' +
+    '<h2 id="ov-title">Authorize out of order</h2>' +
+    '<p class="lead">Safe nonce #' + t.nonce + ' · ' + esc(t.amountFormatted) + ' ' +
+      esc(t.token.symbol || '') + ' to <span class="mono">' + esc(t.recipient) + '</span></p>' +
+    '<p class="cost">' + cost + '</p>' +
+    '<div class="controls"><label class="muted" for="ov-window">Valid for</label>' +
+    windowSelect('ov-window', chosen) +
+    '<span class="muted">until about <b>' +
+      esc(when((queueData.now || Math.floor(Date.now() / 1000)) + chosen)) + '</b></span></div>' +
+    (ok ? '' : '<p class="msg bad" style="margin-top:12px">This window is shorter than the queue ahead ' +
+      'of it is estimated to take. Pick a longer one, or expect to lose the signature.</p>') +
+    '<label for="ov-type">Type the nonce (<b>' + t.nonce + '</b>) to confirm you accept this cost</label>' +
+    '<input id="ov-type" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" ' +
+      'aria-describedby="ov-title" value="' + esc($('ov-type') ? $('ov-type').value : '') + '">' +
+    '<div class="acts">' +
+    '<button class="btn ghost" data-ov-cancel="1">Cancel</button>' +
+    '<button class="btn danger" data-ov-go="' + t.safeTxHash + '"' +
+      (($('ov-type') && $('ov-type').value.trim() === String(t.nonce)) ? '' : ' disabled') +
+      '>Authorize out of order</button>' +
+    '</div></div></div>';
+  box.hidden = false;
+  const input = $('ov-type');
+  if (input && document.activeElement !== input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+}
+function openOverride(hash) { overrideFor = hash; renderOverride(); }
+function closeOverride() {
+  overrideFor = null;
+  $('override').hidden = true;
+  $('override').innerHTML = '';
+}
+
 async function sign(hash) {
+  const t = queueData && queueData.transactions.find(x => x.safeTxHash === hash);
   const sel = $('w-' + hash);
-  const validForSeconds = Number(sel ? sel.value : 86400);
-  busy.set(hash, {cls: 'wait', text: 'Confirm on your Ledger. Check every screen against the fields above: token, recipient, amount, validity, and the Safe transaction it is pinned to. Then approve on the device.'});
+  const validForSeconds = Number(sel ? sel.value : (t ? chosenWindow(t) : 86400));
+  const body = {safeTxHash: hash, validForSeconds};
+  // The nonce the operator typed into the override modal travels with the request: the
+  // service refuses an out-of-order approval without it.
+  if (t && t.authorize === 'override' && overrideGranted.has(hash)) body.overrideNonce = t.nonce;
+  busy.set(hash, {cls: 'wait', text: 'Asking the Guard whether this approval can be recorded at all, ' +
+    'before the Ledger is asked to spend a one-time signature…'});
   renderQueue(queueData);
   try {
     const r = await api('approvals', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({safeTxHash: hash, validForSeconds})});
-    if (r.ok && r.outcome === 'approved') {
-      reviewOpen.delete(hash);
-      busy.set(hash, {cls: 'ok', text: '✓ Approved on the Ledger (one-time signature #' + r.leaf + ') and recorded by the Guard. ' +
-        'Execute the transaction in Safe{Wallet} → Transactions → Queue.'});
-    } else if (r.ok && r.outcome === 'rejected') {
-      busy.set(hash, {cls: 'bad', text: (r.reason === 'timeout' ? 'Timed out on the Ledger.' : 'Rejected on the Ledger.') + ' Nothing was signed.'});
+      body: JSON.stringify(body)});
+    if (r.ok && r.outcome === 'pending') {
+      // From here the service owns the flow, and the row reports it. This tab may be
+      // closed without losing the result.
+      busy.set(hash, jobMessage(r.job));
     } else {
       busy.set(hash, {cls: 'bad', text: r.error || 'Approval failed.'});
     }
@@ -529,11 +749,27 @@ async function refresh() {
       const [q, a] = await Promise.all([api('queue'), api('approvals')]);
       if (q.error) throw new Error(q.error);
       queueData = q;
-      for (const h of [...busy.keys()]) {  // forget messages for transactions that left the queue
-        if (!q.transactions.some(t => t.safeTxHash === h)) busy.delete(h);
+      for (const h of [...busy.keys()]) {
+        const row = q.transactions.find(t => t.safeTxHash === h);
+        // Forget the local overlay once the transaction has left the queue, or once the
+        // service reports the job itself — which is the version every tab agrees on.
+        if (!row || row.signing) busy.delete(h);
+      }
+      for (const t of q.transactions) {
+        if (t.signing && t.signing.outcome === 'approved') {
+          reviewOpen.delete(t.safeTxHash);
+          overrideGranted.delete(t.safeTxHash);
+        }
       }
       // Don't rebuild the list under an open "Valid for" menu.
       if (!(document.activeElement && document.activeElement.tagName === 'SELECT')) renderQueue(q);
+      if (overrideFor) {
+        // If someone else approved the earlier nonce while this modal was open, there is
+        // nothing left to override. Close it rather than redrawing under the operator's
+        // cursor on every poll.
+        const row = q.transactions.find(x => x.safeTxHash === overrideFor);
+        if (!row || row.authorize !== 'override') closeOverride();
+      }
       if (!a.error) renderApprovals(a);
     }
   } catch (e) {
@@ -571,14 +807,54 @@ document.addEventListener('click', e => {
     sign(t.dataset.sign);
   } else if (t.dataset.revoke) {
     revoke(t.dataset.revoke);
+  } else if (t.dataset.override) {
+    openOverride(t.dataset.override);
+  } else if (t.dataset.ovCancel) {
+    closeOverride();
+    renderQueue(queueData);
+  } else if (t.dataset.ovGo) {
+    const h = t.dataset.ovGo;
+    const row = queueData.transactions.find(x => x.safeTxHash === h);
+    const typed = $('ov-type') ? $('ov-type').value.trim() : '';
+    // Belt and braces: the button is disabled until the nonce is typed, and the service
+    // refuses the approval without it, but never act on a modal that disagrees with the row.
+    if (!row || typed !== String(row.nonce)) return;
+    overrideGranted.add(h);
+    reviewOpen.add(h);
+    closeOverride();
+    renderQueue(queueData);
+  } else if (t.dataset.keep) {
+    keepWaiting.add(t.dataset.keep);
+    renderQueue(queueData);
   } else if (t.getAttribute('role') === 'tab') {
     selectTab(t.id.slice(4));
   }
 });
 
-// Keep the "until about …" line honest while the picker is being changed.
+// Keep the "until about …" line and the window advice honest while the picker is being
+// changed, in the review panel and in the override modal alike.
 document.addEventListener('change', e => {
-  if (e.target.tagName === 'SELECT') renderQueue(queueData);
+  if (e.target.tagName !== 'SELECT') return;
+  if (e.target.id === 'ov-window') {
+    if (overrideFor) windowChoice.set(overrideFor, Number(e.target.value));
+    renderOverride();
+    return;
+  }
+  if (e.target.id.startsWith('w-')) windowChoice.set(e.target.id.slice(2), Number(e.target.value));
+  renderQueue(queueData);
+});
+
+// The typed confirmation: nothing enables the override button but the nonce itself.
+document.addEventListener('input', e => {
+  if (e.target.id !== 'ov-type' || !overrideFor) return;
+  const row = queueData.transactions.find(x => x.safeTxHash === overrideFor);
+  const go = document.querySelector('[data-ov-go]');
+  if (go && row) go.disabled = e.target.value.trim() !== String(row.nonce);
+});
+
+// Escape closes the override without approving anything.
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && overrideFor) { closeOverride(); renderQueue(queueData); }
 });
 
 // ARIA tabs: the strip is one tab stop, and the arrow keys move between the tabs.
