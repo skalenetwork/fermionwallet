@@ -32,6 +32,19 @@ jobs:
         working-directory: contracts/lib/xmss-solidity
         run: forge test
 
+      - name: The Guard is compiled with the settings the XMSS proof covers
+        # The proof (lib/xmss-solidity/PROOF.md) is of bytecode from one solc and one
+        # optimizer configuration. The Guard must build with the same ones, or it
+        # compiles the proven source into unproven bytes without anything failing.
+        working-directory: contracts
+        run: |
+          lib=lib/xmss-solidity/foundry.toml
+          for key in solc_version via_ir optimizer_runs; do
+            want=$(grep -E "^$key" "$lib" | head -1 | sed 's/ //g')
+            have=$(grep -E "^$key" foundry.toml | head -1 | sed 's/ //g')
+            [ "$want" = "$have" ] || { echo "contracts/foundry.toml has '$have', the proven configuration is '$want'"; exit 1; }
+          done
+
       - name: The registry binds the key's tree height when verifying
         working-directory: contracts
         run: |
