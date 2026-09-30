@@ -257,14 +257,25 @@ pub fn public_root(key: &Key) -> [u8; N] {
     tree(key, 0, None)
 }
 
-/// Sign `msg` with one-time leaf `leaf`, writing `r ‖ wotsSig ‖ authPath` into
-/// `out` (`SIG_LEN` bytes). Returns the key's root — the signature is valid only
-/// under that root, which the verifier already has from registration, so the device
-/// does not put it on the wire.
+/// Sign `msg` with the one-time leaf the counter has just committed, writing
+/// `r ‖ wotsSig ‖ authPath` into `out` (`SIG_LEN` bytes). Returns the key's root — the
+/// signature is valid only under that root, which the verifier already has from
+/// registration, so the device does not put it on the wire.
 ///
-/// The caller must have committed the leaf counter first: this function has no way
-/// to know whether the leaf is fresh, and a leaf used twice makes WOTS+ forgeable.
-pub fn sign(key: &Key, leaf: u32, msg: &[u8; N], out: &mut [u8]) -> [u8; N] {
+/// The index arrives as [`session::Signing`](crate::session::Signing) rather than a
+/// `u32`, and that is the point: this function has no way to tell whether a leaf is
+/// fresh, a leaf used twice makes WOTS+ forgeable, and the only `Signing` token that
+/// exists is the one `session::publish` mints from a leaf it has already committed.
+/// So the caller cannot reach this function with an index the counter did not consume,
+/// and `xmss::sign(&key, 0, …)` is a type error rather than a forgeable pair of
+/// signatures. `session.rs`'s module documentation has the whole argument.
+pub fn sign(
+    key: &Key,
+    leaf: crate::session::Signing,
+    msg: &[u8; N],
+    out: &mut [u8],
+) -> [u8; N] {
+    let leaf = leaf.index();
     let mut auth = [[0u8; N]; HEIGHT];
     let root = tree(key, leaf, Some(&mut auth));
 

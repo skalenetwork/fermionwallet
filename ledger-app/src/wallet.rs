@@ -173,8 +173,10 @@ impl<'a> Fields<'a> {
 /// the wallet }`, so a signature for one wallet is meaningless to any other wallet or
 /// chain [FWL-013]. `leaf` is the device's counter; the contract reads the same index
 /// out of the XMSS signature and rebuilds this digest with it, so a mislabelled leaf
-/// fails the ECDSA half [FWL-034].
-pub fn digest(f: &Fields, leaf: u32) -> [u8; 32] {
+/// fails the ECDSA half [FWL-034]. It arrives as a [`session::Leaf`](crate::session::Leaf)
+/// so that it cannot be anything but the counter's value — see `session.rs`.
+pub fn digest(f: &Fields, leaf: crate::session::Leaf) -> [u8; 32] {
+    let leaf = leaf.index();
     let domain = keccak(&[
         &keccak(&[DOMAIN_TYPE]),
         &keccak(&[DOMAIN_NAME]),
@@ -208,7 +210,7 @@ pub fn digest(f: &Fields, leaf: u32) -> [u8; 32] {
 /// from. `Ok(())` if the human approved; the status word to answer with if not.
 pub fn review(
     f: &Fields,
-    leaf: u32,
+    leaf: crate::session::Leaf,
     total_leaves: u32,
     icon: &ledger_device_sdk::ui::bitmaps::Glyph,
 ) -> Result<(), Reply> {
@@ -220,7 +222,7 @@ pub fn review(
     let mut buf = fmt::Buf::<128>::new();
 
     buf.push_str("#");
-    buf.push_u32_grouped(leaf);
+    buf.push_u32_grouped(leaf.index());
     buf.push_str(" of ");
     buf.push_u32_grouped(total_leaves);
     let leaf_text = crate::intern(buf.as_str());
@@ -241,10 +243,20 @@ pub fn review(
     buf.clear().push_amount(f.chain_id(), 0);
     let network = crate::intern(buf.as_str());
 
-    // One question for the whole review: `Buf::overflowed` is sticky across `clear`,
-    // so it is true if any field above ended up saying less than the payload. A page
-    // the device cannot draw honestly is not a page to ask a decision on.
-    if buf.overflowed() {
+    // Two questions for the whole review, asked once after the last field: did any
+    // value overflow the `Buf` it was written through (`Buf::overflowed` is sticky
+    // across `clear`), and did any of them overflow the text arena `intern` cuts from?
+    // Either way a page would say less than the payload it is about to ask the holder
+    // to sign, and that is not a page to ask a decision on.
+    //
+    // Both are **unreachable with the buffers as sized here**, and that is the honest
+    // description of them rather than a live check: the widest field this review can
+    // draw is a 2^256-1 amount, 78 digits and 25 separators plus " raw units" — 113
+    // characters into a `Buf<128>` — and its seven values sum to at most 394 bytes of a
+    // 1024-byte arena. They are the checks that keep it unreachable when a field is
+    // added or a buffer shrinks, and deleting them is what the mutation
+    // `ledger-app/README.md` names goes on to show.
+    if buf.overflowed() || crate::text_overflowed() {
         return crate::refuse_to_display();
     }
 

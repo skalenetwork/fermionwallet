@@ -80,8 +80,10 @@ instruction number the dispatcher does not know — including the commands
 `ledger-xmss-app.md` defines that this build does not implement, and including a host
 that still speaks the old numbering — `0x6E02` impossible P1/P2 (including a slot this
 build does not have), `0x6E03` bad length, including a chunk of `SIGN_PREAPPROVAL`
-with no data. These are the Rust SDK's `StatusWords` values, checked against the built
-app rather than assumed.
+with no data, `0x6D00` the firmware declining to go on because it reached a state it
+should not be able to reach — a step of the signing path that cannot fail, failing.
+These are the Rust SDK's `StatusWords` values, checked against the built app rather
+than assumed.
 
 Four of them differ from `ledger-xmss-app.md`; see [Where this build differs from the
 spec](#where-this-build-differs-from-the-spec).
@@ -106,8 +108,10 @@ signs is one the Guard accepts:
 Plus the firmware behaviour that is easy to get wrong: the leaf counter advances by
 exactly one per signature, a rejection consumes nothing, the review really shows every
 field — including the `verifyingContract` the slot marries itself to — a spent
-signature cannot be read out a second time, a chunk with no data is refused instead of
-opening a session, and an exhausted key refuses to sign.
+signature cannot be read out a second time nor survive a signing command that is
+refused, a chunk with no data is refused instead of opening a session, a validity
+window the Guard could never accept is refused before any screen, and an exhausted key
+refuses to sign.
 
 `test/test_wallet.py` does the same for the FermionWallet `Transfer` path and the
 one-key-one-contract binding, and `test/test_fmt_utc.py` checks that no screen says
@@ -118,7 +122,7 @@ on the device the two places a value is refused rather than drawn short.
 above sends `approvalClass: 0`, and so does every host in the tree, so the `PAYLOAD`
 and `ADMIN` arm of `unused_fields_are_zero` — the one that requires `token`,
 `recipient` and `amount` to be zero — had no check of any kind: deleting it left
-`test_app.py` at 45/45. It checks that arm in both directions, that a class-1 review
+`test_app.py` entirely green. It checks that arm in both directions, that a class-1 review
 draws `Target`, `Value` and `Data hash` rather than the transfer triple, and that an
 `ADMIN` approval says so on its heading, which is the only place the class appears on
 the screen.
@@ -133,33 +137,76 @@ python3 test/test_payload_class.py          # the PAYLOAD and ADMIN classes
 Each suite owns its Speculos ports so they can run together; `APP_TEST_PORTS`,
 `WALLET_TEST_PORTS`, `FMT_UTC_PORTS` and `PAYLOAD_TEST_PORTS` move them.
 
-### The one invariant no test here can reach
+### The one invariant, and which half of it a test can reach
 
-`ledger-xmss-app.md` calls one ordering catastrophic to invert: the leaf counter must
-commit to NVM **before** a signature is released. No host-side test can observe it.
-Speculos keeps NVM in RAM, so there is no power cut to stage and nothing to look at
-afterwards — move the commit to after the signature is published and all three suites
-stay green, which is exactly why the claim used to sit in a docstring that was not
-earning it.
+`ledger-xmss-app.md` calls one thing catastrophic to invert, and it has two halves:
+the leaf counter must commit to NVM **before** a signature is released, and the leaf
+the counter consumed must be the leaf the signature is computed under. Two WOTS+
+signatures under one one-time leaf over two different digests is what makes the scheme
+forgeable, and either half getting it wrong produces exactly that pair.
 
-It is a property of the build instead. `src/session.rs` owns the counter and the
-signature buffer privately and hands out a `Committed` token that only `commit` can
-produce; `publish`, the only writer of the flag `GET_SIGNATURE_CHUNK` reads, takes that
-token **by value**. A build that released the signature first has no token to pass.
-The committed leaf travels inside the token, so "commit leaf N, sign leaf M" is not
-expressible either.
+This section used to claim both halves as compile-time properties and say no test here
+could reach either. One of those claims was right, one was false, and the sentence
+about tests was false as well. What follows is what was measured.
 
-To falsify it, swap the two statements in `main.rs::sign_pre_approval` — put the
-`session::publish(...)` call above the `session::commit(...)` that produces its
-argument — and build:
+**The ordering** is the half no host-side test can observe. Speculos keeps NVM in RAM,
+so there is no power cut to stage and nothing to look at afterwards — move the commit
+to after the signature is published and all four suites stay green. It is a property of
+the build instead: `src/session.rs` owns the counter and the signature buffer privately
+and hands out a `Committed` token that only `commit` can produce, and `publish` — the
+only writer of the flag `GET_SIGNATURE_CHUNK` reads — takes that token **by value**. A
+build that released the signature first has no token to pass. Two probes, each built in
+Ledger's container, and a third that has nothing to build:
+
+| probe | what the build says |
+|---|---|
+| put the `session::publish(...)` call above the `session::commit(...)` that produces its argument | `error[E0425]: cannot find value committed in this scope` |
+| call `session::publish` twice with the one token | `error[E0382]: use of moved value: committed` |
+| set `BLOB_READY` any other way | there is no other way to try: it, `BLOB` and `BLOB_CURSOR` are private to `session.rs`, and `publish` is the only writer |
+
+**The binding** — commit leaf N, sign leaf N — was claimed in the same breath, and it
+was not true. `publish` handed its closure the committed leaf as a `u32`, and a closure
+is free to ignore its parameter: `xmss::sign(&key, 0, …)` compiled clean, and in
+Speculos it produced two WOTS+ signatures that both verify under leaf 0, over two
+different digests, while the counter marched 0 → 1 → 2 and the device reported leaves 0
+and 1. Three further one-line edits compiled too: a closure reading the outer `leaf`
+instead of its own parameter, `session::commit(0, …)` regardless of the real leaf
+(which regresses the counter), and two `commit` calls in a row yielding two tokens for
+one leaf.
+
+The leaf now travels as three types rather than a number, because it has three
+consumers (`src/session.rs` has the full argument):
+
+- `session::Leaf` — private field, and `session::reserve` is its only factory. The
+  digest, the review's `Leaf` page and the four bytes the host is answered with all
+  take a `Leaf`, so none of them can be handed a literal.
+- `session::Reserved` — the leaf this session intends to spend, consumed **by value**
+  by `commit`.
+- `session::Signing` — what `xmss::sign` takes. Minted only inside `publish`, out of
+  the `Committed` token, and neither `Copy` nor `Clone`.
+
+| probe | what the build says |
+|---|---|
+| `xmss::sign(&key, 0, …)` | `error[E0308]: expected Signing, found integer` |
+| the closure reads the outer `leaf` instead of its parameter | `error[E0308]: expected Signing, found Leaf` — and the two values are equal now anyway |
+| `session::commit(0, …)` | `error[E0308]: expected Reserved, found integer` |
+| reserve a fresh leaf inside the closure and sign under that | `error[E0308]: expected Signing, found Leaf` |
+| two `reserve`/`commit` pairs in a row | compiles, and the device refuses the second: the one thing a type cannot say is that a reservation still matches the counter, so `session::commit` checks it at run time |
+
+And it is **not** true that no test here can reach the binding. `test_app.py` spends
+every remaining leaf of the tree and verifies each signature under the leaf the device
+reported; against the `xmss::sign(&key, 0, …)` build it fails with
 
 ```
-error[E0425]: cannot find value `committed` in this scope
-   --> src/main.rs:...
-    |
-    |     session::publish(committed, |leaf, blob: &mut [u8; session::BLOB_LEN]| {
-    |                      ^^^^^^^^^ not found in this scope
+FAIL  every leaf's XMSS half verifies, not just the first: failed at leaves
+      [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] — suspect the auth path or ADRS
 ```
+
+The single-signature check at the top of the suite passes under that mutant — it signs
+leaf 0, which is the leaf the mutant hardcodes — and so does the one after it; it is
+the exhaustive loop that catches the rest. That loop was already there. The claim that
+nothing here could reach this was wrong about the suite as well as about the compiler,
+and it is why nobody looked.
 
 The full path — register the device's key on chain, sign on the device, relay to the
 Guard — is the demo's `LEDGER_TRANSPORT=speculos` profile; see
@@ -198,6 +245,41 @@ None of these is a shortcut in the signing path: the counter-before-signature
 commit, the recomputed digest, and the field-by-field review are implemented as
 specified, because those are what the Guard's security rests on.
 
+### Checks that are defence in depth, not live paths
+
+`fmt.rs` records overflow instead of truncating and every review asks about it once,
+after its last field. On this build **no payload can make that flag true**, and saying
+so plainly is the point of this list: a comment that claims a live check nobody can
+reach is why the truncation channels below went unexamined for so long.
+
+- **`Buf::overflowed` and the text arena's flag.** The widest value any review draws is
+  a `2^256 - 1` amount — 78 digits, 25 separators and `" raw units"`, 113 characters —
+  into a `Buf<128>`, and the pre-approval review's fourteen fields are at most 804
+  bytes of a 1024-byte arena, five more address fields of headroom. `push_utc`'s own
+  taint cannot fire either, because `review_and_digest` asks `fmt::utc_renderable`
+  about every timestamp *before* a screen is drawn and answers `0x6A80` instead. So
+  deleting the readers changes nothing any host can observe, and every suite stays
+  green; `test_fmt_utc.py` therefore checks that they are *present*, and its D1-D3
+  device checks pin them from the other side — remove the `utc_renderable` pre-checks
+  as well and seven of those go red.
+- **`intern`.** It used to copy what fitted the arena and drop the rest with nothing
+  recorded anywhere, which is the one thing `fmt.rs` exists to prevent, one layer out.
+  Text that does not fit now reads `FIELD TOO LONG - REJECT` and raises the arena's own
+  sticky flag, which all four screens that build text read beside `Buf::overflowed`.
+- **`push_address`'s inner buffer.** Twenty bytes is forty hex characters exactly, so
+  the `Buf<40>` it checksums through is written to capacity with no margin at all. An
+  overflow there would checksum `FIELD TOO LONG - REJECT` and produce a
+  plausible-looking address with the wrong capitalisation; the overflow is now read and
+  the caller's buffer tainted with it.
+- **What no `Buf` can see: the widget.** The SDK's `Page` draws `MAX_CHAR_PER_LINE`
+  characters and drops the rest with no mark, so a value well inside its buffer can
+  still be cut in half on the screen. That is why the binding lives in a
+  `MultiFieldReview` of its own and the home screen carries only fixed strings and the
+  leaf count — and the leaf count is the remaining exposure: `"1,048,576 of 1,048,576"`
+  is 22 characters, so a tree of height 20 or more would be cut there. `HEIGHT` is 4.
+  `test_fmt_utc.py`'s D4 checks the shape that fixes it for the binding; nothing can
+  check it for a tree height this build does not have.
+
 ## Where this build differs from the spec
 
 The list above is about commands and flows that are absent. These are places where a
@@ -213,13 +295,60 @@ Guard's security rests on.
 | A signing command arriving mid-session is refused with `0x6980` | `0x6986` | `0x6986` is the Rust SDK's own `StatusWords::Busy`, and `demo/ledger_device.py` has a sentence for it. `0x6980` has no SDK constant here. |
 | `GET_SIGNATURE_CHUNK` with nothing buffered returns `0x6A88` | `0x6901` | `0x6901` is the SDK's `StatusWords::CmdNotAccepted`. `0x6A88` is also the spec's code for a root-prefix mismatch, which this build does not implement (it has one slot and takes no root prefix), so the two meanings cannot be told apart here. |
 
-One further difference has been closed rather than recorded: the spec requires the
-signature buffer to be zeroized once its last byte has been delivered and again on the
-next signing command, and it now is (`src/session.rs::discard`). A spent one-time
-signature used to sit in 2.8 KB of RAM until the app was closed, and `P1 = 0x00` would
-serve it again on demand. `test/test_app.py` checks the consequence — there is nothing
-to read after a complete readout, by either `P1` — because Speculos cannot show a test
-the device's RAM.
+One place this build is deliberately **stricter** than the spec. `ledger-xmss-app.md`
+answers `0x6A80` for a "validity window inconsistent" and leaves *inconsistent* to the
+app, and the app's rule was `validFrom > validTo`. `PreApprovalEngine.sol`'s is
+`validTo <= validFrom || validTo - validFrom < MIN_WINDOW`, with `MIN_WINDOW` at 15
+minutes — so an equal window, and every window up to 899 seconds, passed every
+pre-check here, reached the holder as a page that looks like any other, spent a
+one-time leaf on approval, and reverted `InvalidWindow` on every relay attempt for
+ever. The device now refuses those before any screen, for the reason the wallet path
+already refused `validUntil == 0` unseen: a signature that could never be used should
+be refused rather than shown. The contract's third clause, `validTo <=
+block.timestamp`, has no analogue here — the device has no clock — and no host in this
+tree sends a window shorter than a day, so nothing on the host side changes.
+`demo/app_api.py` already had the rule (`MIN_VALIDITY = 15 * 60  # PreApprovalEngine.MIN_WINDOW`)
+and the device did not, which is the shape of gap the device is supposed to be the
+last line against: the host that enforces it is not the one holding the key.
+
+One further difference has been closed rather than recorded, and the account of it here
+was itself wrong until now — it said the whole thing was done, in the past tense, and
+half of it was not.
+
+The spec requires the signature buffer to be zeroized once its last byte has been
+delivered and again on the next signing command. The first half was true: a complete
+readout wipes the buffer, and `test/test_app.py` checks the consequence — there is
+nothing left to read, by either `P1` — because Speculos cannot show a test the device's
+RAM. The second half was true only of a signing command the app went on to *accept*.
+`session::discard` sat inside the branch that accepts a first chunk, so all three
+refused shapes — a chunk with no data, a continuation with no session open, and a
+stream that overruns `eip712::PAYLOAD_LEN` — were refused without touching the buffer,
+and `P1 = 0x00` went on re-serving all 2,369 bytes of the last one-time signature for
+as long as the host never finished the readout.
+
+The rule is now stated on the command rather than on its outcome: **`discard` is the
+first line of `sign_pre_approval`, so every signing command the dispatcher accepts as
+one wipes the buffer, whether that command is then accepted or refused.** (A `0x04`
+with an impossible `P1` never reaches `sign_pre_approval` — `TryFrom<ApduHeader>`
+answers `0x6E02` first — so it is not a signing command for this purpose.)
+`test/test_app.py` drives the two shapes that can arrive while a readout is live and
+checks both directions: refused, no session opened, and nothing left to read
+afterwards. The third cannot arrive while a readout is live at all — a half-open stream
+and a buffered signature never coexist, because `handle` answers `0x6986` to
+`GET_SIGNATURE_CHUNK` while a payload is half-streamed — so it is checked for the
+refusal and the session it must not leave behind.
+
+Two other ways out of the app used to leave the buffer populated and now do not:
+`home()`'s `Quit` page, on the way to `exit_app`, and the panic hook — `set_panic!` now
+takes `main.rs::wiping_panic`, which discards and then hands over to the SDK's
+`exiting_panic`.
+
+What is left, deliberately, is a host that simply stops talking: it keeps its half-read
+spent signature until another signing command arrives or the app closes. The wider rule
+— wipe the readout on any command that is not a chunk request — was considered and
+rejected, because it would have `GET_LEAF_INDEX` destroy a readout a well-behaved host
+is in the middle of. `test/test_app.py` checks that residual as a behaviour rather than
+leaving it undescribed.
 
 Nothing here argues the spec is wrong. The `P2` and status-word rows are the spec
 being right and this build being one host-side release behind it; the read-only row is

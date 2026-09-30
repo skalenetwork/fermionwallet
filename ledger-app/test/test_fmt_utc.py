@@ -121,7 +121,8 @@ import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-FMT_RS = os.path.join(REPO, "ledger-app", "src", "fmt.rs")
+SRC = os.path.join(REPO, "ledger-app", "src")
+FMT_RS = os.path.join(SRC, "fmt.rs")
 ELF = os.environ.get("FMT_UTC_ELF", os.path.join(REPO, "ledger-app", "build", "nanos2", "bin", "app.elf"))
 
 sys.path.insert(0, os.path.join(REPO, "demo"))
@@ -346,6 +347,22 @@ fn main() {
 # The inverse of each fix, as a patch on a copy of fmt.rs. Every `old` must still be
 # present in the file, so a rewrite of fmt.rs that leaves these stale says so loudly
 # instead of quietly mutating nothing.
+#
+# `wrap-year` removes both of `push_utc`'s guards at once, and that is the right
+# granularity rather than a convenience: each of the two is individually redundant, so
+# neither can be pinned on its own. `secs` is a `u64`, the civil-date arithmetic is
+# monotone in it and overflows no `i64` anywhere on the way, so `secs > MAX_UTC_SECS`
+# always arrives at `year >= 10000` and `secs <= MAX_UTC_SECS` always arrives at a
+# `year` in `1970..=9999`. Remove the `utc_renderable` guard alone and every input
+# draws exactly what it drew before, by the year bound instead; remove the year bound
+# alone and every input draws exactly what it drew before, by the `utc_renderable`
+# guard instead. Both were tried: `--host --mutate` with each single guard removed
+# leaves every host check green, while removing the pair turns three of them red,
+# because there is no input for which the two guards disagree. A mutation that changes
+# no observable behaviour is not a test of anything,
+# so the pair stays one entry. (`year < 1970` is unreachable for a different and
+# simpler reason: seconds since the epoch are a `u64`, so the year is never below
+# 1970 whatever the arithmetic does.)
 MUTATIONS = {
     "wrap-year": [
         ("""        if !utc_renderable(secs) {
@@ -406,7 +423,56 @@ def run_harness(cases, mutate=None):
         return [(l.split("\t", 1)[0] == "1", l.split("\t", 1)[1]) for l in lines]
 
 
+# Every screen that builds its text through the arena, and the two flags it has to
+# read before it draws. `fmt.rs` records overflow; only the caller can act on it.
+OVERFLOW_READERS = (
+    ("main.rs", "fn review_pre_approval", ("buf.overflowed()", "text_overflowed()")),
+    ("main.rs", "fn review_address", ("buf.overflowed()", "text_overflowed()")),
+    ("main.rs", "fn review_binding", ("buf.overflowed()", "text_overflowed()")),
+    ("wallet.rs", "pub fn review", ("buf.overflowed()", "crate::text_overflowed()")),
+)
+
+
+def function_body(src, signature):
+    """One function's text: its signature to the next `}` at column zero."""
+    at = src.index(signature)
+    rest = src[at:]
+    end = re.search(r"\n\}\n", rest)
+    return rest[: end.end()] if end else rest
+
+
+def reader_checks():
+    """That the flags are still read — which is the only thing a test can check here.
+
+    `Buf::overflowed` and the text arena's flag are both **unreachable on this build**,
+    and that is the honest description of them rather than a shortcoming: the widest
+    field either review can draw is a 2^256-1 amount at 113 characters into a
+    `Buf<128>`, the widest review is 804 bytes of a 1024-byte arena, and `push_utc`'s
+    own taint cannot fire because `review_and_digest` asks `fmt::utc_renderable` about
+    every timestamp before a screen is drawn and answers `0x6A80` instead. They are
+    defence in depth for the field that gets added or the buffer that gets shrunk.
+
+    Which means deleting the readers changes no behaviour any payload can produce, and
+    every other check in every suite stays green — measured. So this is what is left to
+    check: that they are there. D1-D3 below pin them the other way, from the device:
+    take out the `utc_renderable` pre-checks *and* these readers and seven of those go
+    red, because then `push_utc`'s taint is the only thing between a wrapped year and
+    the holder's thumb.
+    """
+    for rel, signature, wanted in OVERFLOW_READERS:
+        name = signature.split()[-1]
+        try:
+            text = function_body(open(os.path.join(SRC, rel)).read(), signature)
+        except (ValueError, OSError) as e:
+            check(f"{rel} still has {name}", False, str(e))
+            continue
+        missing = [w for w in wanted if w not in text]
+        check(f"{rel}::{name} still reads both overflow flags before it draws",
+              not missing, f"missing {missing}")
+
+
 def host_checks(mutate=None):
+    reader_checks()
     check("the review's own pair is the wrapped twin this file computes",
           wrapped_twin(HONEST_UNTIL) == FOREVER_UNTIL,
           f"{wrapped_twin(HONEST_UNTIL)} vs {FOREVER_UNTIL}")

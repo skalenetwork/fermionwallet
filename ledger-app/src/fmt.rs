@@ -79,6 +79,17 @@ impl<const N: usize> Buf<N> {
         self.tainted
     }
 
+    /// Record that something the *caller* built could not be shown honestly, so the
+    /// review's one `overflowed()` question covers it too.
+    ///
+    /// `main.rs::push_address` is the caller this exists for: it checksums an address
+    /// through a `Buf<40>` of its own, and a `Buf` this module cannot see is a value
+    /// this module cannot taint.
+    pub fn taint(&mut self) -> &mut Self {
+        self.tainted = true;
+        self
+    }
+
     /// Reuse the buffer for the next value. One `Buf` written many times keeps the
     /// Nano's small stack from holding a dozen field strings at once.
     pub fn clear(&mut self) -> &mut Self {
@@ -259,6 +270,16 @@ impl<const N: usize> Buf<N> {
         // *year itself*, before a single character is drawn, so that no arithmetic
         // slip anywhere above this line can put a wrapped or five-digit year on the
         // screen: the check and the thing it protects are one line apart.
+        //
+        // The two guards are each individually redundant, which is deliberate and is
+        // why `test_fmt_utc.py`'s `wrap-year` mutation removes both: `secs` is a `u64`,
+        // the civil arithmetic is monotone in it and overflows no `i64` on the way, so
+        // `secs > MAX_UTC_SECS` always lands on `year >= 10000` and `secs <=
+        // MAX_UTC_SECS` always lands on `year` in `1970..=9999`. Removing either alone
+        // is behaviourally identical to keeping both, so neither can be pinned on its
+        // own — `test_fmt_utc.py` records that above `MUTATIONS`. `year < 1970` is
+        // unreachable for the same reason, for any `u64` whatever: seconds since the
+        // epoch are never negative.
         if year < 1970 || year > 9999 {
             self.tainted = true;
             return self.push_str(NOT_A_DATE);

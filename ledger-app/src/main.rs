@@ -33,7 +33,18 @@ use ledger_device_sdk::ui::gadgets::{
 };
 use ledger_device_sdk::{include_gif, NVMData};
 
-ledger_device_sdk::set_panic!(ledger_device_sdk::exiting_panic);
+/// The SDK's `exiting_panic` — answer the host `Panic` and close the app — with the
+/// signature buffer wiped on the way through.
+///
+/// A panic is a way out of the app like `Quit` is, and `session::discard`'s contract is
+/// that no way out leaves a spent one-time signature in 2.8 KB of RAM for the next app
+/// to find. `discard` touches nothing but three statics and cannot itself panic.
+fn wiping_panic(info: &core::panic::PanicInfo) -> ! {
+    session::discard();
+    ledger_device_sdk::exiting_panic(info)
+}
+
+ledger_device_sdk::set_panic!(crate::wiping_panic);
 
 // ── The keys this build holds ────────────────────────────────────────────────
 
@@ -59,6 +70,23 @@ const CLA: u8 = 0xE0;
 const SW_BUSY: u16 = 0x6986;
 const SW_EXHAUSTED: u16 = 0x6A84;
 const SW_BAD_FIELDS: u16 = 0x6A80;
+
+/// The shortest validity window the Guard will accept, from
+/// `PreApprovalEngine::MIN_WINDOW`.
+///
+/// The device refusing short windows is not tidiness, it is the same rule as
+/// `validUntil == 0` on the wallet path: a signature that can never be used should be
+/// refused rather than shown. `PreApprovalEngine.sol` rejects an approval whose window
+/// is `validTo <= validFrom` or narrower than this, so an equal or one-second window
+/// used to pass every pre-check here, reach the holder as a page that looks fine, be
+/// approved, spend a one-time leaf that can never be spent again — and revert
+/// `InvalidWindow` on every relay attempt, for ever.
+///
+/// It is a constant of the *contract*, so it is duplicated here rather than derived,
+/// and `contracts/src/PreApprovalEngine.sol` is the copy that governs. The third arm
+/// of that revert, `validTo <= block.timestamp`, has no analogue here: the device has
+/// no clock.
+const MIN_WINDOW_SECS: u64 = 15 * 60;
 
 /// P1 of `SIGN_PREAPPROVAL`: the chunk's place in the stream.
 const P1_FIRST: u8 = 0x00;
@@ -275,32 +303,71 @@ const APP_ICON: Glyph = Glyph::from_include(include_gif!("icons/app_fermionguard
 /// else and is still open.
 static mut TEXT: [u8; 1024] = [0; 1024];
 static mut TEXT_USED: usize = 0;
+/// Some `intern` since the last `text_reset` did not fit the arena. Sticky for the
+/// same reason `fmt::Buf::overflowed` is: one review's worth of fields goes through
+/// here, so one question after the last field covers all of them.
+static mut TEXT_OVERFLOWED: bool = false;
 
 /// Start a new screen's worth of strings. Every `intern` after this overwrites the
 /// previous review's text, so no `&'static str` from an earlier review may be held.
 #[allow(static_mut_refs)]
 pub(crate) fn text_reset() {
-    unsafe { TEXT_USED = 0 }
+    unsafe {
+        TEXT_USED = 0;
+        TEXT_OVERFLOWED = false;
+    }
+}
+
+/// Did any field of this review fail to fit the arena? Asked once per review, beside
+/// `fmt::Buf::overflowed`, for exactly the same reason.
+pub(crate) fn text_overflowed() -> bool {
+    unsafe { TEXT_OVERFLOWED }
 }
 
 /// Copy `s` into the arena and return a view that outlives the buffer it was built
-/// in. Text beyond the arena is dropped rather than overwriting a neighbour — and
-/// the arena is sized for every field of every flow, so that does not happen.
+/// in.
+///
+/// Text that does not fit reads `fmt::TOO_LONG` and sets the arena's own overflow
+/// flag — it is never returned as the prefix that fit, which is the rule the whole of
+/// `fmt.rs` is built on and which this function used to break: it copied what fitted
+/// and dropped the rest silently, so a review one field too wide for the arena would
+/// have put a truncated address in front of the holder with nothing flagged anywhere.
+///
+/// The arena is sized for every field of every flow with room over — the widest the
+/// pre-approval review can be is 804 bytes of the 1024, five more address fields —
+/// so this is the same shape of check as `Buf::overflowed`: defence for the edit that
+/// adds a field, not a live path.
 #[allow(static_mut_refs)]
 pub(crate) fn intern(s: &str) -> &'static str {
     unsafe {
         let start = TEXT_USED;
-        let end = core::cmp::min(start + s.len(), TEXT.len());
-        TEXT[start..end].copy_from_slice(&s.as_bytes()[..end - start]);
+        if start + s.len() > TEXT.len() {
+            TEXT_OVERFLOWED = true;
+            return fmt::TOO_LONG;
+        }
+        let end = start + s.len();
+        TEXT[start..end].copy_from_slice(s.as_bytes());
         TEXT_USED = end;
         core::str::from_utf8(&TEXT[start..end]).unwrap_or("")
     }
 }
 
 /// An address as EIP-55 checksummed hex, full length, never truncated.
+///
+/// The checksum is keccak256 of the 40-character lowercase form, and 20 bytes is 40
+/// hex characters exactly — so the inner buffer is written to capacity with no margin
+/// at all. If it ever did overflow, `as_str` would hand back `TOO_LONG` and the
+/// checksum would be taken over *that*, producing a plausible-looking address with the
+/// wrong capitalisation rather than a refusal. So the overflow is read here and the
+/// caller's buffer is tainted with it: unreachable for a `[u8; 20]`, and it stays that
+/// way for whatever this is asked to draw next.
 fn push_address<const M: usize>(buf: &mut fmt::Buf<M>, address: &[u8; 20]) {
     let mut lower = fmt::Buf::<40>::new();
     lower.push_hex(address);
+    if lower.overflowed() {
+        buf.taint().push_str(fmt::TOO_LONG);
+        return;
+    }
     let checksum = eip712::keccak(&[lower.as_str().as_bytes()]);
     buf.push_address(address, &checksum);
 }
@@ -317,6 +384,15 @@ fn review_address(address: &[u8; 20]) {
     text_reset();
     let mut buf = fmt::Buf::<44>::new();
     push_address(&mut buf, address);
+    // The same two flags every other screen that builds text asks about, so the rule
+    // is "every review reads them" with no exception to remember. `0x` and 40 hex
+    // characters is 42 of the 44 here, so neither can be true — this is the ceremony
+    // screen a host's claimed `quantumAdmin` is compared against, and half an address
+    // on it would be worse than none.
+    if buf.overflowed() || text_overflowed() {
+        SingleMessage::new("Cannot display address").show_and_wait();
+        return;
+    }
     let fields = [Field { name: "Administrator", value: intern(buf.as_str()) }];
     MultiFieldReview::new(
         &fields,
@@ -355,14 +431,14 @@ fn refuse_to_display() -> Result<(), Reply> {
 ///
 /// Nothing on these pages comes from anywhere but the signed struct — a Safe nonce
 /// or a host label would promise a binding the Guard does not enforce.
-fn review_pre_approval(f: &eip712::Fields, leaf: u32) -> Result<(), Reply> {
+fn review_pre_approval(f: &eip712::Fields, leaf: session::Leaf) -> Result<(), Reply> {
     // One buffer, written and interned once per field, so the stack holds 128 bytes
     // of text at a time instead of every field of the flow at once.
     text_reset();
     let mut buf = fmt::Buf::<128>::new();
 
     buf.push_str("#");
-    buf.push_u32_grouped(leaf);
+    buf.push_u32_grouped(leaf.index());
     buf.push_str(" of ");
     buf.push_u32_grouped(total_leaves());
     let leaf_text = intern(buf.as_str());
@@ -406,14 +482,25 @@ fn review_pre_approval(f: &eip712::Fields, leaf: u32) -> Result<(), Reply> {
     }
     let pinned = intern(buf.as_str());
 
-    // Every field of this review went through one `Buf`, and `overflowed` is sticky
-    // across `clear`, so this one question covers all of them: did any page end up
-    // saying less than the payload it is about to ask the holder to sign? If so there
-    // is nothing to ask — `ledger-ui.md`, "Errors": the clear-signing refusal has
-    // `Reject` as its only action, and there is no blind-signing setting to go and
-    // enable. Unreachable with the buffers as sized here, which is the point: it is
-    // the check that keeps it unreachable when a field is added or a buffer shrinks.
-    if buf.overflowed() {
+    // Every field of this review went through one `Buf` and one text arena, and both
+    // overflow flags are sticky, so these two questions cover all of them: did any
+    // page end up saying less than the payload it is about to ask the holder to sign?
+    // If so there is nothing to ask — `ledger-ui.md`, "Errors": the clear-signing
+    // refusal has `Reject` as its only action, and there is no blind-signing setting
+    // to go and enable.
+    //
+    // Say plainly what these are, because a comment that claims a live check nobody
+    // can reach is why nothing looked at them for so long: **no payload this build
+    // accepts can make either flag true.** The widest value on these pages is a
+    // 2^256-1 amount — 78 digits, 25 separators and " raw units", 113 characters — into
+    // a `Buf<128>`; the fourteen fields together are at most 804 bytes of a 1024-byte
+    // arena; and `push_utc`'s own taint cannot fire either, because
+    // `review_and_digest` asks `fmt::utc_renderable` about both timestamps *before*
+    // this function is called and answers `0x6A80` instead. So this is defence in
+    // depth for the field that gets added or the buffer that gets shrunk, not a screen
+    // any host can produce — and it is deleting it, not reaching it, that a test has to
+    // notice (`test_fmt_utc.py::reader_checks`).
+    if buf.overflowed() || text_overflowed() {
         return refuse_to_display();
     }
     // The tail every class shows; only the three value pages differ.
@@ -577,13 +664,14 @@ fn unused_fields_are_zero(f: &eip712::Fields) -> bool {
 /// unequal, so no new APDU command is needed and the pre-approval wire format is
 /// untouched [FWL-033].
 #[allow(static_mut_refs)]
-fn review_and_digest(leaf: u32) -> Result<([u8; 32], u8, [u8; 32], [u8; 20]), Reply> {
+fn review_and_digest(leaf: session::Leaf) -> Result<([u8; 32], u8, [u8; 32], [u8; 20]), Reply> {
     let payload = unsafe { &PAYLOAD };
     match unsafe { PAYLOAD_LEN } {
         eip712::PAYLOAD_LEN => {
             let fields = eip712::Fields::new(payload);
             if fields.approval_class() > 2
                 || fields.valid_from() > fields.valid_to()
+                || fields.valid_to() - fields.valid_from() < MIN_WINDOW_SECS
                 || !fmt::utc_renderable(fields.valid_to())
                 || !unused_fields_are_zero(&fields)
             {
@@ -596,6 +684,12 @@ fn review_and_digest(leaf: u32) -> Result<([u8; 32], u8, [u8; 32], [u8; 20]), Re
                 // decision. `validFrom` needs no clause of its own — it is already
                 // required not to exceed `validTo`, so a renderable `validTo` makes
                 // it renderable too.
+                //
+                // The window clause is `MIN_WINDOW_SECS`: the Guard refuses anything
+                // narrower, so showing it to the holder would spend a one-time leaf on
+                // a signature that reverts `InvalidWindow` on every relay. The
+                // `valid_from > valid_to` clause is first in the chain and `||` is
+                // short-circuiting, so the subtraction below it cannot underflow.
                 return Err(Reply(SW_BAD_FIELDS));
             }
             let contract = *fields.verifying_contract();
@@ -634,6 +728,25 @@ fn review_and_digest(leaf: u32) -> Result<([u8; 32], u8, [u8; 32], [u8; 20]), Re
 /// only then commit the counter and release both halves.
 #[allow(static_mut_refs)]
 fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
+    // "The buffer is zeroized ... and on the next signing command"
+    // (ledger-xmss-app.md) — the *first line* of every signing command the dispatcher
+    // accepts as one, before anything can refuse it.
+    //
+    // This used to live inside the branch below that accepts a first chunk, which
+    // meant all three refused shapes — an empty chunk, a continuation with no session
+    // open, and a stream that overruns `eip712::PAYLOAD_LEN` — left the last
+    // signature's 2.8 KB in RAM and re-servable from byte zero by `P1 = 0x00`, for as
+    // long as the host never finished the readout. A host that has moved on to
+    // another signing command is
+    // done with the last one whether or not this command turns out to be well formed,
+    // so the rule is stated on the command rather than on its outcome.
+    //
+    // The cost is deliberate and is the reason this is a decision and not a fix: a
+    // host part-way through a readout that then sends a malformed signing command
+    // loses the rest of the readout. It has a spent signature it can no longer
+    // finish collecting — nothing a leaf pays for twice — and `README.md` says so.
+    session::discard();
+
     // Copied out of the APDU buffer, because the reply is written into the same
     // buffer. Static, not a local: this frame is the deepest one in the app (it goes
     // on to run the whole review), and the Nano's stack has no 255 bytes to spare.
@@ -657,9 +770,8 @@ fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
     // open, after which every read-only command came back `0x6986` and nothing said
     // why. Failing here instead makes the first call the one that reports the problem.
     //
-    // It is also why the refusal has to sit *above* the reset below: `P1_FIRST` throws
-    // away a buffered signature, so an empty first chunk would otherwise destroy a
-    // readout the host had not finished.
+    // It still sits *above* the payload reset below, so it cannot throw away a
+    // half-streamed payload either.
     if data.is_empty() {
         return Err(StatusWords::BadLen.into());
     }
@@ -670,9 +782,6 @@ fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
         // chunk is doing nothing wrong. `P1_MORE` with no session is still a bug.
         if chunk == P1_FIRST || (chunk == P1_LAST && !STREAMING) {
             PAYLOAD_LEN = 0;
-            // "The buffer is zeroized ... and on the next signing command"
-            // (ledger-xmss-app.md).
-            session::discard();
         } else if !STREAMING {
             // A continuation with nothing to continue.
             return Err(StatusWords::CmdNotAccepted.into());
@@ -690,30 +799,45 @@ fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
     }
 
     // ── The last chunk: everything below happens before any screen ──
-    let leaf = session::next_leaf();
-    if leaf >= total_leaves() {
+    //
+    // One read of the counter, kept in a `session::Reserved` from here to the commit:
+    // the digest below, the number on the review's `Leaf` page and the four bytes the
+    // host is answered with all take the `session::Leaf` it yields, and the signature
+    // takes the token `publish` mints from the same value. None of the four can be a
+    // literal — `session.rs` has the argument.
+    let Some(reserved) = session::reserve(total_leaves()) else {
         return Err(Reply(SW_EXHAUSTED));
-    }
+    };
+    let leaf = reserved.leaf();
     let (digest, kind, chain_id, contract) = review_and_digest(leaf)?;
+
+    // The key before the counter. On a device whose key has never been read — no
+    // `GET_XMSS_ROOT` since the app was installed — this call is where the seed is
+    // drawn from the hardware RNG, and it draws "Creating key..." while it does it.
+    // From below the commit that landed on top of "Signing...", with the counter
+    // already advanced, for a root nobody has registered. From here it happens before
+    // any of that, on a device whose counter has not moved.
+    let key = xmss_key();
 
     // Counter and binding first, durably, then the signatures — never the other way
     // round. `session::commit` is the only source of the `Committed` token and
     // `session::publish` demands one by value, so this is the order the build enforces
     // and not the order this line happens to be written in.
-    let committed = session::commit(leaf, kind, &chain_id, &contract);
+    let committed = session::commit(reserved, kind, &chain_id, &contract)?;
     SingleMessage::new("Signing...").show();
 
     let ecdsa = sign_ecdsa(&digest).ok_or::<Reply>(StatusWords::Unknown.into())?;
-    let key = xmss_key();
     session::publish(committed, |leaf, blob: &mut [u8; session::BLOB_LEN]| {
         // XMSS first, ECDSA last: the host cannot hold the classical half without
-        // having already taken delivery of the whole quantum one. `leaf` comes out of
-        // the commit token, so the leaf signed here is the leaf the counter consumed.
+        // having already taken delivery of the whole quantum one. `leaf` is the
+        // `session::Signing` token, which exists only here and only for the leaf the
+        // commit above consumed, so this signature cannot be computed under any other
+        // index — not a literal, not the outer `leaf`, not a fresh reservation.
         xmss::sign(&key, leaf, &digest, &mut blob[..xmss::SIG_LEN]);
         blob[xmss::SIG_LEN..].copy_from_slice(&ecdsa);
     });
 
-    comm.append(&leaf.to_be_bytes());
+    comm.append(&leaf.index().to_be_bytes());
     comm.append(&digest);
     comm.append(&(session::BLOB_LEN as u16).to_be_bytes());
     Ok(())
@@ -758,6 +882,17 @@ fn review_binding() {
     buf.clear().push_amount(&wallet::bound_chain(), 0);
     let chain = intern(buf.as_str());
 
+    // The same question the two signing reviews ask, for the same reason and with the
+    // same status: a 42-character address and a 103-character chain id are 145 bytes
+    // of a 128-byte buffer written one at a time and 145 of a 1024-byte arena, so
+    // neither flag can be true here — but this screen is the only place the permanent
+    // binding is shown in full, and a half-drawn address on it would be a worse lie
+    // than no screen at all. There is nothing to refuse, so it says so and closes.
+    if buf.overflowed() || text_overflowed() {
+        SingleMessage::new("Cannot display binding").show_and_wait();
+        return;
+    }
+
     let name = if wallet::bound_kind() == wallet::KIND_GUARD { "Safe guard" } else { "Wallet" };
     let fields =
         [Field { name, value: contract }, Field { name: "Network", value: chain }];
@@ -777,7 +912,14 @@ fn review_binding() {
 /// FermionGuard page for the odometer — the leaf count the Administrator is meant
 /// to recognize (`ledger-xmss-app.md`: "the leaf index is always visible").
 fn home(comm: &mut Comm) -> Ins {
-    let mut leaves = fmt::Buf::<24>::new();
+    // Two grouped `u32`s and " of ": 13 + 4 + 13 = 30 characters at the widest, and a
+    // `Buf<24>` cannot hold them. Nothing reads `overflowed()` here and nothing can —
+    // there is no payload to refuse and no decision to take away, so an overflow would
+    // simply put `FIELD TOO LONG - REJECT` on the home page of a device that is
+    // perfectly well. A tree of height 20 would have done it: "1,048,576 of 1,048,576"
+    // is 22 characters, and at height 24 it is 28. Sized for the widest `u32` instead,
+    // so the flag this screen cannot act on can never be raised.
+    let mut leaves = fmt::Buf::<40>::new();
     leaves.push_u32_grouped(session::next_leaf());
     leaves.push_str(" of ");
     leaves.push_u32_grouped(total_leaves());
@@ -794,22 +936,41 @@ fn home(comm: &mut Comm) -> Ins {
         _ => "not used yet",
     };
 
-    let pages = [
+    // The two pages that do something when pressed are named, not counted. `binding`
+    // used to be a hardcoded `2` beside a `quit` computed from the array's length, so
+    // inserting a page above it would have silently repointed the binding review at
+    // whatever landed on index 2 — the annotating the array's type with `PAGES` is what
+    // makes that a build failure instead: add a page without renumbering these and the
+    // array no longer has the length its type claims.
+    const PAGES: usize = 5;
+    const BINDING: usize = 2;
+    const QUIT: usize = PAGES - 1;
+
+    let pages: [&Page; PAGES] = [
+        /* 0       */
         &Page::new(PageStyle::PictureNormal, ["FermionGuard", "is ready"], Some(&APP_ICON)),
+        /* 1       */
         &Page::new(PageStyle::BoldNormal, ["Leaves used", leaves.as_str()], None),
+        /* BINDING */
         &Page::new(PageStyle::BoldNormal, ["Key is for", bound], None),
+        /* 3       */
         &Page::new(PageStyle::BoldNormal, ["Version", env!("CARGO_PKG_VERSION")], None),
+        /* QUIT    */
         &Page::new(PageStyle::BoldNormal, ["Quit", ""], None),
     ];
-    let binding = 2;
-    let quit = pages.len() - 1;
 
     loop {
         match MultiPageMenu::new(comm, &pages).show() {
             EventOrPageIndex::Event(Event::Command(ins)) => return ins,
             EventOrPageIndex::Event(_) => (),
-            EventOrPageIndex::Index(i) if i == quit => ledger_device_sdk::exit_app(0),
-            EventOrPageIndex::Index(i) if i == binding && wallet::bound_kind() != wallet::KIND_UNBOUND => {
+            EventOrPageIndex::Index(QUIT) => {
+                // Leaving the app is one of the ways out of a buffered signature, and
+                // `session::discard` is the reason there is nothing left behind on any
+                // of them.
+                session::discard();
+                ledger_device_sdk::exit_app(0)
+            }
+            EventOrPageIndex::Index(BINDING) if wallet::bound_kind() != wallet::KIND_UNBOUND => {
                 review_binding()
             }
             EventOrPageIndex::Index(_) => (),

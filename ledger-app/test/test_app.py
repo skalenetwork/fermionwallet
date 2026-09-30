@@ -24,6 +24,16 @@ and every check here still passes. That ordering is enforced by the type system
 instead (`src/session.rs`: the `Committed` token), so the thing that fails when it is
 inverted is the build, not this suite. `README.md` says how to falsify it.
 
+That used to be written here as though it covered the whole invariant, and it does
+not. The *other* half — that the leaf the counter consumed is the leaf the signature is
+computed under — this suite reaches perfectly well, in the exhaustion loop at the
+bottom: it spends every remaining leaf and verifies each signature under the leaf the
+device reported. A build whose `xmss::sign` ignored the committed leaf and signed
+everything under leaf 0 failed that loop at leaves 2 through 15 while passing every
+single-signature check above it. The binding is a type property too now
+(`session::Signing`), but it was not when this paragraph first claimed it was, and the
+loop is what would have said so.
+
     ledger-app/test/test_app.py            # builds nothing; expects the ELF built
     SPECULOS_APDU_URL=... test_app.py      # against an already-running Speculos
 
@@ -365,15 +375,61 @@ def main():
         check("and none of the three cost a leaf", device.next_leaf() == leaf,
               str(device.next_leaf()))
 
+        # A window the Guard can never accept.
+        #
+        # The device's own rule was `validFrom > validTo`. `PreApprovalEngine.sol`'s is
+        # `validTo <= validFrom || validTo - validFrom < MIN_WINDOW`, and `MIN_WINDOW`
+        # is 15 minutes. So an equal window, and every window up to 899 seconds, passed
+        # every pre-check here, reached the holder as a page that looks like any other,
+        # spent a one-time leaf on approval — and reverted `InvalidWindow` on every
+        # relay attempt for ever. The app already refuses `validUntil == 0` on the
+        # wallet path unseen, for exactly this reason; this is the same rule applied to
+        # the arm it was missing from. The third clause of that revert,
+        # `validTo <= block.timestamp`, has no analogue here: the device has no clock.
+        leaf = device.next_leaf()
+        base = FIELDS["validFrom"]
+        for label, window in (("zero-length", 0), ("one second", 1),
+                              ("one second under MIN_WINDOW", 899)):
+            fields = dict(FIELDS, validFrom=base, validTo=base + window)
+            stop = threading.Event()
+            presser = decide(transport, "reject", stop=stop)
+            _, sw = stream_raw(transport, ld.encode_payload(fields, CHAIN_ID, GUARD), timeout=60)
+            stop.set()
+            presser.join(timeout=10)
+            check(f"a {label} validity window is refused before any screen",
+                  sw == ld.SW_BAD_FIELDS, f"0x{sw:04x}")
+        check("and none of the three cost a leaf either", device.next_leaf() == leaf,
+              str(device.next_leaf()))
+        # And the boundary is the contract's, not one wider: exactly MIN_WINDOW signs.
+        screens = []
+        presser = decide(transport, "approve", screens)
+        got = device.sign_preapproval(dict(FIELDS, validFrom=base, validTo=base + 900),
+                                      CHAIN_ID, GUARD, timeout=120)
+        presser.join(timeout=10)
+        check("a window of exactly MIN_WINDOW is signed", got.get("status") == "approved",
+              str(got))
+        check("and it is the digest of the window that was sent",
+              got.get("digest") == eip712_digest(
+                  dict(FIELDS, validFrom=base, validTo=base + 900), got.get("leaf")),
+              str(got.get("digest")))
+
         # A first chunk with no data is a host bug, and it used to be a silent one.
         #
         # Before the renumbering `0x04` was `GET_LEAF_INDEX`: no data, `P1 = 0x00`. An
         # old host's first call therefore lands on `SIGN_PREAPPROVAL` with `P1_FIRST`
         # and `Lc = 0`, which answered `0x9000` with zero bytes — read as "leaf 0" — and
         # opened a streaming session, after which every read-only command came back
-        # `0x6986` with nothing to say why. It is refused now, and refused *before* the
-        # reset that a first chunk performs, so it cannot discard a readout in progress
-        # either.
+        # `0x6986` with nothing to say why. It is refused now, before any state is
+        # touched, and the first call is the one that reports the problem.
+        #
+        # What it *does* discard is the spent signature, and that is the second half of
+        # this block. `ledger-xmss-app.md` zeroizes the readout buffer "on the next
+        # signing command", and the app used to honour that only for a signing command
+        # it went on to accept: a refused one left all 2,369 bytes of a spent one-time
+        # signature re-servable from byte zero by `P1 = 0x00`, for as long as the host
+        # never finished the readout. The rule is now stated on the command and not on
+        # its outcome, so the check below is the inverse of the one that used to be
+        # here.
         presser = decide(transport, "approve")
         out, sw = stream_raw(transport, ld.encode_payload(FIELDS, CHAIN_ID, GUARD), timeout=120)
         presser.join(timeout=10)
@@ -381,16 +437,61 @@ def main():
         first, sw = send(transport, ld.INS_GET_SIGNATURE_CHUNK, ld.P1_FIRST)
         check("and its signature starts to page out", sw == ld.SW_OK and len(first) == 255,
               f"0x{sw:04x}, {len(first)} bytes")
-        _, sw = send(transport, ld.INS_SIGN_PREAPPROVAL, ld.P1_FIRST, b"")
-        check("an empty first chunk is refused rather than answered with zero bytes",
-              sw == 0x6E03, f"0x{sw:04x}")
+        # A command that is not a signing command leaves the readout alone — the
+        # documented residual: a host that stops talking altogether keeps its half-read
+        # spent signature until another signing command arrives or the app closes.
         _, sw = send(transport, ld.INS_GET_LEAF_INDEX)
-        check("and it opened no session: a read-only command still answers",
+        check("a read-only command does not disturb a readout in progress",
               sw == ld.SW_OK, f"0x{sw:04x}")
         second, sw = send(transport, ld.INS_GET_SIGNATURE_CHUNK, ld.P1_MORE)
-        check("nor did it throw away the readout that was in progress",
+        check("and the readout continues where it left off",
               sw == ld.SW_OK and len(second) == 255 and second != first,
               f"0x{sw:04x}, {len(second)} bytes")
+        # Now every refused signing command the wire can carry. `Lc` is one byte, so
+        # the 255-byte chunk limit cannot be exceeded by a single APDU; what is left is
+        # a chunk with no data, a continuation with no session open, and a stream that
+        # overruns the payload length. Each is refused, each opens no session — and
+        # each takes the spent signature with it, which is what used to be untrue.
+        def refuse_empty():
+            return send(transport, ld.INS_SIGN_PREAPPROVAL, ld.P1_FIRST, b"")
+
+        def refuse_orphan_continuation():
+            return send(transport, ld.INS_SIGN_PREAPPROVAL, ld.P1_MORE, b"\x00" * 8)
+
+        for i, (label, attempt, want) in enumerate((
+            ("an empty first chunk", refuse_empty, 0x6E03),
+            ("a continuation with no session", refuse_orphan_continuation, 0x6901),
+        )):
+            if i:
+                # Re-arm: the previous iteration wiped the buffer, and each check is
+                # about what *its own* refusal does to a live readout.
+                presser = decide(transport, "approve")
+                _, sw = stream_raw(transport, ld.encode_payload(FIELDS, CHAIN_ID, GUARD),
+                                   timeout=120)
+                presser.join(timeout=10)
+                first, sw = send(transport, ld.INS_GET_SIGNATURE_CHUNK, ld.P1_FIRST)
+                check(f"a signature pages out to be wiped by {label}",
+                      sw == ld.SW_OK and len(first) == 255, f"0x{sw:04x}, {len(first)} bytes")
+            _, sw = attempt()
+            check(f"{label} is refused rather than acted on", sw == want, f"0x{sw:04x}")
+            _, sw = send(transport, ld.INS_GET_LEAF_INDEX)
+            check(f"{label} left no session open: a read-only command still answers",
+                  sw == ld.SW_OK, f"0x{sw:04x}")
+            out, sw = send(transport, ld.INS_GET_SIGNATURE_CHUNK, ld.P1_FIRST)
+            check(f"{label} discarded the spent signature all the same",
+                  sw == 0x6901 and not out, f"0x{sw:04x}, {len(out)} bytes")
+
+        # The third refused shape — a stream that overruns `eip712::PAYLOAD_LEN` — can
+        # never be the command that finds a buffered signature: a half-open stream and
+        # a live readout cannot coexist, because `handle` answers `0x6986` to
+        # `GET_SIGNATURE_CHUNK` while a payload is half-streamed. So what is checked
+        # here is the refusal and the session it must not leave behind.
+        for p1 in (ld.P1_FIRST, ld.P1_MORE):
+            _, sw = send(transport, ld.INS_SIGN_PREAPPROVAL, p1, b"\x00" * 255)
+        check("a stream that overruns the payload length is refused", sw == 0x6E03,
+              f"0x{sw:04x}")
+        _, sw = send(transport, ld.INS_GET_LEAF_INDEX)
+        check("and closes the session it had opened", sw == ld.SW_OK, f"0x{sw:04x}")
 
         # A rejection must cost nothing.
         leaf = device.next_leaf()

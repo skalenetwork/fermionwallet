@@ -107,9 +107,14 @@ pub fn keccak(parts: &[&[u8]]) -> [u8; 32] {
 }
 
 /// `keccak256(0x1901 ‖ domainSeparator ‖ structHash)` — the digest both halves of
-/// the hybrid signature cover. `leaf` is the device's own counter value, not
-/// anything the host sent: the leaf index is part of the signed struct.
-pub fn digest(f: &Fields, leaf: u32) -> [u8; 32] {
+/// the hybrid signature cover. The leaf index is part of the signed struct, and it is
+/// the device's own counter value rather than anything the host sent — which is why it
+/// arrives as a [`session::Leaf`](crate::session::Leaf) and not a `u32`: nothing
+/// outside `session` can build one, so `digest(&fields, 0)` does not compile and the
+/// `xmssLeafIndex` this digest covers cannot drift away from the leaf
+/// `session::commit` consumed.
+pub fn digest(f: &Fields, leaf: crate::session::Leaf) -> [u8; 32] {
+    let leaf = leaf.index();
     let domain = keccak(&[
         &keccak(&[DOMAIN_TYPE]),
         &keccak(&[DOMAIN_NAME]),
