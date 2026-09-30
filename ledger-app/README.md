@@ -58,13 +58,45 @@ CLA `0xE0`. Every command names the key slot in **P2**; this build has one slot,
 | `0x06` | `SIGN_PREAPPROVAL` | `0x00` first chunk, `0x80` more follow, `0x81` last | on the last chunk, once the human has decided: leaf(4) ‖ digest(32) ‖ totalLen(2) |
 | `0x08` | `GET_APP_CONFIG` | `0x00` | flags(1) ‖ version(3) ‖ MAX_KEYS(1) ‖ freeSlots(1) ‖ treeHeight(1) ‖ parameterSet(32) |
 | `0x0E` | `GET_ADMIN_ADDRESS` | `0x00`, or `0x01` to show it on-device | address(20) |
-| `0x18` | `GET_SIGNATURE_CHUNK` | chunk index | up to 255 bytes of the signature blob |
+| `0x18` | `GET_SIGNATURE_CHUNK` | chunk index | up to 255 bytes of `ecdsa(65) ‖ r(32) ‖ wotsSig(67×32) ‖ auth(h×32)` |
+
+The signature blob carries no public key: the root and SEED are already on-chain from
+registration, and `contracts/script/Demo.s.sol` decodes exactly this layout.
 
 Status words: `0x9000` ok, `0x6985` rejected on the device, `0x6986` a signing
 session is already in flight, `0x6A84` no one-time leaves left, `0x6E00` wrong CLA,
 `0x6E01` unknown command, `0x6E02` impossible P1/P2 (including a slot this build
 does not have), `0x6E03` bad length, `0x6D00` a command this build does not
 implement.
+
+## What is checked
+
+`test/test_app.py` runs the built app in Speculos and drives it through the demo's
+own transport, checking the three things that decide whether an approval the device
+signs is one the Guard accepts:
+
+1. the digest the device reports is the EIP-712 digest of the fields the host sent —
+   computed independently with `cast`, so the device's keccak and the contracts'
+   encoding are compared, not assumed;
+2. the XMSS half verifies under the root and SEED the device published, checked by
+   the RFC 8391 reference implementation in `contracts/lib/xmss-solidity/py` (the
+   same reference the Solidity verifier is proven against, and which agrees with the
+   RFC authors' C code);
+3. the ECDSA half recovers to the device's own `quantumAdmin` address, with `s` in
+   the lower half of the curve order — OpenZeppelin's `ECDSA` rejects a high `s`, so
+   a device that emitted one would produce approvals the Guard always refuses.
+
+Plus the firmware behaviour that is easy to get wrong: the leaf counter advances by
+exactly one per signature, a rejection consumes nothing, the review really shows
+every field, and an exhausted key refuses to sign.
+
+```sh
+./build.sh && python3 test/test_app.py    # needs docker and Foundry's cast
+```
+
+The full path — register the device's key on chain, sign on the device, relay to the
+Guard — is the demo's `LEDGER_TRANSPORT=speculos` profile; see
+[`demo/LEDGER.md`](../demo/LEDGER.md).
 
 ## What this build is not
 
@@ -82,6 +114,12 @@ listed here rather than stubbed, so nothing reads as done when it is not:
 - **No `SIGN_ROTATION`, `SIGN_KEY_ATTESTATION` or `SIGN_DENIAL`** (Flows 3 and 4).
   The registration attestation the demo needs is produced off-device.
 - **Nano only.** Stax and Flex need the NBGL screen layer.
+- **Amounts are shown in raw units**, not decimals-adjusted with a symbol: that needs
+  a token list (Ledger's CAL) the app does not carry, and guessing 18 decimals would
+  be a display that lies. The recipient, Safe and target addresses *are* shown in
+  full, EIP-55 checksummed, as the spec requires.
+- **No 60-second idle timeout on the decision screen.** A review stays open until the
+  human decides; the host's own timeout is what ends an abandoned session.
 
 None of these is a shortcut in the signing path: the counter-before-signature
 commit, the recomputed digest, and the field-by-field review are implemented as

@@ -21,6 +21,22 @@ done
 cd /app/contracts
 mkdir -p demo-state
 rm -f demo-state/deployment.json
+
+# With a real device (USB or Speculos) the key that will sign is the one generated
+# on the device, so the setup must register *its* root and SEED. Ask it before
+# deploying; the reference key is only right when nothing but the simulator signs.
+case "${LEDGER_TRANSPORT:-simulator}" in
+  usb|hid|ledger|speculos|emulator)
+    echo "[demo] reading the public key from the Ledger ..."
+    if ! eval "$(python3 /app/demo/ledger_device.py key)"; then
+      echo "[demo] FATAL: no Ledger answered. Is the app open (USB) or Speculos running?"
+      exit 1
+    fi
+    export DEVICE_XMSS_ROOT DEVICE_XMSS_SEED
+    echo "[demo] device key ${DEVICE_XMSS_ROOT} (admin ${DEVICE_ADMIN_ADDRESS})"
+    ;;
+esac
+
 if [ "$DEMO_MODE" = "wallet" ]; then
   echo "[demo] installing Safe v1.4.1 at canonical addresses ..."
   python3 /app/demo/wallet/install_safe_contracts.py

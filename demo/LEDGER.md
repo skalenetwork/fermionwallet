@@ -12,14 +12,24 @@ The demo can sign with a real FermionGuard Ledger instead of the Python stand-in
 
 ## With the emulator
 
-Needs `ledger-app/` built (see that directory), which produces `build/nanos2/bin/app.elf`.
+Build the app first — `ledger-app/build.sh` puts the ELF at
+`ledger-app/build/nanos2/bin/app.elf`, which is where the compose profile looks:
 
 ```sh
+./ledger-app/build.sh            # docker is all it needs
 cd demo/wallet
 LEDGER_TRANSPORT=speculos docker compose --profile ledger up -d --wait
 ```
 
 The emulator runs with anvil's mnemonic, so the device's ECDSA key at `m/44'/60'/0'/0/4` is the Quantum Administrator address the demo registers on-chain. Point it at a different build with `LEDGER_APP_ELF`.
+
+The XMSS key is a different matter: it is generated on the device, so the demo cannot
+invent it. With `speculos` or `usb` the setup asks the device for its public key
+(`GET_XMSS_ROOT`) before deploying and registers *that* root and SEED, via
+`DEVICE_XMSS_ROOT` / `DEVICE_XMSS_SEED` (`demo/entrypoint.sh`, `Demo.s.sol`). Without
+a device it registers the reference key as before. Registering one key and signing
+with another is the failure this prevents: the Guard would refuse every approval with
+`InvalidXmssSignature`, after the device had already spent the leaf.
 
 ## With a physical Ledger
 
@@ -57,3 +67,8 @@ SPECULOS_APDU_URL=tcp://127.0.0.1:19999 SPECULOS_API_URL=http://127.0.0.1:15000 
 ```
 
 The framing checks pass against any Ledger app, since the framing belongs to the device rather than to FermionGuard.
+
+What the FermionGuard app itself produces is checked by `ledger-app/test/test_app.py`:
+the device's digest against the contracts' EIP-712 encoding, its XMSS half against the
+RFC 8391 reference implementation, and its ECDSA half against the address it publishes
+as `quantumAdmin`. See [`ledger-app/README.md`](../ledger-app/README.md).

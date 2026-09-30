@@ -114,7 +114,15 @@ contract Demo is Script {
         require(funded, "funding failed");
 
         // Key ceremony: owner-threshold co-signed registration + Ledger attestation.
-        (xmssRoot, xmssSeed,) = _xmssSign(0, bytes32(uint256(1))); // root/seed extraction only
+        // The key registered must be the key that will sign, so when a real device
+        // (or Speculos) is driving, its published root and SEED come in from
+        // GET_XMSS_ROOT — a key generated on the device cannot be the reference
+        // key. With no device, the FFI reference key is registered as before.
+        xmssRoot = vm.envOr("DEVICE_XMSS_ROOT", bytes32(0));
+        xmssSeed = vm.envOr("DEVICE_XMSS_SEED", bytes32(0));
+        if (xmssRoot == bytes32(0) || xmssSeed == bytes32(0)) {
+            (xmssRoot, xmssSeed,) = _xmssSign(0, bytes32(uint256(1))); // root/seed extraction only
+        }
         keyId = _registerKey();
 
         // Wire the Guard (owner-signed Safe self-call).

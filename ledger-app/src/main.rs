@@ -17,30 +17,35 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 
+mod eip712;
 mod fmt;
+mod xmss;
 
-use ledger_device_sdk::ecc::{make_bip32_path, ECPublicKey, ECPrivateKey, SeedDerive, Secp256k1};
-use ledger_device_sdk::hash::sha3::Keccak256;
-use ledger_device_sdk::hash::HashInit;
+use ledger_device_sdk::ecc::{
+    bip32_derive, make_bip32_path, CurvesId, ECPrivateKey, ECPublicKey, Secp256k1, SeedDerive,
+};
 use ledger_device_sdk::io::{ApduHeader, Comm, Event, Reply, StatusWords};
 use ledger_device_sdk::nvm::{AtomicStorage, SingleStorage};
-use ledger_device_sdk::ui::bitmaps::Glyph;
-use ledger_device_sdk::ui::gadgets::{EventOrPageIndex, MultiPageMenu, Page, PageStyle};
+use ledger_device_sdk::ui::bitmaps::{Glyph, CHECKMARK, CROSSMARK, EYE};
+use ledger_device_sdk::ui::gadgets::{
+    EventOrPageIndex, Field, MultiFieldReview, MultiPageMenu, Page, PageStyle, SingleMessage,
+};
 use ledger_device_sdk::{include_gif, NVMData};
 
 ledger_device_sdk::set_panic!(ledger_device_sdk::exiting_panic);
 
-// ── The key this build holds ─────────────────────────────────────────────────
+// ── The keys this build holds ────────────────────────────────────────────────
 
 /// The Administrator's classical half. Fixed in the app, never host-supplied:
-/// `QuantumKeyRegistry` pins this address as `quantumAdmin`, so the path is part
-/// of the app's identity and is declared in `[package.metadata.ledger] path`.
+/// `QuantumKeyRegistry` pins this address as `quantumAdmin`, so the path is part of
+/// the app's identity and is declared in `[package.metadata.ledger] path`.
 const ADMIN_PATH: [u32; 5] = make_bip32_path(b"m/44'/60'/0'/0/4");
 
-/// Tree height of the XMSS key: 2^4 = 16 one-time signatures. Small on purpose —
-/// this is the demo/pilot parameter set, and it is what the on-chain verifier is
-/// registered for. The parameter set below is the string the registry records.
-const TREE_HEIGHT: u8 = 4;
+/// Where the XMSS secrets come from. Under the same `44'/60'` prefix, because BOLOS
+/// enforces the app's declared derivation paths.
+const XMSS_PATH: [u32; 5] = make_bip32_path(b"m/44'/60'/1'/0/0");
+
+/// The parameter-set string the registry records for this key.
 const PARAMETER_SET_PREIMAGE: &[u8] = b"XMSS-SHA2_4_256-DEMO";
 
 /// One key slot in this build; the spec's `MAX_KEYS = 4` needs the key-generation
@@ -56,12 +61,19 @@ const CLA: u8 = 0xE0;
 /// of the SDK's `StatusWords`.
 const SW_BUSY: u16 = 0x6986;
 const SW_EXHAUSTED: u16 = 0x6A84;
-const SW_NOT_IMPLEMENTED: u16 = 0x6D00;
+const SW_BAD_FIELDS: u16 = 0x6A80;
 
 /// P1 of `SIGN_PREAPPROVAL`: the chunk's place in the stream.
 const P1_FIRST: u8 = 0x00;
 const P1_MORE: u8 = 0x80;
 const P1_LAST: u8 = 0x81;
+
+/// `ecdsa(65) ‖ r(32) ‖ wotsSig(67×32) ‖ auth(h×32)` — the blob
+/// `GET_SIGNATURE_CHUNK` hands back. No public key: the root and SEED are already
+/// on-chain from registration, and `contracts/script/Demo.s.sol::_decodeXmss`
+/// parses exactly this after the ECDSA half.
+const BLOB_LEN: usize = 65 + xmss::SIG_LEN;
+const CHUNK: usize = 255;
 
 enum Ins {
     /// 0x02 — root ‖ seed ‖ treeHeight ‖ parameterSet of the slot's key.
@@ -73,8 +85,8 @@ enum Ins {
     /// 0x08 — what the ceremony preflight checks the device against.
     GetAppConfig,
     /// 0x0E — the `quantumAdmin` address, 20 bytes.
-    GetAdminAddress,
-    /// 0x18 — 255-byte slice `index` of the signature blob the last sign produced.
+    GetAdminAddress { display: bool },
+    /// 0x18 — 255-byte slice `index` of the blob the last signature produced.
     GetSignatureChunk { index: u8 },
 }
 
@@ -91,7 +103,7 @@ impl TryFrom<ApduHeader> for Ins {
                 Ok(Ins::SignPreApproval { chunk: p1 })
             }
             (0x08, 0, _) => Ok(Ins::GetAppConfig),
-            (0x0E, 0 | 1, true) => Ok(Ins::GetAdminAddress),
+            (0x0E, p1 @ (0 | 1), true) => Ok(Ins::GetAdminAddress { display: p1 == 1 }),
             (0x18, index, true) => Ok(Ins::GetSignatureChunk { index }),
             // A known command with impossible parameters is a host bug, not an
             // unknown command: say which of the two it is.
@@ -109,22 +121,32 @@ impl TryFrom<ApduHeader> for Ins {
 #[link_section = ".nvm_data"]
 static mut LEAF_COUNTER: NVMData<AtomicStorage<u32>> = NVMData::new(AtomicStorage::new(&0u32));
 
+/// The signing session: the streamed payload, and the blob the last approval
+/// produced. Static because 2.8 KB of locals would not fit the Nano's stack.
+static mut PAYLOAD: [u8; eip712::PAYLOAD_LEN] = [0; eip712::PAYLOAD_LEN];
+static mut PAYLOAD_LEN: usize = 0;
+static mut STREAMING: bool = false;
+static mut BLOB: [u8; BLOB_LEN] = [0; BLOB_LEN];
+static mut BLOB_READY: bool = false;
+
 #[allow(static_mut_refs)]
 fn next_leaf() -> u32 {
     unsafe { *LEAF_COUNTER.get_mut().get_ref() }
 }
 
-/// Commit `leaf + 1` durably. Returns once the NVM write has landed.
+/// Commit `leaf + 1` durably. Returns once the NVM write has landed — this is the
+/// counter-before-signature invariant, and inverting it is the one ordering the
+/// spec calls catastrophic.
 #[allow(static_mut_refs)]
 fn consume_leaf(leaf: u32) {
     unsafe { LEAF_COUNTER.get_mut().update(&(leaf + 1)) }
 }
 
 fn total_leaves() -> u32 {
-    1u32 << TREE_HEIGHT
+    1u32 << xmss::HEIGHT
 }
 
-// ── The classical half ───────────────────────────────────────────────────────
+// ── Key material ─────────────────────────────────────────────────────────────
 
 fn admin_key() -> ECPrivateKey<32, 'W'> {
     Secp256k1::derive_from_path(&ADMIN_PATH)
@@ -133,44 +155,382 @@ fn admin_key() -> ECPrivateKey<32, 'W'> {
 /// keccak256(uncompressed public key without its 0x04 tag)[12..32].
 fn admin_address() -> [u8; 20] {
     let pk: ECPublicKey<65, 'W'> = admin_key().public_key().unwrap();
-    let mut digest = [0u8; 32];
-    let mut k = Keccak256::new();
-    k.hash(&pk.pubkey[1..65], &mut digest).unwrap();
+    let digest = eip712::keccak(&[&pk.pubkey[1..65]]);
     let mut address = [0u8; 20];
     address.copy_from_slice(&digest[12..32]);
     address
 }
 
+fn xmss_key() -> xmss::Key {
+    let mut node = [0u8; 64];
+    // The syscall only fails on a curve/length mismatch, both fixed here.
+    bip32_derive(CurvesId::Secp256k1, &XMSS_PATH, &mut node, None).unwrap();
+    let mut seed_material = [0u8; 32];
+    seed_material.copy_from_slice(&node[..32]);
+    node.fill(0);
+    let key = xmss::derive(&seed_material);
+    seed_material.fill(0);
+    key
+}
+
 fn parameter_set() -> [u8; 32] {
+    eip712::keccak(&[PARAMETER_SET_PREIMAGE])
+}
+
+// ── The classical half of a hybrid signature ─────────────────────────────────
+
+/// `r ‖ s ‖ v` as `ECDSA.recover` wants it: 64 bytes of scalars and a recovery id
+/// of 27 or 28, with `s` in the lower half of the curve order (OpenZeppelin's
+/// `ECDSA` rejects a high `s`, so a device that emitted one would produce approvals
+/// the Guard always refuses).
+fn sign_ecdsa(digest: &[u8; 32]) -> Option<[u8; 65]> {
+    // secp256k1's group order, and its halfway point.
+    const ORDER: [u8; 32] = [
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36,
+        0x41, 0x41,
+    ];
+    const HALF_ORDER: [u8; 32] = [
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0x5d, 0x57, 0x6e, 0x73, 0x57, 0xa4, 0x50, 0x1d, 0xdf, 0xe9, 0x2f, 0x46, 0x68, 0x1b,
+        0x20, 0xa0,
+    ];
+    let (der, der_len, parity) = admin_key().deterministic_sign(digest).ok()?;
+    let (r, s) = parse_der(&der[..der_len as usize])?;
+
+    let mut out = [0u8; 65];
+    out[..32].copy_from_slice(&r);
+    let mut parity = parity != 0;
+    if s > HALF_ORDER {
+        // s := n - s, and the recovered point flips to the other root.
+        let neg = sub(&ORDER, &s);
+        out[32..64].copy_from_slice(&neg);
+        parity = !parity;
+    } else {
+        out[32..64].copy_from_slice(&s);
+    }
+    out[64] = 27 + parity as u8;
+    Some(out)
+}
+
+/// `30 L 02 Lr r 02 Ls s`, with each scalar left-padded to 32 bytes.
+fn parse_der(der: &[u8]) -> Option<([u8; 32], [u8; 32])> {
+    if der.len() < 8 || der[0] != 0x30 {
+        return None;
+    }
+    let mut at = 2;
+    let mut scalar = |at: &mut usize| -> Option<[u8; 32]> {
+        if der.get(*at) != Some(&0x02) {
+            return None;
+        }
+        let len = *der.get(*at + 1)? as usize;
+        let bytes = der.get(*at + 2..*at + 2 + len)?;
+        // DER may carry a leading zero for sign, or drop leading zero bytes.
+        let bytes = if bytes.len() > 32 { &bytes[bytes.len() - 32..] } else { bytes };
+        let mut w = [0u8; 32];
+        w[32 - bytes.len()..].copy_from_slice(bytes);
+        *at += 2 + len;
+        Some(w)
+    };
+    let r = scalar(&mut at)?;
+    let s = scalar(&mut at)?;
+    Some((r, s))
+}
+
+fn sub(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
     let mut out = [0u8; 32];
-    let mut k = Keccak256::new();
-    k.hash(PARAMETER_SET_PREIMAGE, &mut out).unwrap();
+    let mut borrow = 0i16;
+    for i in (0..32).rev() {
+        let v = a[i] as i16 - b[i] as i16 - borrow;
+        out[i] = (v & 0xff) as u8;
+        borrow = if v < 0 { 1 } else { 0 };
+    }
     out
+}
+
+// ── Screens ──────────────────────────────────────────────────────────────────
+
+const APP_ICON: Glyph = Glyph::from_include(include_gif!("icons/app_fermionguard_14x14.gif"));
+
+/// An address as EIP-55 checksummed hex, full length, never truncated.
+fn push_address<const M: usize>(buf: &mut fmt::Buf<M>, address: &[u8; 20]) {
+    let mut lower = fmt::Buf::<40>::new();
+    lower.push_hex(address);
+    let checksum = eip712::keccak(&[lower.as_str().as_bytes()]);
+    buf.push_address(address, &checksum);
+}
+
+fn push_hash<const M: usize>(buf: &mut fmt::Buf<M>, bytes: &[u8; 32]) {
+    buf.push_str("0x");
+    buf.push_hex(bytes);
+}
+
+/// Show the Administrator's address on the device, so a ceremony can compare the
+/// address on the screen with the one the host claims (`GET_ADMIN_ADDRESS` with the
+/// display flag set).
+fn review_address(address: &[u8; 20]) {
+    let mut text = fmt::Buf::<44>::new();
+    push_address(&mut text, address);
+    let fields = [Field { name: "Administrator", value: text.as_str() }];
+    MultiFieldReview::new(
+        &fields,
+        &["Verify", "Administrator"],
+        Some(&EYE),
+        "Done",
+        Some(&CHECKMARK),
+        "Done",
+        Some(&CHECKMARK),
+    )
+    .show();
+}
+
+/// The pre-approval review: every signed field on its own page, in the order the
+/// Ethereum app uses, ending on Approve/Reject. Returns whether the human approved.
+///
+/// Nothing on these pages comes from anywhere but the signed struct — a Safe nonce
+/// or a host label would promise a binding the Guard does not enforce.
+fn review_pre_approval(f: &eip712::Fields, leaf: u32) -> bool {
+    let mut leaf_text = fmt::Buf::<28>::new();
+    leaf_text.push_str("#");
+    leaf_text.push_u32_grouped(leaf);
+    leaf_text.push_str(" of ");
+    leaf_text.push_u32_grouped(total_leaves());
+
+    let mut amount = fmt::Buf::<128>::new();
+    amount.push_amount(f.amount(), 0);
+    amount.push_str(" raw units");
+    let mut value = fmt::Buf::<128>::new();
+    value.push_amount(f.value(), 0);
+    value.push_str(" wei");
+
+    let mut token = fmt::Buf::<44>::new();
+    push_address(&mut token, f.token());
+    let mut recipient = fmt::Buf::<44>::new();
+    push_address(&mut recipient, f.recipient());
+    let mut target = fmt::Buf::<44>::new();
+    push_address(&mut target, f.target());
+    let mut safe = fmt::Buf::<44>::new();
+    push_address(&mut safe, f.safe());
+
+    let mut valid_from = fmt::Buf::<32>::new();
+    valid_from.push_utc(f.valid_from());
+    let mut valid_to = fmt::Buf::<32>::new();
+    valid_to.push_utc(f.valid_to());
+
+    let mut network = fmt::Buf::<112>::new();
+    network.push_amount(f.chain_id(), 0);
+
+    let mut nonce = fmt::Buf::<68>::new();
+    push_hash(&mut nonce, f.nonce());
+    let mut policy = fmt::Buf::<68>::new();
+    push_hash(&mut policy, f.policy_hash());
+    let mut data_hash = fmt::Buf::<68>::new();
+    push_hash(&mut data_hash, f.data_hash());
+
+    // The binding, read from the signed txHash: pinned to one Safe transaction, or
+    // field-matched against any transaction that fits.
+    let mut pinned = fmt::Buf::<68>::new();
+    if f.tx_hash() == &[0u8; 32] {
+        pinned.push_str("NOT PINNED - any matching transfer");
+    } else {
+        push_hash(&mut pinned, f.tx_hash());
+    }
+
+    // The tail every class shows; only the three value pages differ.
+    let tail = [
+        Field { name: "Valid from", value: valid_from.as_str() },
+        Field { name: "Valid to", value: valid_to.as_str() },
+        Field { name: "Safe", value: safe.as_str() },
+        Field { name: "Network", value: network.as_str() },
+        Field { name: "Policy", value: policy.as_str() },
+        Field { name: "Binding", value: pinned.as_str() },
+    ];
+    let transfer = [
+        Field { name: "Leaf", value: leaf_text.as_str() },
+        Field { name: "Token", value: token.as_str() },
+        Field { name: "Amount", value: amount.as_str() },
+        Field { name: "Recipient", value: recipient.as_str() },
+    ];
+    let payload = [
+        Field { name: "Leaf", value: leaf_text.as_str() },
+        Field { name: "Target", value: target.as_str() },
+        Field { name: "Value", value: value.as_str() },
+        Field { name: "Data hash", value: data_hash.as_str() },
+    ];
+    let mut fields: [Field; 10] = [
+        Field { name: "", value: "" },
+        Field { name: "", value: "" },
+        Field { name: "", value: "" },
+        Field { name: "", value: "" },
+        Field { name: "", value: "" },
+        Field { name: "", value: "" },
+        Field { name: "", value: "" },
+        Field { name: "", value: "" },
+        Field { name: "", value: "" },
+        Field { name: "", value: "" },
+    ];
+    let head = if f.approval_class() == 0 { &transfer } else { &payload };
+    for (slot, field) in fields.iter_mut().zip(head.iter().chain(tail.iter())) {
+        *slot = Field { name: field.name, value: field.value };
+    }
+
+    let heading = match f.approval_class() {
+        0 => "Sign approval",
+        1 => "Sign payload",
+        _ => "ADMIN ACTION",
+    };
+    MultiFieldReview::new(
+        &fields,
+        &[heading, leaf_text.as_str()],
+        Some(&APP_ICON),
+        "Approve",
+        Some(&CHECKMARK),
+        "Reject",
+        Some(&CROSSMARK),
+    )
+    .show()
 }
 
 // ── Command handlers ─────────────────────────────────────────────────────────
 
+#[allow(static_mut_refs)]
 fn handle(comm: &mut Comm, ins: Ins) -> Result<(), Reply> {
+    // "All commands are rejected while another signing session is in flight"
+    // (ledger-xmss-app.md): a half-streamed payload is such a session.
+    if unsafe { STREAMING } {
+        if !matches!(ins, Ins::SignPreApproval { .. }) {
+            return Err(Reply(SW_BUSY));
+        }
+    }
+
     match ins {
         Ins::GetAppConfig => {
             // flags ‖ version ‖ MAX_KEYS ‖ free slots ‖ treeHeight ‖ parameterSet
-            comm.append(&[0x00, VERSION[0], VERSION[1], VERSION[2], MAX_KEYS, 0, TREE_HEIGHT]);
+            comm.append(&[
+                0x00,
+                VERSION[0],
+                VERSION[1],
+                VERSION[2],
+                MAX_KEYS,
+                0,
+                xmss::HEIGHT as u8,
+            ]);
             comm.append(&parameter_set());
             Ok(())
         }
-        Ins::GetAdminAddress => {
-            comm.append(&admin_address());
+        Ins::GetAdminAddress { display } => {
+            let address = admin_address();
+            if display {
+                review_address(&address);
+            }
+            comm.append(&address);
             Ok(())
         }
         Ins::GetLeafIndex => {
             comm.append(&next_leaf().to_be_bytes());
             Ok(())
         }
-        // Both need the XMSS key material; not in this build yet (README.md).
-        Ins::GetXmssRoot | Ins::SignPreApproval { .. } | Ins::GetSignatureChunk { .. } => {
-            Err(Reply(SW_NOT_IMPLEMENTED))
+        Ins::GetXmssRoot => {
+            SingleMessage::new("Reading key...").show();
+            let key = xmss_key();
+            let root = xmss::public_root(&key);
+            comm.append(&root);
+            comm.append(&key.seed);
+            comm.append(&[xmss::HEIGHT as u8]);
+            comm.append(&parameter_set());
+            Ok(())
+        }
+        Ins::SignPreApproval { chunk } => sign_pre_approval(comm, chunk),
+        Ins::GetSignatureChunk { index } => {
+            // Nothing to fetch until an approval has produced a blob.
+            if !unsafe { BLOB_READY } {
+                return Err(StatusWords::CmdNotAccepted.into());
+            }
+            let start = index as usize * CHUNK;
+            if start >= BLOB_LEN {
+                return Err(StatusWords::BadP1P2.into());
+            }
+            let end = core::cmp::min(start + CHUNK, BLOB_LEN);
+            comm.append(unsafe { &BLOB[start..end] });
+            Ok(())
         }
     }
+}
+
+/// Accumulate the streamed fields; on the last chunk, run the whole ceremony:
+/// parse, refuse anything malformed before a single screen, show every field, and
+/// only then commit the counter and release both halves.
+#[allow(static_mut_refs)]
+fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
+    // Copied out of the APDU buffer: the reply is written into the same buffer.
+    let mut data = [0u8; 255];
+    let len = {
+        let received = comm.get_data()?;
+        if received.len() > data.len() {
+            return Err(StatusWords::BadLen.into());
+        }
+        data[..received.len()].copy_from_slice(received);
+        received.len()
+    };
+    let data = &data[..len];
+
+    unsafe {
+        if chunk == P1_FIRST {
+            PAYLOAD_LEN = 0;
+            BLOB_READY = false;
+        } else if !STREAMING {
+            // A continuation with nothing to continue.
+            return Err(StatusWords::CmdNotAccepted.into());
+        }
+        if PAYLOAD_LEN + data.len() > eip712::PAYLOAD_LEN {
+            STREAMING = false;
+            return Err(StatusWords::BadLen.into());
+        }
+        PAYLOAD[PAYLOAD_LEN..PAYLOAD_LEN + data.len()].copy_from_slice(data);
+        PAYLOAD_LEN += data.len();
+        STREAMING = chunk != P1_LAST;
+    }
+    if chunk != P1_LAST {
+        return Ok(());
+    }
+
+    // ── The last chunk: everything below happens before any screen ──
+    if unsafe { PAYLOAD_LEN } != eip712::PAYLOAD_LEN {
+        return Err(StatusWords::BadLen.into());
+    }
+    let leaf = next_leaf();
+    if leaf >= total_leaves() {
+        return Err(Reply(SW_EXHAUSTED));
+    }
+    let payload = unsafe { &PAYLOAD };
+    let fields = eip712::Fields::new(payload);
+    if fields.approval_class() > 2 || fields.valid_from() > fields.valid_to() {
+        // "Payload rejected — field out of range", "Clock window invalid": there is
+        // no "review anyway" path.
+        return Err(Reply(SW_BAD_FIELDS));
+    }
+    let digest = eip712::digest(&fields, leaf);
+
+    if !review_pre_approval(&fields, leaf) {
+        return Err(StatusWords::UserCancelled.into());
+    }
+
+    // Counter first, durably, then the signatures — never the other way round.
+    consume_leaf(leaf);
+    SingleMessage::new("Signing...").show();
+
+    let ecdsa = sign_ecdsa(&digest).ok_or::<Reply>(StatusWords::Unknown.into())?;
+    let key = xmss_key();
+    unsafe {
+        BLOB[..65].copy_from_slice(&ecdsa);
+        xmss::sign(&key, leaf, &digest, &mut BLOB[65..]);
+        BLOB_READY = true;
+    }
+
+    comm.append(&leaf.to_be_bytes());
+    comm.append(&digest);
+    comm.append(&(BLOB_LEN as u16).to_be_bytes());
+    Ok(())
 }
 
 // ── Home screen ──────────────────────────────────────────────────────────────
@@ -191,11 +551,10 @@ const fn parse_u8(s: &str) -> u8 {
     v
 }
 
-/// The Ethereum app's home idiom: "<app> is ready", the version, and Quit, with a
-/// FermionGuard-specific page for the odometer — the leaf count the Administrator
-/// is meant to recognize (`ledger-xmss-app.md`: "the leaf index is always visible").
+/// The Ethereum app's home idiom: "<app> is ready", the version, and Quit, plus a
+/// FermionGuard page for the odometer — the leaf count the Administrator is meant
+/// to recognize (`ledger-xmss-app.md`: "the leaf index is always visible").
 fn home(comm: &mut Comm) -> Ins {
-    const APP_ICON: Glyph = Glyph::from_include(include_gif!("icons/app_fermionguard_14x14.gif"));
     let mut leaves = fmt::Buf::<24>::new();
     leaves.push_u32_grouped(next_leaf());
     leaves.push_str(" of ");
