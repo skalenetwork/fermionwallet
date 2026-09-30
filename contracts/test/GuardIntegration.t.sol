@@ -1783,12 +1783,27 @@ contract GuardIntegrationTest is Test {
         assertFalse(guard.supportsInterface(0xffffffff));
         assertFalse(guard.supportsInterface(type(IERC20).interfaceId));
 
+        // Each construction goes through `this.deployGuard`, an external call, and NOT a
+        // bare `new`. `vm.expectRevert` does not swallow a revert raised inside a CREATE
+        // frame the way it swallows one from a CALL: a reverting `new` bubbles straight
+        // out of the test function, Foundry matches the pending expectation against the
+        // test's own revert and reports PASS — so every statement after the first
+        // expectRevert/`new` pair is dead code. Written as three bare `new`s, only the
+        // zero-address rejection below ever ran.
         vm.expectRevert(QuantumKeyRegistry.ZeroAddress.selector);
-        new FermionGuard(address(0), 2 days, 14 days, 4, 8);
+        this.deployGuard(address(0), 2 days, 14 days, 4, 8);
         vm.expectRevert(QuantumKeyRegistry.InvalidKeyParams.selector);
-        new FermionGuard(makeAddr("noCode"), 2 days, 14 days, 4, 8);
+        this.deployGuard(makeAddr("noCode"), 2 days, 14 days, 4, 8);
         vm.expectRevert(bytes("EMERGENCY_TIMELOCK must exceed ADMIN_TIMELOCK"));
-        new FermionGuard(address(msco), 2 days, 2 days, 4, 8);
+        this.deployGuard(address(msco), 2 days, 2 days, 4, 8);
+    }
+
+    /// `external` on purpose: see the comment above. Only ever called as `this.…`.
+    function deployGuard(address msco_, uint64 adminTimelock, uint64 emergencyTimelock, uint32 legs, uint32 queue)
+        external
+        returns (FermionGuard)
+    {
+        return new FermionGuard(msco_, adminTimelock, emergencyTimelock, legs, queue);
     }
 
     /// Residual risk documented in threat-model.md §2.1: once an emergency revocation
