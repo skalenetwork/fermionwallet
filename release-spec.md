@@ -310,7 +310,8 @@ State of the repository at the time of writing, against the artifacts in §2:
 | A8 Docs and site | Published |
 | A10 Demo container | Built, smoke-tested and pushed by `.github/workflows/release.yml` on every `v*` tag |
 | A11 Safe{Wallet} demo | UI image and Compose bundle built, browser-tested (`demo/wallet/e2e`) and published by the same workflow |
-| `SECURITY.md`, `CHANGELOG.md` | Not yet created |
+| `SECURITY.md` | Written: scope, private reporting through GitHub, and the known weaknesses stated up front. The response-time commitment §10 asks for is not in it yet |
+| `CHANGELOG.md` | Not yet created |
 
 No stage in §4 has been entered. The first release target is **Testnet beta**.
 
