@@ -147,7 +147,7 @@ async function executeFromQueue(page) {
     if ((await balanceOf(RECIPIENT)) !== 0n) fail('the unapproved transfer moved funds');
     step('blocked by the Guard, nothing paid');
 
-    step('approve it in the FermionGuard Safe App, signing on the Ledger');
+    step('approve it in the FermionGuard Safe App, signing on the simulated Ledger');
     await page.goto(`${WALLET}/apps/open?safe=fwdemo:${SAFE}&appUrl=${encodeURIComponent(APP)}`, { waitUntil: 'networkidle' });
     const app = page.frameLocator('iframe').first();
     const row = app.locator(`[data-row="${queued.safeTxHash}"]`);
@@ -173,7 +173,8 @@ async function executeFromQueue(page) {
     const widget = devicePage.locator('body > div').first();
     await devicePage.locator('#next:not([disabled])').waitFor({ timeout: 30000 });
     await page.bringToFront();
-    const deviceCaption = 'The Quantum Administrator reads every field on the device itself.';
+    const deviceCaption =
+      'The Quantum Administrator reads every field on the device — a simulated Ledger.';
     await cap(page, 'device', 900, deviceCaption, widget);
     for (let i = 0; await devicePage.locator('#next:not([disabled])').count(); i++) {
       if (i > 12) fail('the device never reached its last screen');
@@ -189,7 +190,7 @@ async function executeFromQueue(page) {
     await page.waitForTimeout(1200);
     await cap(page, 'approved', 2400, 'Pre-approval recorded on-chain, pinned to this exact Safe transaction.');
     await devicePage.close();
-    step('approved on the Ledger; the Guard holds a pre-approval pinned to this Safe tx');
+    step('approved on the simulated Ledger; the Guard holds a pre-approval pinned to this Safe tx');
 
     step('execute from Safe{Wallet}: it must go through');
     execute = await executeFromQueue(page);

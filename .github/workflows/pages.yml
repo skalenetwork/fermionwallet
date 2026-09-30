@@ -32,7 +32,8 @@ jobs:
         run: |
           mkdir -p _site/assets _site/app
           cp site/index.html _site/
-          cp assets/fermionguard-logo.svg assets/fermionguard-icon.svg assets/og-image.png _site/assets/
+          cp assets/fermionguard-logo.svg assets/fermionguard-icon.svg assets/og-image.png \
+             assets/fermionguard-demo.gif _site/assets/
           cp -r assets/ui _site/assets/
           # Custom Safe App (manifest.json + UI + icon) at /app/
           cp app/index.html app/manifest.json _site/app/

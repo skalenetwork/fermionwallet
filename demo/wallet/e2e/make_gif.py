@@ -119,7 +119,7 @@ def main():
     title = card(W, height, [
         ("FermionGuard", "Bold", 64, FG),
         ("A second, post-quantum authorization on every transfer", "SemiBold", 27, MUTED),
-        ("Recorded live in the real Safe{Wallet}. Nothing here is mocked.", "Regular", 22, ACCENT),
+        ("Recorded live in the real Safe{Wallet}. The Ledger is simulated.", "Regular", 22, ACCENT),
     ])
     end = card(W, height, [
         ("Keep the wallets you already trust.", "Bold", 40, FG),

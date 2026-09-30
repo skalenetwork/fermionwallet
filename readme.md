@@ -9,10 +9,10 @@
 <p align="center"><a href="https://skalenetwork.github.io/fermionwallet/"><b>🌐 skalenetwork.github.io/fermionwallet</b></a> — product site</p>
 
 <p align="center">
-  <a href="./demo/wallet/README.md"><img src="./assets/fermionguard-demo.gif" alt="A 250,000 dUSD transfer is fully signed in Safe{Wallet} and still fails; the Quantum Administrator approves it on a Ledger with a one-time XMSS signature; the same transfer then executes" width="900"/></a>
+  <a href="./demo/wallet/README.md"><img src="./assets/fermionguard-demo.gif" alt="A 250,000 dUSD transfer is fully signed in Safe{Wallet} and still fails; the Quantum Administrator approves it on a simulated Ledger with a one-time XMSS signature; the same transfer then executes" width="900"/></a>
 </p>
 
-<p align="center"><i>Not a mockup. An owner signs a 250,000 dUSD transfer in the <b>real Safe{Wallet}</b> — and it still will not execute. The Quantum Administrator reads every field on the device and approves it with a one-time post-quantum signature. Only then does the money move.<br/>Recorded end to end against the local stack by <a href="./demo/wallet/e2e/record.js"><code>demo/wallet/e2e/record.js</code></a>.</i></p>
+<p align="center"><i>Not a mockup: a real Safe in the <b>real Safe{Wallet}</b>, on a real chain, with the Guard enforcing on-chain. An owner signs a 250,000 dUSD transfer — and it still will not execute. The Quantum Administrator reads every field on the device and approves it with a one-time post-quantum signature. Only then does the money move.<br/>The device is the <b>simulated</b> Ledger: the hardware app is specified, not built yet. Recorded end to end against the local stack by <a href="./demo/wallet/e2e/record.js"><code>demo/wallet/e2e/record.js</code></a>, which asserts the transfer pays nothing before the approval and exactly 250,000 dUSD after it.</i></p>
 
 > **Official Safe App URL:** `https://skalenetwork.github.io/fermionwallet/app/`
 >

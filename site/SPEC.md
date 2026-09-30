@@ -67,6 +67,7 @@ Each claim on the page and its source. Update this table when a claim is added o
 | Exportable audit log; printable ceremony record | [ui-help.md](../ui-help.md#audit-log-and-export) |
 | Author credentials | [readme.md](../readme.md) |
 | Status of each component | [release-spec.md §11](../release-spec.md#11-current-readiness) |
+| The demo: a signed transfer is blocked, then executes after a quantum approval | A recorded run of [demo/wallet](../demo/wallet/README.md); `demo/wallet/e2e/record.js` asserts both outcomes |
 
 The 48-hour and 14-day values are the user guide's defaults; the release spec lists the final values as an open decision. If they change, update the page.
 
@@ -79,17 +80,18 @@ Sections appear in this order. Each has one job.
 | 1 | Navigation (sticky) | — | Wayfinding; always-visible primary CTA |
 | 2 | Hero | `#top` | State audience, outcome and main objection-killers; primary + secondary CTA; product screenshot |
 | 3 | Trust bar | — | Standards and building blocks at a glance |
-| 4 | Why now | — | Explain why a multisig alone isn't enough |
-| 5 | How it works | `#how` | Two signatures, the five-step flow, approval and Ledger screens |
-| 6 | Setup | — | Remove the migration objection: four steps, ~30 minutes |
-| 7 | Who it's for | — | Let each segment recognise itself |
-| 8 | Security | `#security` | Show it can't be bypassed and can't lock funds |
-| 9 | For your engineers | — | Evidence for evaluators: gas, tests, code |
-| 10 | Status | `#status` | Honest readiness |
-| 11 | Author | — | Team credibility |
-| 12 | FAQ | `#faq` | Answer objections that block a request |
-| 13 | Early access | `#early-access` | Final CTA and what happens after requesting |
-| 14 | Footer | — | Links to docs, reference, security; audit disclaimer |
+| 4 | See it work | `#demo` | Show the product running before explaining it: the recorded end-to-end demo |
+| 5 | Why now | — | Explain why a multisig alone isn't enough |
+| 6 | How it works | `#how` | Two signatures, the five-step flow, approval and Ledger screens |
+| 7 | Setup | — | Remove the migration objection: four steps, ~30 minutes |
+| 8 | Who it's for | — | Let each segment recognise itself |
+| 9 | Security | `#security` | Show it can't be bypassed and can't lock funds |
+| 10 | For your engineers | — | Evidence for evaluators: gas, tests, code |
+| 11 | Status | `#status` | Honest readiness |
+| 12 | Author | — | Team credibility |
+| 13 | FAQ | `#faq` | Answer objections that block a request |
+| 14 | Early access | `#early-access` | Final CTA and what happens after requesting |
+| 15 | Footer | — | Links to docs, reference, security; audit disclaimer |
 
 ### 5.1 Hero requirements
 
@@ -97,7 +99,16 @@ Sections appear in this order. Each has one job.
 - The headline names the outcome ("quantum-safe second signature") and the product it attaches to (Safe).
 - The reassurance points must remain true: no migration, open source (MIT / LGPL-3.0), NIST SP 800-208 signatures.
 
-### 5.2 FAQ requirements
+### 5.2 Demo requirements
+
+- The recording is a real run of the demo stack, produced by `demo/wallet/e2e/record.js` and
+  `demo/wallet/e2e/make_gif.py`. Nothing on this section may be drawn, staged or re-enacted.
+- It is shown at its recorded width (900px) or narrower, never scaled up: the narration is
+  rendered into the frames and stops being readable above that.
+- The caption says the Ledger is simulated, for as long as the hardware app is unbuilt, and
+  must not contradict the status section, which lists the Ledger app as in development.
+
+### 5.3 FAQ requirements
 
 The FAQ must answer at least: whether assets move; what happens if the Ledger is lost; operational slowdown; gas cost; supported Safe versions; why XMSS; production readiness. Answers are two to three sentences and follow the claims register.
 
@@ -124,6 +135,7 @@ The FAQ must answer at least: whether assets move; what happens if the Ledger is
 ### 6.4 Images
 
 - Product screenshots come from `assets/ui/` and must match the current design of the Safe App and Ledger app.
+- The one exception is `assets/fermionguard-demo.gif`, which is not a drawing but a recording of a real run; it is regenerated, not edited.
 - Every image has descriptive `alt` text; decorative images use `alt=""`.
 
 ## 7. Technical requirements

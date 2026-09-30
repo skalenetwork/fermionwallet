@@ -158,6 +158,12 @@ h2 { font-size: clamp(30px, 4.5vw, 46px); font-weight: 800; letter-spacing: -0.0
 
 .shot { border-radius: 16px; overflow: hidden; border: 1px solid var(--border); box-shadow: var(--shadow); background: #0c1626; }
 .caption { font-size: 14px; color: var(--text-muted); margin-top: 10px; text-align: center; }
+/* The demo recording: its captions are baked in at 900px, so never scale it up,
+   and keep it centred with room for the narration line under it. */
+.demo-shot { margin-top: 48px; }
+.demo-shot a { display: block; }
+.demo-shot .shot { display: block; width: 100%; max-width: 900px; height: auto; margin: 0 auto; }
+.demo-shot .caption { max-width: 760px; margin-left: auto; margin-right: auto; }
 
 /* ---------- cards ---------- */
 .grid3 { display: grid; gap: 20px; margin-top: 48px; grid-template-columns: 1fr; }
@@ -320,6 +326,19 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
     <span><b>Open source</b> · MIT / LGPL-3.0</span>
   </div>
 </div>
+
+<!-- ============ DEMO ============ -->
+<section id="demo">
+  <div class="wrap center">
+    <div class="eyebrow">See it work</div>
+    <h2>A 250,000 dUSD transfer,<br>fully signed — and still blocked</h2>
+    <p class="lead">An owner signs the transfer in the real Safe{Wallet}. It will not execute. The Quantum Administrator reads every field on the device and approves it with a one-time post-quantum signature. Only then does the money move.</p>
+  </div>
+  <div class="wrap demo-shot">
+    <a href="assets/fermionguard-demo.gif" aria-label="Open the recording at full size"><img class="shot" src="assets/fermionguard-demo.gif" alt="A 250,000 dUSD transfer is fully signed in Safe{Wallet} and still fails; the Quantum Administrator approves it on a simulated Ledger with a one-time XMSS signature; the same transfer then executes" width="900" height="751" loading="lazy"></a>
+    <p class="caption">Recorded end to end against the local demo stack — a real Safe, the real Safe{Wallet} and the Guard enforcing on-chain. The device is the <b>simulated</b> Ledger: the hardware app is specified, not built yet.<br><a href="assets/fermionguard-demo.gif">Open it full size</a>&nbsp;· <a href="https://github.com/skalenetwork/fermionwallet/tree/main/demo/wallet">Run it yourself →</a></p>
+  </div>
+</section>
 
 <!-- ============ PROBLEM ============ -->
 <section>
