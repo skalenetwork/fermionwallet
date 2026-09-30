@@ -336,7 +336,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
   </div>
   <div class="wrap demo-shot">
     <a href="assets/fermionguard-demo.gif" aria-label="Open the recording at full size"><img class="shot" src="assets/fermionguard-demo.gif" alt="A 250,000 dUSD transfer is fully signed in Safe{Wallet} and still fails; the Quantum Administrator approves it on a simulated Ledger with a one-time XMSS signature; the same transfer then executes" width="900" height="751" loading="lazy"></a>
-    <p class="caption">Recorded end to end against the local demo stack — a real Safe, the real Safe{Wallet} and the Guard enforcing on-chain. The device is the <b>simulated</b> Ledger: the hardware app is specified, not built yet.<br><a href="assets/fermionguard-demo.gif">Open it full size</a>&nbsp;· <a href="https://github.com/skalenetwork/fermionwallet/tree/main/demo/wallet">Run it yourself →</a></p>
+    <p class="caption">Recorded end to end against the local demo stack — a real Safe, the real Safe{Wallet} and the Guard enforcing on-chain. The device is the <b>simulated</b> Ledger, not hardware — see <a href="#status">Status</a> for where the Ledger app stands.<br><a href="assets/fermionguard-demo.gif">Open it full size</a>&nbsp;· <a href="https://github.com/skalenetwork/fermionwallet/tree/main/demo/wallet">Run it yourself →</a></p>
   </div>
 </section>
 
@@ -658,7 +658,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       </details>
       <details>
         <summary>What does it cost in gas?</summary>
-        <p>Verifying the post-quantum signature costs about 745,000 gas, paid once when an approval is created (744,906 gas measured at h = 20). The check when the transaction executes is a lookup.</p>
+        <p>Verifying the post-quantum signature costs about 745,000 gas, paid once when an approval is created (745,003 gas measured at h = 20). The check when the transaction executes is a lookup.</p>
       </details>
       <details>
         <summary>Which Safes are supported?</summary>

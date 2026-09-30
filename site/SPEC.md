@@ -55,7 +55,7 @@ Each claim on the page and its source. Update this table when a claim is added o
 | Installs as a Safe Guard; owners, threshold and history unchanged | [ui-help.md](../ui-help.md#adding-the-guard-to-an-existing-safe) |
 | Four setup steps, about 30 minutes | [ui-help.md](../ui-help.md#adding-the-guard-to-an-existing-safe) |
 | XMSS, RFC 8391, NIST SP 800-208 | [fermionguard-module.md](../fermionguard-module.md) |
-| 744,906 gas per verification at h = 20 | [contracts/README.md](../contracts/README.md#measured-gas) |
+| 745,003 gas per verification at h = 20 | [contracts/README.md](../contracts/README.md#measured-gas) |
 | About 1M approvals per key (2^20 leaves) | [fermionguard-module.md](../fermionguard-module.md) |
 | Tested at h = 4, 10, 20 against an independent reference | [contracts/README.md](../contracts/README.md) |
 | 48-hour admin timelock; the owners (threshold) can revoke it; any single owner can revoke transfer/payload approvals | [ui-help.md](../ui-help.md#administrative-approvals-and-the-timelock) |

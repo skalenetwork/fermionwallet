@@ -114,7 +114,7 @@ The second authorization is produced by a designated **Quantum Administrator** h
 | State management (critical) | Each signature consumes one leaf index. **Index reuse is catastrophic** (forgery becomes possible), so the contract tracks used indices in an OpenZeppelin `BitMaps` bitmap keyed by `(xmssRoot, leafIndex)` — by the key itself, not by the registration, so that two Safes sharing one physical key share one bitmap — and reverts on reuse [GRD-009]. The Ledger app commits its leaf counter before releasing any signature [GRD-010] |
 | Classical hybrid half (on-chain) | OpenZeppelin `SignatureChecker` + `EIP712` — the pre-approval is valid only if **both** the XMSS and the classical signature verify [GRD-011] |
 | Key lifecycle | Registered as a single XMSS root (`xmssRoot`) in the registry via the co-signed one-shot `registerQuantumKey`. When leaf indices near exhaustion, the Administrator rotates to a new root via `rotateQuantumKey` (owner co-signatures, the Ledger's attestation of the new key, and an XMSS possession proof by the old key, per the access-control rules) |
-| Off-chain signing | The FermionGuard XMSS Ledger app — the only signer; the add-on service holds no keys (the demo simulates the device with the RFC 8391 reference code in `contracts/py/`). Never `crypto.createHmac` labeled as quantum-safe [GRD-012] |
+| Off-chain signing | The FermionGuard XMSS Ledger app — the only signer; the add-on service holds no keys (the demo simulates the device with the RFC 8391 reference code in `contracts/lib/xmss-solidity/py/`). Never `crypto.createHmac` labeled as quantum-safe [GRD-012] |
 
 ### Existing open-source Solidity code for XMSS
 
