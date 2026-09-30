@@ -328,13 +328,21 @@ def apply_nonce_order(rows, now):
     previous = None
     for row in rows:
         row["conflictsWithAbove"] = previous is not None and previous["nonce"] == row["nonce"]
+        # Two different "ahead of this row" sets, and they are not the same set.
+        # For the gate: the earlier nonces nobody has approved yet — the ones the
+        # Administrator still has work to do on.
         earlier = [n for n in open_nonces if n < row["nonce"]]
         row["earlierUnapprovedNonces"] = earlier
-        # Estimated time for the queue ahead of this row to clear, and the validity
-        # window to suggest for it: that estimate, plus a slot for this transaction
-        # itself, plus the policy margin.
-        row["aheadSeconds"] = (len(earlier) * PER_NONCE_SECONDS
-                               + (POLICY_MARGIN_SECONDS if earlier else 0))
+        # For the estimate: every earlier nonce still in the queue, approved or not. An
+        # approved transaction that nobody has executed holds this row up exactly as
+        # firmly as an unapproved one, and the specification says the suggestion is the
+        # estimated time for all earlier queued nonces to clear.
+        ahead = sorted({r["nonce"] for r in rows if r["nonce"] < row["nonce"]})
+        row["queuedAheadNonces"] = ahead
+        # That estimate, and the window to suggest: the estimate plus a slot for this
+        # transaction itself plus the policy margin.
+        row["aheadSeconds"] = (len(ahead) * PER_NONCE_SECONDS
+                               + (POLICY_MARGIN_SECONDS if ahead else 0))
         row["suggestedSeconds"] = min(
             MAX_VALIDITY, row["aheadSeconds"] + PER_NONCE_SECONDS + POLICY_MARGIN_SECONDS)
         if row["status"] != "needs_approval":
@@ -751,7 +759,10 @@ def create_approval(host, safe, payload):
     if row is None:
         raise ApiError("That transaction is not in this Safe's pending queue.")
     if row["authorize"] is None:
-        raise ApiError(row.get("reason") or "This transaction cannot be approved from this app.")
+        live = row["approval"] and row["approval"]["status"] in ("active", "scheduled")
+        raise ApiError(
+            "This transaction already has a live pre-approval." if live else
+            (row.get("reason") or "This transaction cannot be approved from this app."))
     if row["authorize"] == "override":
         earlier = row["earlierUnapprovedNonces"]
         if override != row["nonce"]:

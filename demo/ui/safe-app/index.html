@@ -517,7 +517,7 @@ function renderQueue(q) {
     let risk = '';
     if (t.windowRisk && a && !keepWaiting.has(a.id)) {
       const r = t.windowRisk;
-      risk = '<div class="risk" role="status">Nonce ' + nonceList(t.earlierUnapprovedNonces) +
+      risk = '<div class="risk">Nonce ' + nonceList(t.queuedAheadNonces) +
         ' still pending, estimated about ' + dur(r.aheadSeconds) + ' to clear; your window ends in ' +
         dur(r.remainingSeconds) + '. This approval will likely expire unexecuted, and one-time ' +
         'signature #' + r.leaf + ' is spent either way.' +
@@ -595,10 +595,10 @@ function windowSelect(id, chosen) {
 // margin. Say what it is built from, because the operator is being asked to accept it.
 function windowAdvice(t, chosen) {
   const suggestion = suggestedWindow(t);
-  const ahead = t.earlierUnapprovedNonces.length;
+  const ahead = t.queuedAheadNonces.length;
   const basis = ahead
     ? 'Suggested: ' + WINDOWS.find(([s]) => s === suggestion)[1] + ' — ' + ahead +
-      ' earlier queued nonce' + (ahead > 1 ? 's' : '') + ' (' + nonceList(t.earlierUnapprovedNonces) +
+      ' earlier queued nonce' + (ahead > 1 ? 's' : '') + ' (' + nonceList(t.queuedAheadNonces) +
       ') must clear first, estimated at about ' + dur(t.aheadSeconds) + ', plus the policy margin.'
     : 'Suggested: ' + WINDOWS.find(([s]) => s === suggestion)[1] +
       ' — nothing is queued ahead of this transaction, so this is one execution slot plus the policy margin.';
