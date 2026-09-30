@@ -9,7 +9,8 @@ import {RegistrySpec} from "./RegistrySpec.sol";
 
 /// A Safe that answers every authorization question with "yes": owner-threshold
 /// signatures and ownership are abstracted, so the proofs are about the registry's
-/// state machine given that authorization succeeded (see README.md in this folder).
+/// state machine given that authorization succeeded (see "Security notes" in
+/// `contracts/README.md` for the full list of assumptions and the Halmos command).
 contract PermissiveSafe {
     function checkSignatures(bytes32, bytes calldata, bytes memory) external pure {}
     function isOwner(address) external pure returns (bool) {

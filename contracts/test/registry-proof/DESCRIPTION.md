@@ -25,14 +25,15 @@ invariant.
 ## What `RegistrySpec` says about itself
 
 > QuantumKeyRegistry — executable specification of the key state machine The rules of
-> `quantum-key-registry.md` written as plain code: one Active key per Safe, sticky
-> enrollment, one-shot roots, a per-Safe ceremony nonce consumed by every owner-signed
-> action, and an emergency revocation behind a time lock that only the Safe can cancel
-> and that a rotation supersedes. `RegistryEquivalence.t.sol` proves
+> `quantum-key-registry.md` written as plain code: at most one Active key per Safe,
+> sticky enrollment, one-shot roots, a per-Safe ceremony nonce consumed by every owner-
+> signed action, and an emergency revocation behind a time lock that only the Safe can
+> cancel and that a rotation supersedes. `RegistryEquivalence.t.sol` proves
 > `QuantumKeyRegistry` makes exactly these state transitions, for all inputs, with
 > Halmos. Scope: the state machine. Authorization (owner-threshold signatures, the
-> Ledger attestation) and XMSS verification are abstracted — see the "Assumptions"
-> section of README.md in this folder.
+> Ledger attestation) and XMSS verification are abstracted — by the `PermissiveSafe` and
+> `PermissiveSigner` stubs at the top of `RegistryEquivalence.t.sol`, and under
+> "Security notes" in `contracts/README.md`, which also gives the Halmos command.
 
 ## The state of one Safe
 
