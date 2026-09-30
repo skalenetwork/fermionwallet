@@ -132,6 +132,15 @@ def check(root, verbose=False):
                         continue
                     problems.append(f"{rel}:{line}: link to {file_part!r} — no such file")
                     continue
+                # Exists here and nowhere else: the link is broken for everyone but the
+                # person who wrote it, and CI is the first to find out.
+                here = os.path.relpath(dest, root)
+                if here not in tracked and os.path.isfile(dest) and here not in RUNTIME_PATHS:
+                    problems.append(
+                        f"{rel}:{line}: link to {file_part!r} — the file exists in this working tree "
+                        "but is not committed, so the link is broken for everyone else"
+                    )
+                    continue
             resolved += 1
 
             if anchor and dest.endswith(".md"):
