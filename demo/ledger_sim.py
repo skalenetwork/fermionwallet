@@ -46,6 +46,7 @@ HEIGHT = 4  # demo XMSS key: 16 one-time leaves
 SLOT = 1
 IDLE_TIMEOUT_S = 60  # this long idle on the decision screen = reject
 SESSION_CAP_S = 600  # an abandoned session on a field screen rejects after this long
+MIN_WINDOW_S = 15 * 60  # PreApprovalEngine.MIN_WINDOW; the device refuses anything shorter
 
 sys.path.insert(0, os.path.join(CONTRACTS, "lib", "xmss-solidity", "py"))
 import sign_digest  # noqa: E402  (deterministic demo XMSS key, RFC 8391 reference code)
@@ -228,6 +229,15 @@ def check_payload(p, domain):
         raise ValueError("Payload rejected — the demo device signs transfer approvals only")
     if nums["validTo"] <= nums["validFrom"]:
         raise ValueError("Clock window invalid")
+    if nums["validTo"] - nums["validFrom"] < MIN_WINDOW_S:
+        # The real device refuses this before drawing a screen, because the Guard's
+        # PreApprovalEngine.MIN_WINDOW would reject the approval on-chain afterwards —
+        # so signing it would spend a one-time leaf on something that can never be used.
+        # A simulator that signs what the device refuses is not a simulator.
+        raise ValueError(
+            f"Clock window too short — the Guard requires at least {MIN_WINDOW_S // 60} minutes, "
+            "and a shorter one would spend a one-time signature on an approval the chain will refuse."
+        )
     return chain_id, domain["verifyingContract"]
 
 
