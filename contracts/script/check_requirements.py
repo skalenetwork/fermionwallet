@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Cross-reference FermionGuard's English specifications with its checks.
+"""Cross-reference this repository's English specifications with its checks.
 
-Three specification documents carry stable requirement IDs:
+Four specification documents carry stable requirement IDs:
 
     quantum-key-registry.md   [QKR-###]
     fermionguard-module.md    [GRD-###]
     pre-approval-engine.md    [ENG-###]
+    fermionwallet.md          [FWL-###]   (the second product, FermionWallet)
 
 Each document tags its normative sentences inline and ends with a "Requirement
 index" table, one row per ID:
@@ -48,10 +49,11 @@ DOCS = {
     "GRD": REPO / "fermionguard-module.md",
     "ENG": REPO / "pre-approval-engine.md",
     "QKR": REPO / "quantum-key-registry.md",
+    "FWL": REPO / "fermionwallet.md",
 }
 
 # `[a-z]?` suffix: [QKR-009a] is a real ID (a security fix refining [QKR-009]).
-ID = r"(?:GRD|ENG|QKR)-[0-9]{3}[a-z]?"
+ID = r"(?:GRD|ENG|QKR|FWL)-[0-9]{3}[a-z]?"
 ID_RE = re.compile(rf"\[({ID})\]")
 # A definition: one row of a "Requirement index" table.
 ROW_RE = re.compile(rf"^\|\s*({ID})\s*\|\s*(.*?)\s*\|\s*$")
@@ -147,7 +149,7 @@ def main() -> int:
             print(f"  {e}")
         return 1
 
-    print("FermionGuard requirement traceability")
+    print("FermionGuard / FermionWallet requirement traceability")
     print("=" * 72)
 
     total_defined = 0
