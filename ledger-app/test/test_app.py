@@ -257,10 +257,16 @@ def main():
         check("a rejection reports itself as one", res.get("status") == "rejected", str(res))
         check("a rejection consumes no leaf", device.next_leaf() == leaf, str(device.next_leaf()))
 
-        # Exhaustion: spend the rest of the tiny key, then it must refuse. Every
-        # signature on the way is recovered, because the low-`s` normalisation only
-        # runs for the roughly half of nonces that land in the upper half.
-        recovered = True
+        # Exhaustion: spend the rest of the tiny key, then it must refuse.
+        #
+        # Every signature on the way is checked, both halves, not just the first
+        # one: `xmss::sign` walks a different authentication path at every leaf, so
+        # an off-by-one in the path or in an ADRS word would produce a signature the
+        # Guard refuses at some indices and not others — and the leaf is spent either
+        # way. The ECDSA half matters per signature too, because the low-`s`
+        # normalisation only runs for the roughly half of nonces above the halfway
+        # point.
+        bad_ecdsa, bad_xmss = [], []
         for _ in range(device.next_leaf(), 16):
             presser = decide(transport, "approve")
             got = device.sign_preapproval(FIELDS, CHAIN_ID, GUARD, timeout=120)
@@ -271,9 +277,19 @@ def main():
             ok = subprocess.run(
                 ["cast", "wallet", "verify", "--address", admin, "--no-hash", got["digest"],
                  got["ecdsaSignature"]], capture_output=True)
-            recovered = recovered and ok.returncode == 0
-        check("every signature's ECDSA half recovers to quantumAdmin", recovered,
-              "one of them did not — suspect the high-s normalisation")
+            if ok.returncode != 0:
+                bad_ecdsa.append(got["leaf"])
+            blob = bytes.fromhex(got["xmssSignature"][2:])
+            sig_r = blob[0:32]
+            sig_wots = [blob[32 + 32 * i:64 + 32 * i] for i in range(67)]
+            sig_auth = [blob[32 + 32 * 67 + 32 * i:64 + 32 * 67 + 32 * i] for i in range(4)]
+            if not xmss_ref.verify(bytes.fromhex(got["digest"][2:]), got["leaf"], sig_r,
+                                   sig_wots, sig_auth, root, seed):
+                bad_xmss.append(got["leaf"])
+        check("every signature's ECDSA half recovers to quantumAdmin", not bad_ecdsa,
+              f"failed at leaves {bad_ecdsa} — suspect the high-s normalisation")
+        check("every leaf's XMSS half verifies, not just the first",
+              not bad_xmss, f"failed at leaves {bad_xmss} — suspect the auth path or ADRS")
         check("the counter reaches the end of the tree", device.next_leaf() == 16,
               str(device.next_leaf()))
         try:
