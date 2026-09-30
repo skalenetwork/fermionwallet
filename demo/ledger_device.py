@@ -62,6 +62,7 @@ SW_OK = 0x9000
 SW_DENIED = 0x6985  # the human pressed Reject, or the decision screen timed out
 SW_BUSY = 0x6986  # another signing session is in flight
 SW_EXHAUSTED = 0x6A84  # no one-time leaves left on this key
+SW_BAD_FIELDS = 0x6A80  # a field the device refuses to sign, or cannot show honestly
 SW_WRONG_BINDING = 0x6A81  # this key slot belongs to another contract (fermionwallet.md, FWL-023)
 SW_BAD_INS = 0x6E01  # the app's dispatcher does not know this instruction number
 
@@ -77,6 +78,11 @@ def _sw_message(sw):
         SW_DENIED: "Rejected on the Ledger. Nothing was signed and no leaf was used.",
         SW_BUSY: "The Ledger is already showing a signing request — finish it on the device first.",
         SW_EXHAUSTED: "The key has no one-time signatures left. Rotate it on the device.",
+        SW_BAD_FIELDS: (
+            "The Ledger refused a field before showing anything: it is out of range, the "
+            "validity window is empty or inverted, or a date is so far out that the device "
+            "will not draw it. Nothing was signed and no leaf was used."
+        ),
         SW_WRONG_BINDING: (
             "This Ledger key already belongs to a different contract, and one key signs for "
             "exactly one. Use another key slot, or the contract it is bound to."
