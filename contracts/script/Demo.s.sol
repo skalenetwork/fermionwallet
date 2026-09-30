@@ -106,7 +106,13 @@ contract Demo is Script {
         );
         safe = Safe(payable(SafeProxyFactory(factory).createProxyWithNonce(singleton, initializer, 0xFE47)));
 
-        // Demo-friendly timelocks: ADMIN 60 s, emergency de-guard 120 s.
+        // Demo-friendly timelocks: ADMIN 60 s, emergency de-guard 120 s — so that a
+        // demo can show an administrative approval maturing without anyone waiting two
+        // days. DELIBERATELY NON-CONFORMING: eips/ERCS/erc-draft-hybrid-pre-approvals.md
+        // [PA-41] floors ADMIN_TIMELOCK at 24 hours, because the delay is the window in
+        // which a watcher can notice a malicious governance approval and act, and a
+        // 60-second window is no window at all. `script/Deploy.s.sol` is the deployment
+        // to copy: 2 days and 14 days. Do not copy these numbers.
         guard = new FermionGuard(msco, 60, 120, 4, 8);
 
         token.mint(address(safe), 1_000_000 ether);
