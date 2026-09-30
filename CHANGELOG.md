@@ -69,7 +69,6 @@ follow [semantic versioning](https://semver.org/spec/v2.0.0.html) once there is 
   the "this transaction will most likely fail" warning after a fixed sleep, and its
   *approved* branch asserted the warning was absent — so "the gas estimate has not
   arrived" was indistinguishable from "no warning".
-
 - **The Safe App tells an operator what happened.** The Guard's reverts are decoded with
   a meaning and a remedy instead of "Flow failed — see log"; expiry, an exhausted key, a
   paused Safe and a hash mismatch are all distinct states with words; a permanently
@@ -89,10 +88,11 @@ follow [semantic versioning](https://semver.org/spec/v2.0.0.html) once there is 
 - The Ledger app specification is now a dialect of Ledger's own Ethereum app — CLA, INS
   numbering, P1/P2 conventions, status words, screen idioms — with every borrowed claim
   cited to its primary source, and the deliberate deviations tabled with reasons.
-- **Halmos is pinned to z3 wherever it runs.** Its bundled default does not terminate on
-  some queries here, which with assertion timeouts disabled is indistinguishable from a
-  proof in progress: one lemma was abandoned as diverging after fifty-five minutes and
-  passes in 0.43 seconds under z3. A run that hangs rather than fails is no result and no
+- **Halmos runs under z3.** Every proof command in the READMEs and the XMSS library's CI
+  now names `--solver z3`; a repository-wide `halmos.toml` is still to come. Its bundled
+  default does not terminate on some queries here, which with assertion timeouts disabled
+  is indistinguishable from a proof in progress: one lemma was abandoned as diverging
+  after fifty-five minutes and passes in 0.43 seconds under z3. A run that hangs rather than fails is no result and no
   signal, and a solver that gives up reads exactly like "no counterexample found" — which
   reads as a mutation the proof missed.
 - The threat model's mitigations were re-checked against the contracts rather than against
