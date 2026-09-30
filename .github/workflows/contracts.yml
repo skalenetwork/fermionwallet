@@ -54,6 +54,13 @@ jobs:
         working-directory: contracts
         run: python3 script/check_requirements.py
 
+      - name: The EIP drafts still describe the contracts they claim to
+        # eips/ERCS/*.md are the specifications restated as standards. Every error, event,
+        # EIP-712 type string, interface signature and quoted constant in them must exist in
+        # the Solidity, byte for byte — otherwise a draft promises an interface nobody can
+        # call. Also checks the EIP-1 preamble and section rules the editors' linter enforces.
+        run: python3 eips/check_eips.py
+
       - name: The registry binds the key's tree height when verifying
         working-directory: contracts
         run: |
