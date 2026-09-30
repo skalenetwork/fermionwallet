@@ -2,6 +2,8 @@
 
 A user guide to the FermionGuard Safe App for the three roles that use it: **Safe owners**, the **Quantum Administrator**, and **treasury operators**. Screens shown are design mockups from the UI specification in [fermionguard-add-on-service.md](./fermionguard-add-on-service.md).
 
+> **What exists today is a small part of what this guide describes.** The app that ships in the demo has a transaction queue, an approvals list and a read-only key panel. Denying a transfer, the key ceremony wizard, the audit log and its exports, batch review, risk flags, the replaced-transaction diff and the tamper screen are **specified and drawn here, not built**. This document is the specification the product is being written against, and it is deliberately ahead of it; where a section describes something that does not exist yet, that is why. `readme.md`'s Status section tracks what is real.
+
 ## Contents
 
 - [What you're looking at](#what-youre-looking-at)
