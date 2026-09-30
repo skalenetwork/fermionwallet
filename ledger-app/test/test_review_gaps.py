@@ -43,6 +43,11 @@ windows are the only control" — this turns the control off while displaying it
 The wallet flow is the caller that matters, but `valid_from`/`valid_to` on the Safe
 review go through the same function.
 
+What that is worth to a host: the holder cannot tell a transfer that expired unrelayed
+from one still live, so once the displayed date has passed they sign a replacement —
+and both are relayable. The amount goes out twice. It is not a window problem, it is a
+double spend of the thing the window was supposed to bound.
+
 ## C. Not shown here: nothing in either suite pins the counter-before-signature order
 
 Speculos keeps NVM in RAM, so no host-side test can see whether the commit landed
@@ -65,7 +70,7 @@ sys.path.insert(0, os.path.join(REPO, "demo"))
 
 import test_app as base  # noqa: E402  (the shared harness: check, decide, cast)
 from test_app import CHAIN_ID, FIELDS, GUARD, SEED, check, decide  # noqa: E402
-from test_wallet import TRANSFER, WALLET, sign_transfer  # noqa: E402
+from test_wallet import TRANSFER, WALLET, sign_transfer, transfer_digest  # noqa: E402
 
 ELF = os.path.join(REPO, "ledger-app", "build", "nanos2", "bin", "app.elf")
 
@@ -152,6 +157,11 @@ def finding_a(emu):
         check("A0: a fresh slot reports itself unbound on the home screen",
               any("not used yet" in p for p in before), str(before))
 
+        # Walking the carousel left the menu somewhere in the middle, and any APDU
+        # rebuilds it at page 0. Without this, `decide` can read a home page that
+        # test_app.HOME_PAGES does not list, take it for a review, and give up.
+        device.next_leaf()
+
         screens = []
         walker = decide(device.tr, "approve", screens)
         signed = device.sign_preapproval(FIELDS, CHAIN_ID, ATTACKER_GUARD, timeout=90)
@@ -202,8 +212,12 @@ def finding_b(emu):
             pages = [" ".join(p) for p in screens if "UTC" in " ".join(p)]
             check(f"B0 ({label}): the review carries a Valid-until page", bool(pages), str(screens))
             rendered[label] = pages[0] if pages else None
-            check(f"B1 ({label}): and the device signed the value it was sent, not the one it drew",
-                  result.get("digest") is not None, str(result))
+            # The digest covers the `validUntil` that was *sent*, whatever the screen
+            # drew — recomputed with `cast` from the spec's own type string.
+            want = transfer_digest(WALLET, fields, result["leaf"])
+            check(f"B1 ({label}): the digest covers the validUntil sent, not the one drawn",
+                  result["digest"].lower() == want.lower(),
+                  f"device {result['digest']} vs cast {want}")
 
         check("B2: a validUntil of year 4,294,969,322 renders exactly like one in 2026",
               rendered["honest"] is not None and rendered["honest"] == rendered["forever"],
