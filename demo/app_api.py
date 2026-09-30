@@ -246,10 +246,12 @@ def approvals(host, safe):
 # Safe transaction, which the Guard blocks for exactly the same reason. Saying "just
 # reject it" would be wrong: on a guarded Safe that does not work.
 STUCK_NONCE = (
-    " Until it is cleared it holds every higher nonce behind it, and Safe{Wallet}'s on-chain "
-    "rejection cannot clear it: that rejection is itself an ordinary Safe transaction, which the "
-    "Guard blocks without a pre-approval of its own. Clearing this nonce needs a pre-approval of a "
-    "class this app does not sign yet."
+    " Until this nonce is cleared it holds every higher one behind it, and Safe{Wallet}'s on-chain "
+    "rejection will not clear it: that rejection is itself an ordinary Safe transaction, which the "
+    "Guard blocks for want of a pre-approval of its own. What does work is replacing it: create a "
+    "new transaction in Safe{Wallet} at this same nonce, as an ordinary ERC-20 transfer (a dust "
+    "amount to an address you control will do), approve that one here, and execute it. It takes "
+    "this nonce and the queue moves on."
 )
 
 
@@ -336,10 +338,20 @@ def queue(host, safe):
                              "One of them is wrong, and the fields shown here may not be the ones "
                              "the owners signed. Do not approve it and do not execute it: tell the "
                              "other owners and settle which is right away from this screen.")
+        elif int(row["gasPrice"]) != 0:
+            # checkTransaction step 0, before the escape hatch: a gas refund is refused
+            # for every transaction, escape calls included.
+            row["status"] = "blocked"
+            row["reason"] = ("The Guard refuses any transaction that pays a gas refund, always — it "
+                             "is the first thing it checks, before anything else about this Safe. "
+                             "Re-create this transaction in Safe{Wallet} with a zero gas price."
+                             + STUCK_NONCE)
         elif row["kind"] == "guard_escape":
-            # Never blocked by the Guard, whatever else is true of this Safe.
+            # The owners' safety calls, which the Guard may never block on account of any
+            # Safe state: no pre-approval, no enrollment, and not even a pause.
             row["status"] = "free"
-            row["reason"] = "The Guard always lets this through: it needs owner signatures only."
+            row["reason"] = ("The Guard always lets this through, whatever the state of this Safe: "
+                             "it needs owner signatures only.")
         elif not protected:
             row["status"] = "free"
             row["reason"] = ("This Safe is not protected by the FermionGuard, so its transactions "
@@ -359,10 +371,6 @@ def queue(host, safe):
             row["reason"] = (f"The Guard refuses {row['method']}() for every Safe, always: an allowance "
                              "lets funds move later with no second authorization. No approval can make "
                              "this execute." + STUCK_NONCE)
-        elif int(row["gasPrice"]) != 0:
-            row["status"] = "blocked"
-            row["reason"] = ("The Guard refuses any transaction that pays a gas refund, always. "
-                             "Re-create this payment in Safe{Wallet} with a zero gas price." + STUCK_NONCE)
         elif row["kind"] == "delegatecall":
             row["status"] = "blocked"
             row["reason"] = ("The Guard refuses delegate calls, always. No approval can make this "
@@ -371,9 +379,9 @@ def queue(host, safe):
             row["status"] = "unsupported"
             row["reason"] = (
                 "Safe{Wallet}'s on-chain rejection is an ordinary Safe transaction, so the Guard "
-                "requires a quantum pre-approval for it as well — and this version of the app "
-                "signs only ERC-20 transfers. It cannot execute, and neither can the transaction "
-                "it was meant to cancel.")
+                "requires a quantum pre-approval for it as well — and this version of the app signs "
+                "only ERC-20 transfers, so it will not clear the transaction it was meant to cancel."
+                + STUCK_NONCE)
         elif row["kind"] != "transfer":
             row["status"] = "unsupported"
             row["reason"] = ("This version of the app signs single ERC-20 transfers only, and the "

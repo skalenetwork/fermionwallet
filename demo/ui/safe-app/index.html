@@ -84,7 +84,7 @@
   .banner .dismiss { float:right; margin-left:12px; background:none; border:0; color:inherit;
                      font:600 13px system-ui,sans-serif; cursor:pointer; }
   /* The default focus ring is a dark hairline, invisible on this dark surface. */
-  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:6px; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   [hidden] { display:none !important; }
 </style>
 </head>
@@ -129,7 +129,10 @@
     </nav>
 
     <div id="view-queue" role="tabpanel" aria-labelledby="tab-queue" tabindex="0">
-      <div class="list" id="queue" aria-live="polite"><div class="empty">Loading the queue…</div></div>
+      <!-- Deliberately not a live region: the whole list is rebuilt every 4 seconds, and a
+           screen reader would read the entire queue out again on every poll. The small
+           per-row messages carry role="status" instead. -->
+      <div class="list" id="queue"><div class="empty">Loading the queue…</div></div>
     </div>
     <div id="view-approvals" role="tabpanel" aria-labelledby="tab-approvals" tabindex="0" hidden>
       <div id="approvals"></div>
@@ -183,6 +186,9 @@ const busy = new Map();    // safeTxHash -> {cls, text}
 const api = (what, opts) => fetch('/api/v1/safes/' + safe + '/' + what, opts).then(r => r.json());
 
 function banner(text, bad) {
+  // role="status" makes this a live region, and renderStatus runs every 4 seconds: writing
+  // the same string again is still a mutation, and a screen reader would read it out again.
+  if ($('banner').textContent === text) return;
   $('banner').textContent = text;
   $('banner').className = 'banner' + (bad ? ' bad' : '');
   $('banner').hidden = !text;
@@ -192,6 +198,8 @@ function banner(text, bad) {
 // describes the Safe's state and is rewritten on every 4-second poll, which used to wipe
 // "Revocation created…" a second or two after it appeared.
 function notice(text) {
+  if ($('notice').dataset.text === (text || '')) return;
+  $('notice').dataset.text = text || '';
   $('notice').innerHTML = text
     ? '<button class="dismiss" data-dismiss="1" aria-label="Dismiss this message">Dismiss</button>' + esc(text)
     : '';
@@ -232,6 +240,9 @@ function renderStatus(s) {
   if (!s.isContract) {
     p.className = 'pill bad'; p.textContent = 'Not a Safe on this chain';
     banner('No contract at ' + s.safe + ' on chain ' + s.chainId + '.', true);
+    // Nothing will ever load the queue for this address, so don't leave "Loading…" up.
+    $('queue').innerHTML = '<div class="empty">There is no Safe at this address on this chain, ' +
+      'so there is no queue to show.</div>';
     return;
   }
   const k = s.key;
@@ -473,10 +484,11 @@ async function revoke(id) {
     // believes is in force, sitting behind the payment, is the worst outcome here.
     notice('A revocation has been created in Safe{Wallet}. It needs no quantum approval, but it is '
       + 'an ordinary Safe transaction, so Safe{Wallet} gives it the next free nonce and it takes '
-      + 'effect only when it executes — after every transaction already queued ahead of it, '
-      + 'including the one it revokes. To stop that payment now, execute the revocation first by '
-      + 'rejecting or executing the earlier nonces, or have the Quantum Administrator or any owner '
-      + 'call revokePreApproval on the Guard directly from their own address.');
+      + 'effect only once it executes — after every transaction already queued ahead of it, '
+      + 'including the very one it revokes. It does not stop that payment. To stop it now, from '
+      + 'their own wallet and with no Safe transaction at all, any owner or the Quantum '
+      + 'Administrator can call revokePreApproval on the Guard, and any owner can call pauseSafe, '
+      + 'which blocks everything until the owner threshold unpauses.');
   } catch (e) {
     // closed or rejected in Safe{Wallet}: nothing to do
   }
