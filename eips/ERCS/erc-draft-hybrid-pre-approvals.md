@@ -475,9 +475,11 @@ irremovable without falling back to the slow key-independent path. `[PA-36]`, `[
 that delivers them belongs to the account implementation. In the reference deployment the hook
 is a Safe transaction guard and module guard at one address, so [PA-48] is served by
 recomputing `getTransactionHash` from the guard's own arguments, [PA-49] by refusing
-`delegatecall` to anything but a pinned `MultiSendCallOnly`, [PA-50] by refusing non-zero
-`gasPrice`/`gasToken`/`refundReceiver`, and [PA-51] by reading the Safe's fallback-handler and
-module storage at enrollment and refusing to enrol an account that has either. A different
+`delegatecall` to anything but a pinned `MultiSendCallOnly`, [PA-50] by refusing a non-zero
+`gasPrice` — which is the single check that suffices there, because Safe evaluates its refund
+only under `if (gasPrice > 0)`, so `gasToken`, `refundReceiver` and `baseGas` become unreachable
+— and [PA-51] by reading the Safe's fallback-handler and module storage at enrollment and
+refusing to enrol an account that has either. A different
 account implementation will satisfy the same clauses through entirely different reads, which is
 why naming Safe's would have bound implementers to one account family. The classification of
 [PA-47] is likewise a property, not a taxonomy; the taxonomy that satisfies it in the reference
