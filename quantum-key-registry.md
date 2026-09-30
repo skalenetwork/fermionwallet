@@ -36,7 +36,7 @@ A key becomes **the quantum approval key** for a Safe in a single on-chain trans
 3. **Activate.** The Administrator submits `registerQuantumKey(safe, quantumAdmin, root, xmssSeed, treeHeight, parameterSet, validUntil, ledgerAttestation, ownerSigs)` — `quantumAdmin` is the Administrator's Ledger EOA, stored as the classical verifier address for every hybrid pre-approval. The contract verifies the owner threshold via the Safe's legacy `checkSignatures(bytes32 dataHash, bytes data, bytes signatures)` entry point (with the EIP-712 message itself as `data` — see below), verifies the attestation is signed by `quantumAdmin`, consumes the Safe's `registryNonce`, and sets the key **`Active`**. [QKR-005] Registration is refused if the Safe already has an Active key (`SafeAlreadyEnrolled` — a replacement key goes through rotation), if this Safe registered the same root before (`RootAlreadyRegistered`), if `validUntil` has passed, or if the Safe has a fallback handler or unguarded enabled modules (the Guard's enrollment posture check). [QKR-006] The Guard initialises the Safe's selector permit-list to `{transfer}` only at the Safe's **first** registration; registering a new key after an emergency revocation keeps the permit-list the owners have governed into place. [QKR-007]
 
 Rules:
-- [QKR-008] exactly **one `Active` key per Safe** at any time
+- [QKR-008] **at most one `Active` key per Safe** at any time — never two. A Safe has zero before its first registration and again between an executed revocation and the fresh registration that follows (step 4 of the emergency path); every other moment it has exactly one, and the rotation switch is atomic
 - [QKR-009] XMSS root uniqueness is scoped **per Safe**: registering a root on another Safe is allowed (the device attests one key per Safe), but reusing the same root for the same Safe rejects
 - [QKR-009a] **leaf accounting is global per key, not per registration**: the used-leaf bitmap is keyed by the XMSS root, so a leaf spent under one Safe is spent under every Safe holding the same key. Keying it per registration would give each Safe a fresh bitmap for one physical key, and one one-time leaf could then sign two different digests — the condition that makes WOTS+ forgeable
 - [QKR-010] owner signatures are bound to the Guard contract (EIP-712 verifying contract), chain, Safe, `registryNonce`, and `validUntil` — stale or aborted ceremonies are provably unusable once the nonce advances
@@ -93,6 +93,14 @@ The old-key possession proof is impossible, so the path is Safe governance with 
 - [QKR-029] A stale revocation request can never destroy the successor key; it is bound to the key that was active when requested.
 - [QKR-030] Rotation never touches Safe ownership, the Guard, or funds — it is key-layer only.
 
+The state machine these invariants describe is also written as executable code in
+[`contracts/test/registry-proof/RegistrySpec.sol`](./contracts/test/registry-proof/RegistrySpec.sol),
+which `RegistryEquivalence.t.sol` proves `QuantumKeyRegistry` implements exactly.
+[`DESCRIPTION.md`](./contracts/test/registry-proof/DESCRIPTION.md) in that folder is
+that specification rendered back into English by `contracts/script/describe_spec.py`;
+where it and this section disagree, the specification and the proof win. It is
+generated, so regenerate it whenever the specification changes.
+
 ## Key states
 
 | Status | Meaning |
@@ -145,7 +153,7 @@ Every normative requirement in this document carries a stable `[QKR-nnn]` tag.
 | QKR-005 | Registration verifies the owner threshold and the attestation, consumes `registryNonce`, and sets the key Active. |
 | QKR-006 | Registration is refused for an existing Active key, a root this Safe used before, an elapsed `validUntil`, or a bad Safe posture. |
 | QKR-007 | The selector permit-list is initialised to `{transfer}` at the Safe's first registration only. |
-| QKR-008 | Exactly one Active key per Safe at any time. |
+| QKR-008 | At most one Active key per Safe at any time; zero before the first registration and between an executed revocation and the next registration. |
 | QKR-009 | Root uniqueness is per Safe: cross-Safe registration is allowed, same-Safe reuse rejects. |
 | QKR-009a | Leaf accounting is global per key: a leaf spent under one Safe is spent under every Safe holding that key. |
 | QKR-010 | Owner signatures are bound to the Guard contract, chain, Safe, `registryNonce` and `validUntil`. |

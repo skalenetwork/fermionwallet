@@ -41,12 +41,21 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
   consumption, reuse rejection, invalid-signature rollback, height binding,
   zero-key rejection (through the registry), plus the Guard and engine suites.
 - `test/LegacySafeSignatures.t.sol` — contract owners co-signing on Safe
-  v1.3.0, v1.4.1 and v1.5.0 (bytecode in `test/vectors/safe-v*`).
+  v1.3.0, v1.4.1 (creation bytecode in `test/vectors/safe-v*`) and v1.5.0
+  (compiled from the `lib/safe-smart-account` submodule).
 - `test/Deploy.t.sol` — `Deploy.s.sol` end to end: the same CREATE2 address
   on every target chain id (OP-stack ones included), idempotent re-runs,
   immutables read back, and rejection of bad parameters.
 - `test/properties/` — fuzz properties of the Guard and a stateful invariant
   test against a reference model.
+- `test/registry-proof/` — the key registry's state machine as an executable
+  specification (`RegistrySpec.sol`) plus `RegistryEquivalence.t.sol`, which
+  proves with Halmos that `QuantumKeyRegistry` makes exactly those transitions
+  for all inputs. `DESCRIPTION.md` there is the specification rendered in
+  English, generated from it by `script/describe_spec.py` — regenerate it
+  whenever the specification changes
+  (`python3 script/describe_spec.py --check test/registry-proof/DESCRIPTION.md`
+  fails when it is stale).
 - `test/ffi/sign_batch.py`, and `lib/xmss-solidity/py/sign_digest.py` — test-only
   helpers that the Foundry tests call through FFI to sign digests with the
   deterministic test XMSS key.
@@ -55,9 +64,11 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
 
 | Operation | Gas |
 |---|---|
-| `XMSS.verify` (h = 10) | 712,434 |
-| `XMSS.verify` (h = 20, **measured**) | **744,906** |
+| `XMSS.verify` (h = 10) | 712,531 |
+| `XMSS.verify` (h = 20, **measured**) | **745,003** |
 
+Measured with the pinned submodule (`xmss-solidity` v0.1.0) and its own Foundry
+profile: `cd lib/xmss-solidity && forge test --match-test test_gas_verify_h20 -vv`.
 Within the 0.4–1M target set in `../fermionguard-module.md`
 (asserted in the library's CI: `test_gas_verify_h20` fails above 1.1M).
 
@@ -69,8 +80,11 @@ Within the 0.4–1M target set in `../fermionguard-module.md`
 - `verify` rejects zero roots/seeds and tree heights outside 1..20.
 - The XMSS verifier is formally verified against RFC 8391 (functional
   correctness, SHA-256 abstracted); see `lib/xmss-solidity/PROOF.md` for
-  what is proven and assumed. The Guard, registry and engine are fuzz and
-  invariant tested, not formally verified.
+  what is proven and assumed. The registry's state machine is proven
+  equivalent to the executable specification in `test/registry-proof/` with
+  Halmos (authorization and XMSS verification abstracted). Beyond that, the
+  Guard, registry and engine are fuzz and invariant tested, not formally
+  verified.
 - Not audited yet; audit is an acceptance criterion before mainnet.
 
 ## Usage

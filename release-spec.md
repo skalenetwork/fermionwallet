@@ -115,7 +115,7 @@ A release may not advance to the next stage until every gate for that stage pass
 
 - [ ] `forge test` passes, including fuzz suites, with no skipped tests.
 - [ ] XMSS verifier passes the reference vectors at h = 4, 10, and 20 and the tamper/negative tests ([contracts/README](./contracts/README.md)).
-- [ ] Gas: `test_gas_verify_h20` passes (verification ≤ 1.1M gas; last measured 744,906).
+- [ ] Gas: `test_gas_verify_h20` passes (verification ≤ 1.1M gas; last measured 745,003).
 - [ ] Integration test against a real Safe (v1.3.0 and v1.4.1): a pre-approval pinned to the `safeTxHash` of nonce N executes at nonce N, and the Guard's `getTransactionHash(..., nonce() - 1)` recomputation matches ([Guard: Production constraints](./fermionguard-module.md#production-constraints)).
 - [ ] Malformed MultiSend fuzzing (truncated header, overrunning `dataLength`, trailing bytes, more than `MAX_BATCH_LEGS`) reverts cheaply.
 - [ ] A test proves `requestEmergencyDeGuard` succeeds while the Safe is paused (emergency allow runs before the pause check).
