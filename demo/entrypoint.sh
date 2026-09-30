@@ -28,10 +28,26 @@ rm -f demo-state/deployment.json
 case "${LEDGER_TRANSPORT:-simulator}" in
   usb|hid|ledger|speculos|emulator)
     echo "[demo] reading the public key from the Ledger ..."
-    if ! eval "$(python3 /app/demo/ledger_device.py key)"; then
+    # Speculos starts in parallel with this container and takes a few seconds to
+    # accept APDUs, so wait for it. The assignment is what carries python's exit
+    # status: `eval "$(...)"` would report eval's, so a device that never answered
+    # would leave the variables unset, register the reference key, and hand every
+    # approval to the Guard with the wrong root — the failure this exists to avoid.
+    KEY=""
+    i=0
+    while [ "$i" -lt 60 ]; do
+      if KEY="$(python3 /app/demo/ledger_device.py key 2>/dev/null)" && [ -n "$KEY" ]; then
+        break
+      fi
+      KEY=""
+      i=$((i + 1))
+      sleep 1
+    done
+    if [ -z "$KEY" ]; then
       echo "[demo] FATAL: no Ledger answered. Is the app open (USB) or Speculos running?"
       exit 1
     fi
+    eval "$KEY"
     export DEVICE_XMSS_ROOT DEVICE_XMSS_SEED
     echo "[demo] device key ${DEVICE_XMSS_ROOT} (admin ${DEVICE_ADMIN_ADDRESS})"
     ;;

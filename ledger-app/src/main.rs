@@ -22,9 +22,8 @@ mod fmt;
 mod wallet;
 mod xmss;
 
-use ledger_device_sdk::ecc::{
-    bip32_derive, make_bip32_path, CurvesId, ECPrivateKey, ECPublicKey, Secp256k1, SeedDerive,
-};
+use ledger_device_sdk::ecc::{make_bip32_path, ECPrivateKey, ECPublicKey, Secp256k1, SeedDerive};
+use ledger_device_sdk::random;
 use ledger_device_sdk::io::{ApduHeader, Comm, Event, Reply, StatusWords};
 use ledger_device_sdk::nvm::{AtomicStorage, SingleStorage};
 use ledger_device_sdk::ui::bitmaps::{Glyph, CHECKMARK, CROSSMARK, EYE};
@@ -41,10 +40,6 @@ ledger_device_sdk::set_panic!(ledger_device_sdk::exiting_panic);
 /// `QuantumKeyRegistry` pins this address as `quantumAdmin`, so the path is part of
 /// the app's identity and is declared in `[package.metadata.ledger] path`.
 const ADMIN_PATH: [u32; 5] = make_bip32_path(b"m/44'/60'/0'/0/4");
-
-/// Where the XMSS secrets come from. Under the same `44'/60'` prefix, because BOLOS
-/// enforces the app's declared derivation paths.
-const XMSS_PATH: [u32; 5] = make_bip32_path(b"m/44'/60'/1'/0/0");
 
 /// The parameter-set string the registry records for this key.
 const PARAMETER_SET_PREIMAGE: &[u8] = b"XMSS-SHA2_4_256-DEMO";
@@ -129,6 +124,7 @@ static mut PAYLOAD_LEN: usize = 0;
 static mut STREAMING: bool = false;
 static mut BLOB: [u8; BLOB_LEN] = [0; BLOB_LEN];
 static mut BLOB_READY: bool = false;
+static mut CHUNK_BUF: [u8; 255] = [0; 255];
 
 #[allow(static_mut_refs)]
 fn next_leaf() -> u32 {
@@ -162,15 +158,44 @@ fn admin_address() -> [u8; 20] {
     address
 }
 
+/// The XMSS secret material, in secure-element NVM: a flag byte and 32 bytes drawn
+/// from the device's hardware RNG the first time a key is needed.
+///
+/// It is deliberately **not** derived from the recovery phrase, and the difference
+/// from `admin_key()` two functions up is the whole point. The classical half is
+/// stateless, so deriving it from the phrase is safe and `ledger-xmss-app.md` item 4
+/// says to. A stateful key is the opposite: restore it onto a second device and that
+/// device's leaf counter starts from zero, so one one-time leaf signs two different
+/// digests — the condition that makes WOTS+ forgeable. `hardware-security-policy.md`
+/// therefore requires this seed to be generated inside the secure element and to be
+/// unrecoverable, and it never leaves here: nothing in the APDU surface reads it, and
+/// only the public root and SEED derived from it go on the wire.
+#[link_section = ".nvm_data"]
+static mut XMSS_SEED: NVMData<AtomicStorage<[u8; 33]>> = NVMData::new(AtomicStorage::new(&[0u8; 33]));
+
+/// Marks the stored seed as real material rather than the blank initial value.
+const SEED_PRESENT: u8 = 0xA5;
+
+/// The key of this slot, generating its seed on first use.
+///
+/// Generation is the one moment the device is irreplaceable, so it happens here and
+/// nowhere else: there is no command that imports, exports or resets it. A power loss
+/// during the commit leaves the previous value (atomic storage), so the app either has
+/// the old key or the new one, never half of either.
+#[allow(static_mut_refs)]
 fn xmss_key() -> xmss::Key {
-    let mut node = [0u8; 64];
-    // The syscall only fails on a curve/length mismatch, both fixed here.
-    bip32_derive(CurvesId::Secp256k1, &XMSS_PATH, &mut node, None).unwrap();
-    let mut seed_material = [0u8; 32];
-    seed_material.copy_from_slice(&node[..32]);
-    node.fill(0);
-    let key = xmss::derive(&seed_material);
-    seed_material.fill(0);
+    let mut stored = unsafe { *XMSS_SEED.get_mut().get_ref() };
+    if stored[0] != SEED_PRESENT {
+        SingleMessage::new("Creating key...").show();
+        stored[0] = SEED_PRESENT;
+        random::rand_bytes(&mut stored[1..33]);
+        unsafe { XMSS_SEED.get_mut().update(&stored) };
+    }
+    let mut material = [0u8; 32];
+    material.copy_from_slice(&stored[1..33]);
+    stored.fill(0);
+    let key = xmss::derive(&material);
+    material.fill(0);
     key
 }
 
@@ -253,6 +278,37 @@ fn sub(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
 
 const APP_ICON: Glyph = Glyph::from_include(include_gif!("icons/app_fermionguard_14x14.gif"));
 
+/// Every string a review displays is cut from this one static arena.
+///
+/// Not a style choice: a dozen field values as stack locals overflowed the Nano S
+/// Plus's stack and the app died with SIGSEGV part-way through a signing session —
+/// after the leaf counter had been committed, so the failure burned a one-time leaf.
+/// One reusable `Buf` plus this arena keeps the review's peak stack flat however many
+/// fields it grows to.
+static mut TEXT: [u8; 1024] = [0; 1024];
+static mut TEXT_USED: usize = 0;
+
+/// Start a new screen's worth of strings. Every `intern` after this overwrites the
+/// previous review's text, so no `&'static str` from an earlier review may be held.
+#[allow(static_mut_refs)]
+pub(crate) fn text_reset() {
+    unsafe { TEXT_USED = 0 }
+}
+
+/// Copy `s` into the arena and return a view that outlives the buffer it was built
+/// in. Text beyond the arena is dropped rather than overwriting a neighbour — and
+/// the arena is sized for every field of every flow, so that does not happen.
+#[allow(static_mut_refs)]
+pub(crate) fn intern(s: &str) -> &'static str {
+    unsafe {
+        let start = TEXT_USED;
+        let end = core::cmp::min(start + s.len(), TEXT.len());
+        TEXT[start..end].copy_from_slice(&s.as_bytes()[..end - start]);
+        TEXT_USED = end;
+        core::str::from_utf8(&TEXT[start..end]).unwrap_or("")
+    }
+}
+
 /// An address as EIP-55 checksummed hex, full length, never truncated.
 fn push_address<const M: usize>(buf: &mut fmt::Buf<M>, address: &[u8; 20]) {
     let mut lower = fmt::Buf::<40>::new();
@@ -270,9 +326,10 @@ fn push_hash<const M: usize>(buf: &mut fmt::Buf<M>, bytes: &[u8; 32]) {
 /// address on the screen with the one the host claims (`GET_ADMIN_ADDRESS` with the
 /// display flag set).
 fn review_address(address: &[u8; 20]) {
-    let mut text = fmt::Buf::<44>::new();
-    push_address(&mut text, address);
-    let fields = [Field { name: "Administrator", value: text.as_str() }];
+    text_reset();
+    let mut buf = fmt::Buf::<44>::new();
+    push_address(&mut buf, address);
+    let fields = [Field { name: "Administrator", value: intern(buf.as_str()) }];
     MultiFieldReview::new(
         &fields,
         &["Verify", "Administrator"],
@@ -291,72 +348,74 @@ fn review_address(address: &[u8; 20]) {
 /// Nothing on these pages comes from anywhere but the signed struct — a Safe nonce
 /// or a host label would promise a binding the Guard does not enforce.
 fn review_pre_approval(f: &eip712::Fields, leaf: u32) -> bool {
-    let mut leaf_text = fmt::Buf::<28>::new();
-    leaf_text.push_str("#");
-    leaf_text.push_u32_grouped(leaf);
-    leaf_text.push_str(" of ");
-    leaf_text.push_u32_grouped(total_leaves());
+    // One buffer, written and interned once per field, so the stack holds 128 bytes
+    // of text at a time instead of every field of the flow at once.
+    text_reset();
+    let mut buf = fmt::Buf::<128>::new();
 
-    let mut amount = fmt::Buf::<128>::new();
-    amount.push_amount(f.amount(), 0);
-    amount.push_str(" raw units");
-    let mut value = fmt::Buf::<128>::new();
-    value.push_amount(f.value(), 0);
-    value.push_str(" wei");
+    buf.push_str("#");
+    buf.push_u32_grouped(leaf);
+    buf.push_str(" of ");
+    buf.push_u32_grouped(total_leaves());
+    let leaf_text = intern(buf.as_str());
 
-    let mut token = fmt::Buf::<44>::new();
-    push_address(&mut token, f.token());
-    let mut recipient = fmt::Buf::<44>::new();
-    push_address(&mut recipient, f.recipient());
-    let mut target = fmt::Buf::<44>::new();
-    push_address(&mut target, f.target());
-    let mut safe = fmt::Buf::<44>::new();
-    push_address(&mut safe, f.safe());
+    buf.clear().push_amount(f.amount(), 0).push_str(" raw units");
+    let amount = intern(buf.as_str());
+    buf.clear().push_amount(f.value(), 0).push_str(" wei");
+    let value = intern(buf.as_str());
 
-    let mut valid_from = fmt::Buf::<32>::new();
-    valid_from.push_utc(f.valid_from());
-    let mut valid_to = fmt::Buf::<32>::new();
-    valid_to.push_utc(f.valid_to());
+    push_address(buf.clear(), f.token());
+    let token = intern(buf.as_str());
+    push_address(buf.clear(), f.recipient());
+    let recipient = intern(buf.as_str());
+    push_address(buf.clear(), f.target());
+    let target = intern(buf.as_str());
+    push_address(buf.clear(), f.safe());
+    let safe = intern(buf.as_str());
 
-    let mut network = fmt::Buf::<112>::new();
-    network.push_amount(f.chain_id(), 0);
+    buf.clear().push_utc(f.valid_from());
+    let valid_from = intern(buf.as_str());
+    buf.clear().push_utc(f.valid_to());
+    let valid_to = intern(buf.as_str());
 
-    let mut nonce = fmt::Buf::<68>::new();
-    push_hash(&mut nonce, f.nonce());
-    let mut policy = fmt::Buf::<68>::new();
-    push_hash(&mut policy, f.policy_hash());
-    let mut data_hash = fmt::Buf::<68>::new();
-    push_hash(&mut data_hash, f.data_hash());
+    buf.clear().push_amount(f.chain_id(), 0);
+    let network = intern(buf.as_str());
+
+    push_hash(buf.clear(), f.policy_hash());
+    let policy = intern(buf.as_str());
+    push_hash(buf.clear(), f.data_hash());
+    let data_hash = intern(buf.as_str());
 
     // The binding, read from the signed txHash: pinned to one Safe transaction, or
     // field-matched against any transaction that fits.
-    let mut pinned = fmt::Buf::<68>::new();
+    buf.clear();
     if f.tx_hash() == &[0u8; 32] {
-        pinned.push_str("NOT PINNED - any matching transfer");
+        buf.push_str("NOT PINNED - any matching transfer");
     } else {
-        push_hash(&mut pinned, f.tx_hash());
+        push_hash(&mut buf, f.tx_hash());
     }
+    let pinned = intern(buf.as_str());
 
     // The tail every class shows; only the three value pages differ.
     let tail = [
-        Field { name: "Valid from", value: valid_from.as_str() },
-        Field { name: "Valid to", value: valid_to.as_str() },
-        Field { name: "Safe", value: safe.as_str() },
-        Field { name: "Network", value: network.as_str() },
-        Field { name: "Policy", value: policy.as_str() },
-        Field { name: "Binding", value: pinned.as_str() },
+        Field { name: "Valid from", value: valid_from },
+        Field { name: "Valid to", value: valid_to },
+        Field { name: "Safe", value: safe },
+        Field { name: "Network", value: network },
+        Field { name: "Policy", value: policy },
+        Field { name: "Binding", value: pinned },
     ];
     let transfer = [
-        Field { name: "Leaf", value: leaf_text.as_str() },
-        Field { name: "Token", value: token.as_str() },
-        Field { name: "Amount", value: amount.as_str() },
-        Field { name: "Recipient", value: recipient.as_str() },
+        Field { name: "Leaf", value: leaf_text },
+        Field { name: "Token", value: token },
+        Field { name: "Amount", value: amount },
+        Field { name: "Recipient", value: recipient },
     ];
     let payload = [
-        Field { name: "Leaf", value: leaf_text.as_str() },
-        Field { name: "Target", value: target.as_str() },
-        Field { name: "Value", value: value.as_str() },
-        Field { name: "Data hash", value: data_hash.as_str() },
+        Field { name: "Leaf", value: leaf_text },
+        Field { name: "Target", value: target },
+        Field { name: "Value", value: value },
+        Field { name: "Data hash", value: data_hash },
     ];
     let mut fields: [Field; 10] = [
         Field { name: "", value: "" },
@@ -382,7 +441,7 @@ fn review_pre_approval(f: &eip712::Fields, leaf: u32) -> bool {
     };
     MultiFieldReview::new(
         &fields,
-        &[heading, leaf_text.as_str()],
+        &[heading, leaf_text],
         Some(&APP_ICON),
         "Approve",
         Some(&CHECKMARK),
@@ -511,17 +570,18 @@ fn review_and_digest(leaf: u32) -> Result<([u8; 32], u8, [u8; 32], [u8; 20]), Re
 /// only then commit the counter and release both halves.
 #[allow(static_mut_refs)]
 fn sign_pre_approval(comm: &mut Comm, chunk: u8) -> Result<(), Reply> {
-    // Copied out of the APDU buffer: the reply is written into the same buffer.
-    let mut data = [0u8; 255];
+    // Copied out of the APDU buffer, because the reply is written into the same
+    // buffer. Static, not a local: this frame is the deepest one in the app (it goes
+    // on to run the whole review), and the Nano's stack has no 255 bytes to spare.
     let len = {
         let received = comm.get_data()?;
-        if received.len() > data.len() {
+        if received.len() > unsafe { CHUNK_BUF.len() } {
             return Err(StatusWords::BadLen.into());
         }
-        data[..received.len()].copy_from_slice(received);
+        unsafe { CHUNK_BUF[..received.len()].copy_from_slice(received) };
         received.len()
     };
-    let data = &data[..len];
+    let data = unsafe { &CHUNK_BUF[..len] };
 
     unsafe {
         // `P1_LAST` with no session open is a payload that arrived whole: the wallet's

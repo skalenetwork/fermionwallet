@@ -105,12 +105,18 @@ listed here rather than stubbed, so nothing reads as done when it is not:
 
 - **One key slot, not four.** `GEN_XMSS_KEY`, `LIST_KEYS` and `RETIRE_KEY` are
   absent, and so is the key-generation flow (Flow 1) with its entropy notice.
-- **The XMSS seeds are derived from the device's recovery phrase**, not generated
-  from the secure element's TRNG and sealed in NVM. This contradicts item 2 of the
-  spec and the Flow 1 entropy notice: a key on this build *is* restorable from the
-  recovery phrase, so two devices with the same phrase would hold the same XMSS key
-  and could spend the same leaf twice. It is acceptable for the demo — where the
-  on-chain used-leaf bitmap is the backstop — and must not hold real funds.
+- **The XMSS key is generated on first use, not by an explicit ceremony.** The seed
+  itself is right: 32 bytes from the secure element's hardware RNG, written to NVM,
+  never derived from the recovery phrase and never exported, because a stateful key
+  restored onto a second device would sign one one-time leaf twice
+  (`hardware-security-policy.md`). What is missing is the ceremony around it —
+  Flow 1's entropy notice, the root review, the six ceremony words — so the first
+  `GET_XMSS_ROOT` silently creates a key instead of asking. There is no way to
+  retire or replace it either, since `RETIRE_KEY` is absent.
+- **A fresh emulator is a fresh key.** Speculos keeps NVM in memory, so restarting
+  it generates a new key and resets the counter; the demo therefore reads
+  `GET_XMSS_ROOT` at setup and registers whatever the device holds. On a real device
+  the key survives app updates, as BOLOS specifies.
 - **No `SIGN_ROTATION`, `SIGN_KEY_ATTESTATION` or `SIGN_DENIAL`** (Flows 3 and 4).
   The registration attestation the demo needs is produced off-device.
 - **Nano only.** Stax and Flex need the NBGL screen layer.

@@ -28,6 +28,14 @@ impl<const N: usize> Buf<N> {
         self.full
     }
 
+    /// Reuse the buffer for the next value. One `Buf` written many times keeps the
+    /// Nano's small stack from holding a dozen field strings at once.
+    pub fn clear(&mut self) -> &mut Self {
+        self.len = 0;
+        self.full = false;
+        self
+    }
+
     fn push(&mut self, b: u8) {
         if self.len < N {
             self.bytes[self.len] = b;

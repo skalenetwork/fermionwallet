@@ -55,6 +55,7 @@ FIELDS = {
 }
 
 failures = []
+KEEP = bool(os.environ.get('KEEP_SPECULOS'))
 
 
 def check(name, ok, detail=""):
@@ -100,9 +101,12 @@ class Speculos:
             return
         if not os.path.exists(ELF):
             sys.exit(f"no app at {ELF} — run ledger-app/build.sh first")
-        self.container = "fg-app-test-" + str(os.getpid())
+        # A fixed name, force-removed first: a container left by an interrupted run
+        # would otherwise hold the ports and the next run would die confusingly.
+        self.container = "fg-app-test"
+        subprocess.run(["docker", "rm", "-f", self.container], capture_output=True)
         subprocess.run(
-            ["docker", "run", "-d", "--rm", "--name", self.container,
+            ["docker", "run", "-d", "--name", self.container,
              "-v", os.path.dirname(ELF) + ":/app", "-p", "15001:5000", "-p", "19998:9999",
              "ghcr.io/ledgerhq/speculos:latest", "--model", "nanosp", "--display", "headless",
              "--api-port", "5000", "--apdu-port", "9999", "--seed", SEED, "/app/app.elf"],
@@ -110,8 +114,8 @@ class Speculos:
         os.environ["SPECULOS_APDU_URL"] = "tcp://127.0.0.1:19998"
         os.environ["SPECULOS_API_URL"] = "http://127.0.0.1:15001"
 
-    def stop(self):
-        if self.container:
+    def stop(self, keep_logs=False):
+        if self.container and not keep_logs:
             subprocess.run(["docker", "rm", "-f", self.container], capture_output=True)
 
     def wait(self, device):
@@ -124,19 +128,32 @@ class Speculos:
         sys.exit("the app never answered in Speculos")
 
 
+HOME_PAGES = ("is ready", "Leaves used", "Version", "Quit")
+
+
 def decide(transport, decision, seen=None):
     """Walk the review to the end and press Approve or Reject, like a human would.
 
     Runs in a thread because the device answers the last chunk only once the human
-    has decided — which is the behaviour being checked.
+    has decided — which is the behaviour being checked. It waits for the review to
+    appear and stops the moment it is gone: pressing both buttons on the home
+    screen's Quit page would close the app, which looks exactly like a firmware
+    crash in the next exchange.
     """
+    def home(text):
+        return not text or any(p in text for p in HOME_PAGES)
+
     def run():
-        pages = 0
-        while pages < 60:
+        deadline = time.time() + 120
+        while time.time() < deadline and home(" ".join(transport.screen())):
+            time.sleep(0.1)
+        while time.time() < deadline:
             lines = transport.screen()
+            text = " ".join(lines)
+            if home(text):
+                return
             if seen is not None:
                 seen.append(lines)
-            text = " ".join(lines)
             if decision == "approve" and "Approve" in text:
                 transport.press("both")
                 return
@@ -144,8 +161,8 @@ def decide(transport, decision, seen=None):
                 transport.press("both")
                 return
             transport.press("right")
-            pages += 1
             time.sleep(0.05)
+
     t = threading.Thread(target=run, daemon=True)
     t.start()
     return t
@@ -172,8 +189,9 @@ def main():
 
         leaf_before = device.next_leaf()
         screens = []
-        decide(transport, "approve", screens)
+        presser = decide(transport, "approve", screens)
         res = device.sign_preapproval(FIELDS, CHAIN_ID, GUARD, timeout=120)
+        presser.join(timeout=10)
         check("the device approved and returned both halves", res.get("status") == "approved",
               str(res))
         if res.get("status") != "approved":
@@ -225,18 +243,29 @@ def main():
 
         # A rejection must cost nothing.
         leaf = device.next_leaf()
-        decide(transport, "reject")
+        presser = decide(transport, "reject")
         res = device.sign_preapproval(FIELDS, CHAIN_ID, GUARD, timeout=120)
+        presser.join(timeout=10)
         check("a rejection reports itself as one", res.get("status") == "rejected", str(res))
         check("a rejection consumes no leaf", device.next_leaf() == leaf, str(device.next_leaf()))
 
-        # Exhaustion: spend the rest of the tiny key, then it must refuse.
+        # Exhaustion: spend the rest of the tiny key, then it must refuse. Every
+        # signature on the way is recovered, because the low-`s` normalisation only
+        # runs for the roughly half of nonces that land in the upper half.
+        recovered = True
         for _ in range(device.next_leaf(), 16):
-            decide(transport, "approve")
+            presser = decide(transport, "approve")
             got = device.sign_preapproval(FIELDS, CHAIN_ID, GUARD, timeout=120)
+            presser.join(timeout=10)
             if got.get("status") != "approved":
                 check("every remaining leaf signs", False, str(got))
                 break
+            ok = subprocess.run(
+                ["cast", "wallet", "verify", "--address", admin, "--no-hash", got["digest"],
+                 got["ecdsaSignature"]], capture_output=True)
+            recovered = recovered and ok.returncode == 0
+        check("every signature's ECDSA half recovers to quantumAdmin", recovered,
+              "one of them did not — suspect the high-s normalisation")
         check("the counter reaches the end of the tree", device.next_leaf() == 16,
               str(device.next_leaf()))
         try:
@@ -246,7 +275,7 @@ def main():
             check("an exhausted key refuses to sign", "no one-time signatures left" in str(e),
                   str(e))
     finally:
-        emu.stop()
+        emu.stop(keep_logs=bool(failures) or KEEP)
 
     print(f"\n{'FAILED: ' + ', '.join(failures) if failures else 'all checks passed'}")
     return 1 if failures else 0
