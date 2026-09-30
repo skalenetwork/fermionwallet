@@ -39,7 +39,7 @@ import {XMSS} from "xmss-solidity/XMSS.sol";
 //   S4  move `emit Transferred` after the token call (log-order claim untested).
 //
 // S2 and S3 survive for a Foundry reason worth knowing, demonstrated below in
-// `test_GAP_...ConstructorRejectionsThatTheSuiteNeverReaches`.
+// `test_GAP_everyConstructorRejectionThatTheSuiteNeverReaches`.
 //
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -132,8 +132,9 @@ contract FermionWalletReviewTest is Test {
     ///
     /// The discriminator is gas: the height check is one comparison, whereas the
     /// three-argument form runs the whole ~700k-gas climb before returning false.
-    /// Under the current source this refusal costs a few thousand gas; under the
-    /// three-argument mutant it costs about 750k.
+    /// Measured here: ~125k under the current source — almost all of it copying
+    /// and decoding the 2.4 KB blob, which no contract-side check avoids — against
+    /// ~770k under the three-argument mutant.
     function test_GAP_theHeightIsBoundByVerifyNotByTheSignatureLength() public {
         (bytes memory ecdsa, bytes memory xmss) = _sign(wallet, address(token), recipient, 1 ether, validUntil, 0);
         assertEq(xmss.length, 2304 + 32 * uint256(H));
