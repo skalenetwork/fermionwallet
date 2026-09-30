@@ -1,4 +1,4 @@
-# FermionWallet Product Site Specification
+# FermionGuard Product Site Specification
 
 Specification for the public product site at **https://skalenetwork.github.io/fermionwallet/**. It defines who the site is for, what it must make visitors do, what it may and may not claim, its structure, design rules, build and deployment, and the checks every change must pass.
 
@@ -54,16 +54,16 @@ Each claim on the page and its source. Update this table when a claim is added o
 |---|---|
 | Installs as a Safe Guard; owners, threshold and history unchanged | [ui-help.md](../ui-help.md#adding-the-guard-to-an-existing-safe) |
 | Four setup steps, about 30 minutes | [ui-help.md](../ui-help.md#adding-the-guard-to-an-existing-safe) |
-| XMSS, RFC 8391, NIST SP 800-208 | [fermionwallet-guard-module.md](../fermionwallet-guard-module.md) |
+| XMSS, RFC 8391, NIST SP 800-208 | [fermionguard-module.md](../fermionguard-module.md) |
 | 744,906 gas per verification at h = 20 | [contracts/README.md](../contracts/README.md#measured-gas) |
-| About 1M approvals per key (2^20 leaves) | [fermionwallet-guard-module.md](../fermionwallet-guard-module.md) |
+| About 1M approvals per key (2^20 leaves) | [fermionguard-module.md](../fermionguard-module.md) |
 | Tested at h = 4, 10, 20 against an independent reference | [contracts/README.md](../contracts/README.md) |
 | 48-hour admin timelock; the owners (threshold) can revoke it; any single owner can revoke transfer/payload approvals | [ui-help.md](../ui-help.md#administrative-approvals-and-the-timelock) |
 | 14-day owners-only emergency removal; owners can cancel with a Safe transaction | [ui-help.md](../ui-help.md#emergency-guard-removal-owners-only) |
 | One approval per batch of up to 100 transfers | [ui-help.md](../ui-help.md#approving-a-batch-multisend) |
-| `approve`, `permit`, `transferFrom` rejected | [fermionwallet-guard-module.md](../fermionwallet-guard-module.md#erc-20-selector-policy-allowance-exfiltration) |
+| `approve`, `permit`, `transferFrom` rejected | [fermionguard-module.md](../fermionguard-module.md#erc-20-selector-policy-allowance-exfiltration) |
 | Safe v1.3.0+; no modules, or module guard on 1.5+ | [ui-help.md](../ui-help.md#adding-the-guard-to-an-existing-safe) |
-| Lattice schemes cost tens of millions of gas on-chain | [fermionwallet-guard-module.md](../fermionwallet-guard-module.md) |
+| Lattice schemes cost tens of millions of gas on-chain | [fermionguard-module.md](../fermionguard-module.md) |
 | Exportable audit log; printable ceremony record | [ui-help.md](../ui-help.md#audit-log-and-export) |
 | Author credentials | [readme.md](../readme.md) |
 | Status of each component | [release-spec.md §11](../release-spec.md#11-current-readiness) |
@@ -130,7 +130,7 @@ The FAQ must answer at least: whether assets move; what happens if the Ledger is
 
 - A single static HTML file with inline CSS. No JavaScript, no build step, no framework.
 - External requests are limited to Google Fonts. No third-party scripts or trackers without an explicit decision (§10).
-- Asset paths are relative (`assets/...`) so the site works under the `/fermionwallet/` path.
+- Asset paths are relative (`assets/...`) so the site works under the `/fermionguard/` path.
 - Metadata: `<title>`, meta description, Open Graph title, description, URL and image, and a favicon.
 - Anchors used by navigation (`#how`, `#security`, `#faq`, `#early-access`) must exist. `scroll-padding-top` keeps anchored headings clear of the sticky nav.
 - Links to documentation point at `https://github.com/skalenetwork/fermionwallet/blob/main/<file>`.
@@ -144,7 +144,7 @@ The FAQ must answer at least: whether assets move; what happens if the Ledger is
 
 ## 8. Build and deployment
 
-- Source: `site/index.html` plus `assets/fermionwallet-logo.svg`, `assets/fermionwallet-icon.svg` (favicon, and the Safe App's `logo.svg`), `assets/og-image.png` and `assets/ui/`.
+- Source: `site/index.html` plus `assets/fermionguard-logo.svg`, `assets/fermionguard-icon.svg` (favicon, and the Safe App's `logo.svg`), `assets/og-image.png` and `assets/ui/`.
 - Workflow: [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) assembles `_site/` (page, logo, icon, social preview image, UI mockups, the custom Safe App from `app/` served at `/app/`, `.nojekyll`) and deploys with `actions/upload-pages-artifact` and `actions/deploy-pages`.
 - Triggers: manual (`workflow_dispatch`) and any push to `main` that changes `site/**`, `app/**`, `assets/**` or the workflow itself.
 - Repository setting: **Settings → Pages → Source: GitHub Actions**.

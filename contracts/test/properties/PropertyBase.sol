@@ -11,17 +11,17 @@ import {SafeProxyFactory} from "@safe-global/safe-contracts/contracts/proxies/Sa
 import {MultiSendCallOnly} from "@safe-global/safe-contracts/contracts/libraries/MultiSendCallOnly.sol";
 import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
 
-import {FermionWalletGuard} from "../../src/FermionWalletGuard.sol";
+import {FermionGuard} from "../../src/FermionGuard.sol";
 import {PreApprovalEngine} from "../../src/PreApprovalEngine.sol";
 import {XMSS} from "xmss-solidity/XMSS.sol";
 
 /// Test-only view extension: exposes the Tier-2 queues so properties can assert on them.
 /// Adds views only — the enforcement code under test is the production contract's.
-contract FermionWalletGuardHarness is FermionWalletGuard {
+contract FermionGuardHarness is FermionGuard {
     using DoubleEndedQueue for DoubleEndedQueue.Bytes32Deque;
 
     constructor(address msco, uint64 adminTl, uint64 emergencyTl, uint32 maxLegs, uint32 maxQueue)
-        FermionWalletGuard(msco, adminTl, emergencyTl, maxLegs, maxQueue)
+        FermionGuard(msco, adminTl, emergencyTl, maxLegs, maxQueue)
     {}
 
     function queueLength(bytes32 commitment) external view returns (uint256) {
@@ -131,7 +131,7 @@ abstract contract PropertyBase is Test {
 
     Safe internal safe;
     MultiSendCallOnly internal msco;
-    FermionWalletGuardHarness internal guard;
+    FermionGuardHarness internal guard;
     MockToken internal token;
     MockToken internal token2;
     bytes32 internal keyId;
@@ -162,7 +162,7 @@ abstract contract PropertyBase is Test {
                 )
             )
         );
-        guard = new FermionWalletGuardHarness(address(msco), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, MAX_BATCH_LEGS, MAX_QUEUE);
+        guard = new FermionGuardHarness(address(msco), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, MAX_BATCH_LEGS, MAX_QUEUE);
         token.mint(address(safe), type(uint128).max);
         token2.mint(address(safe), type(uint128).max);
         vm.deal(address(safe), 1_000_000 ether);
@@ -229,7 +229,7 @@ abstract contract PropertyBase is Test {
 
     function _guardDigest(bytes32 structHash) internal view returns (bytes32) {
         bytes32 domain = keccak256(
-            abi.encode(DOMAIN_TYPEHASH, keccak256("FermionWalletGuard"), keccak256("1"), block.chainid, address(guard))
+            abi.encode(DOMAIN_TYPEHASH, keccak256("FermionGuard"), keccak256("1"), block.chainid, address(guard))
         );
         return keccak256(abi.encodePacked(hex"1901", domain, structHash));
     }

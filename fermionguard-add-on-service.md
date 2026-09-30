@@ -1,4 +1,4 @@
-# FermionWallet Add-on Service
+# FermionGuard Add-on Service
 
 ## Programming language
 
@@ -15,9 +15,9 @@
 - express or similar HTTP server framework
 - zod or Joi for validation if used in a backend implementation
 
-## Role in the FermionWallet MVP
+## Role in the FermionGuard MVP
 
-The FermionWallet add-on service is the policy and validation layer that sits between the Safe and the quantum key system.
+The FermionGuard add-on service is the policy and validation layer that sits between the Safe and the quantum key system.
 
 ## Responsibilities
 
@@ -40,7 +40,7 @@ The FermionWallet add-on service is the policy and validation layer that sits be
 
 The Safe{Wallet} UI does not natively understand Guard requirements, so quantum-authorization visibility is delivered in three layers.
 
-### 1. FermionWallet Safe App (primary UX)
+### 1. FermionGuard Safe App (primary UX)
 
 A Safe App — an iframe dApp running inside the Safe{Wallet} interface, built with `@safe-global/safe-apps-sdk` — reads the transaction queue via the Safe Transaction Service API and overlays quantum status on every pending transaction:
 
@@ -62,9 +62,9 @@ Status is computed by comparing the queued Safe transaction hash and decoded cal
 
 Safe{Wallet} simulates `execTransaction` before enabling the Execute button. Without a valid pre-approval, the Guard reverts with a plain-text reason:
 
-> FermionWallet: no quantum pre-approval for this transaction. Approve it in the FermionWallet app first.
+> FermionGuard: no quantum pre-approval for this transaction. Approve it in the FermionGuard app first.
 
-(no live approval matches — missing, expired, used, or revoked). Safe{Wallet} shows it under **Details** of *"This transaction will most likely fail"*, and again if someone executes anyway. So even a user who has never installed the FermionWallet Safe App:
+(no live approval matches — missing, expired, used, or revoked). Safe{Wallet} shows it under **Details** of *"This transaction will most likely fail"*, and again if someone executes anyway. So even a user who has never installed the FermionGuard Safe App:
 
 - cannot execute a transaction the Guard will reject,
 - sees a human-readable explanation of what is missing.
@@ -81,15 +81,15 @@ The dashboard mirrors the Safe App's traffic-light view for treasury operators a
 
 ### 4. Quantum key ceremony (Quantum Administrator onboarding)
 
-A dedicated **"Quantum key" tab** in the FermionWallet Safe App runs the key ceremony. Design goals: **one on-chain transaction, no opaque IDs ever signed, every hash verified on two independent surfaces, resumable at every step, under 10 minutes end to end.** The same wizard is reused for rotation.
+A dedicated **"Quantum key" tab** in the FermionGuard Safe App runs the key ceremony. Design goals: **one on-chain transaction, no opaque IDs ever signed, every hash verified on two independent surfaces, resumable at every step, under 10 minutes end to end.** The same wizard is reused for rotation.
 
 The ceremony replaces a two-transaction propose/approve state machine with a **single-shot registration co-signed off-chain by the Safe owners over the root itself** — structurally eliminating the UI-swap attack (a malicious frontend cannot substitute a root without invalidating every owner signature).
 
 **Stage A — Preflight (Administrator).**
-The app checks everything that could fail later, before anything is generated: Ledger connected over WebHID (`@ledgerhq/hw-transport-webhid`), the [FermionWallet Ledger XMSS app](./ledger-xmss-app.md) open on the device, device address == registered `quantumAdmin`, FermionWallet Guard (which contains the registry) reachable, current `registryNonce` fetched, owner list and threshold read from the Safe. A green checklist is shown; the "Generate key" button stays disabled until all checks pass.
+The app checks everything that could fail later, before anything is generated: Ledger connected over WebHID (`@ledgerhq/hw-transport-webhid`), the [FermionGuard Ledger XMSS app](./ledger-xmss-app.md) open on the device, device address == registered `quantumAdmin`, FermionGuard (which contains the registry) reachable, current `registryNonce` fetched, owner list and threshold read from the Safe. A green checklist is shown; the "Generate key" button stays disabled until all checks pass.
 
 **Stage B — Generate (Administrator).**
-The Administrator connects their Ledger running the [FermionWallet XMSS app](./ledger-xmss-app.md). `GEN_XMSS_KEY` derives the XMSS key entirely inside the Ledger's ST33 secure element — the seed and monotonic leaf counter never leave secure-element NVRAM — and `GET_XMSS_ROOT` returns the public root. The device then clear-signs an on-device EIP-712 `QuantumKeyAttestation { safe, xmssRoot, xmssSeed, treeHeight, parameterSet, registryNonce }` with the app's admin key (the signer is `quantumAdmin`, so the address is bound by the signature itself), making the Administrator's physical device the definitive — and only — hardware anchor for this Safe.
+The Administrator connects their Ledger running the [FermionGuard XMSS app](./ledger-xmss-app.md). `GEN_XMSS_KEY` derives the XMSS key entirely inside the Ledger's ST33 secure element — the seed and monotonic leaf counter never leave secure-element NVRAM — and `GET_XMSS_ROOT` returns the public root. The device then clear-signs an on-device EIP-712 `QuantumKeyAttestation { safe, xmssRoot, xmssSeed, treeHeight, parameterSet, registryNonce }` with the app's admin key (the signer is `quantumAdmin`, so the address is bound by the signature itself), making the Administrator's physical device the definitive — and only — hardware anchor for this Safe.
 
 The app derives a **ceremony code** from the root: 6 BIP-39 words (e.g. `orbit-velvet-canyon-lemon-tiger-frost`) plus the first/last 4 hex bytes. The Administrator confirms the code matches the Ledger's display before continuing. Words beat hex: they are readable over a phone call and mis-verification is an order of magnitude less likely than hex skimming.
 
@@ -170,7 +170,7 @@ A **"Deny"** action records a Ledger-signed denial (off-chain, no leaf spent), n
 
 1. Operator queues a transfer in Safe{Wallet}; owners sign as usual.
 2. Safe App / dashboard flags the transaction 🟡 "quantum authorization required".
-3. An authorized key holder opens the FermionWallet flow, reviews the exact payload, and approves with the quantum key — creating the on-chain pre-approval.
+3. An authorized key holder opens the FermionGuard flow, reviews the exact payload, and approves with the quantum key — creating the on-chain pre-approval.
 4. Status flips to 🟢; simulation now passes.
 5. Anyone executes; the Guard validates and consumes the pre-approval atomically.
 

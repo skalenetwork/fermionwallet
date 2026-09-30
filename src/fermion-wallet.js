@@ -225,7 +225,7 @@ export class QuantumKeyManager {
   }
 }
 
-export class FermionWallet {
+export class FermionGuard {
   // `now` returns milliseconds (the contract uses block.timestamp seconds).
   constructor(ownerAddress, { now = Date.now } = {}) {
     this.ownerAddress = ownerAddress;
@@ -302,7 +302,7 @@ export class FermionWallet {
       quantumKeyId,
       policyHash
     };
-    const signature = this.quantumKeys.signPayload(quantumKeyId, FermionWallet.#signedPayload(approval));
+    const signature = this.quantumKeys.signPayload(quantumKeyId, FermionGuard.#signedPayload(approval));
     const preApprovalId = `pa-${crypto.randomUUID()}`;
 
     this.usedNonces.add(nonceKey);
@@ -340,7 +340,7 @@ export class FermionWallet {
     try {
       valid = this.quantumKeys.verifySignature(
         approval.quantumKeyId,
-        FermionWallet.#signedPayload(approval),
+        FermionGuard.#signedPayload(approval),
         approval.signature
       );
     } catch {
@@ -401,4 +401,4 @@ export class FermionWallet {
   }
 }
 
-export default FermionWallet;
+export default FermionGuard;

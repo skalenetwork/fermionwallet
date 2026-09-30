@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {MultiSendCallOnly} from "@safe-global/safe-contracts/contracts/libraries/MultiSendCallOnly.sol";
 
-import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
+import {FermionGuard} from "../src/FermionGuard.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 
 /// Deploy.s.sol end to end: the deterministic address the deployment docs promise
@@ -24,20 +24,20 @@ contract DeployScriptTest is Test {
 
     function _expected(bytes32 salt) internal pure returns (address) {
         bytes memory initCode = abi.encodePacked(
-            type(FermionWalletGuard).creationCode,
+            type(FermionGuard).creationCode,
             abi.encode(CANONICAL_MSCO, uint64(2 days), uint64(14 days), uint32(100), uint32(16))
         );
         return vm.computeCreate2Address(salt, keccak256(initCode), CREATE2_FACTORY);
     }
 
     function test_DefaultDeployment_SameAddressOnEveryTargetChain() public {
-        address expected = _expected(keccak256("fermionwallet.guard.v1"));
+        address expected = _expected(keccak256("fermionguard.guard.v1"));
         uint256[6] memory chains = [uint256(1), 10, 8453, 42161, 137, 31337];
         bytes32[6] memory codehashes;
         for (uint256 i = 0; i < chains.length; ++i) {
             uint256 snap = vm.snapshotState();
             vm.chainId(chains[i]);
-            FermionWalletGuard guard = new Deploy().run();
+            FermionGuard guard = new Deploy().run();
             assertEq(address(guard), expected, "CREATE2 address must not depend on the chain");
             assertGt(address(guard).code.length, 0);
             assertEq(guard.MULTISEND_CALL_ONLY(), CANONICAL_MSCO);
@@ -62,17 +62,17 @@ contract DeployScriptTest is Test {
     }
 
     function test_SecondRunIsIdempotent() public {
-        FermionWalletGuard first = new Deploy().run();
-        FermionWalletGuard second = new Deploy().run();
+        FermionGuard first = new Deploy().run();
+        FermionGuard second = new Deploy().run();
         assertEq(address(first), address(second));
     }
 
     function test_CustomParams_AppliedAndReadBack() public {
         address msco = address(new MultiSendCallOnly());
         bytes32 salt = bytes32(uint256(1));
-        FermionWalletGuard guard = new Deploy().deploy(msco, 3600, 86400, 7, 3, salt);
+        FermionGuard guard = new Deploy().deploy(msco, 3600, 86400, 7, 3, salt);
         bytes memory initCode = abi.encodePacked(
-            type(FermionWalletGuard).creationCode,
+            type(FermionGuard).creationCode,
             abi.encode(msco, uint64(3600), uint64(86400), uint32(7), uint32(3))
         );
         assertEq(address(guard), vm.computeCreate2Address(salt, keccak256(initCode), CREATE2_FACTORY));
@@ -86,7 +86,7 @@ contract DeployScriptTest is Test {
 
     function test_RejectsBadParams() public {
         Deploy d = new Deploy();
-        bytes32 salt = keccak256("fermionwallet.guard.v1");
+        bytes32 salt = keccak256("fermionguard.guard.v1");
 
         vm.expectRevert(bytes("EMERGENCY_TIMELOCK must exceed ADMIN_TIMELOCK"));
         d.deploy(CANONICAL_MSCO, 1 days, 1 days, 100, 16, salt);

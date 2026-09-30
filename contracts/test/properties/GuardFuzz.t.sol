@@ -5,10 +5,10 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20Mock as MockToken} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
 
-import {FermionWalletGuard} from "../../src/FermionWalletGuard.sol";
+import {FermionGuard} from "../../src/FermionGuard.sol";
 import {PreApprovalEngine, NO_MATCHING_PRE_APPROVAL} from "../../src/PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "../../src/QuantumKeyRegistry.sol";
-import {PropertyBase, FermionWalletGuardHarness} from "./PropertyBase.sol";
+import {PropertyBase, FermionGuardHarness} from "./PropertyBase.sol";
 
 /// Stateless property (fuzz) tests over a real Safe v1.5.0 with the Guard wired as both
 /// transaction guard and module guard. Hybrid-signed approvals are created ONCE in setUp
@@ -125,9 +125,9 @@ contract GuardFuzzTest is PropertyBase {
     /// 0 normal, 1 paused, 2 emergency de-guard requested, 3 emergency de-guard matured.
     function _enterState(uint8 s) internal {
         if (s == 1) {
-            _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe))), Enum.Operation.Call);
+            _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.pauseSafe, (address(safe))), Enum.Operation.Call);
         } else if (s >= 2) {
-            _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
+            _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
             if (s == 3) vm.warp(vm.getBlockTimestamp() + EMERGENCY_TIMELOCK);
         }
     }
@@ -143,11 +143,11 @@ contract GuardFuzzTest is PropertyBase {
         bytes4 s = bytes4(data);
         if (to == address(guard)) {
             if (data.length == 4) {
-                return s == FermionWalletGuard.requestEmergencyDeGuard.selector
-                    || s == FermionWalletGuard.requestUnpauseSafe.selector || s == FermionWalletGuard.unpauseSafe.selector;
+                return s == FermionGuard.requestEmergencyDeGuard.selector
+                    || s == FermionGuard.requestUnpauseSafe.selector || s == FermionGuard.unpauseSafe.selector;
             }
             if (data.length == 36) {
-                return s == FermionWalletGuard.cancelEmergencyDeGuard.selector || s == FermionWalletGuard.pauseSafe.selector
+                return s == FermionGuard.cancelEmergencyDeGuard.selector || s == FermionGuard.pauseSafe.selector
                     || s == PreApprovalEngine.revokePreApproval.selector
                     || s == QuantumKeyRegistry.cancelKeyRevocation.selector;
             }
@@ -187,14 +187,14 @@ contract GuardFuzzTest is PropertyBase {
             bytes4(keccak256("setFallbackHandler(address)")),
             bytes4(keccak256("enableModule(address)")),
             bytes4(keccak256("setModuleGuard(address)")),
-            FermionWalletGuard.pauseSafe.selector,
-            FermionWalletGuard.requestEmergencyDeGuard.selector,
-            FermionWalletGuard.requestUnpauseSafe.selector,
-            FermionWalletGuard.unpauseSafe.selector,
-            FermionWalletGuard.cancelEmergencyDeGuard.selector,
+            FermionGuard.pauseSafe.selector,
+            FermionGuard.requestEmergencyDeGuard.selector,
+            FermionGuard.requestUnpauseSafe.selector,
+            FermionGuard.unpauseSafe.selector,
+            FermionGuard.cancelEmergencyDeGuard.selector,
             PreApprovalEngine.revokePreApproval.selector,
             QuantumKeyRegistry.cancelKeyRevocation.selector,
-            FermionWalletGuard.setSelectorPolicy.selector,
+            FermionGuard.setSelectorPolicy.selector,
             bytes4(keccak256("multiSend(bytes)")),
             bytes4(keccak256("addOwnerWithThreshold(address,uint256)")),
             MockToken.mint.selector,
@@ -353,7 +353,7 @@ contract GuardFuzzTest is PropertyBase {
         vm.prank(address(safe));
         (bool passed, bytes memory err) = address(guard).call(
             abi.encodeCall(
-                FermionWalletGuard.checkTransaction,
+                FermionGuard.checkTransaction,
                 (address(msco), 0, data, Enum.Operation.DelegateCall, 0, 0, 0, address(0), payable(address(0)), "", relayer)
             )
         );
@@ -514,7 +514,7 @@ contract GuardFuzzTest is PropertyBase {
         vm.prank(owner1);
         guard.pauseSafe(address(safe));
         vm.warp(vm.getBlockTimestamp() + d1);
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestUnpauseSafe, ()), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestUnpauseSafe, ()), Enum.Operation.Call);
         uint256 requestedAt = vm.getBlockTimestamp();
         if (ownerRepauses) {
             vm.warp(vm.getBlockTimestamp() + d3);
@@ -524,12 +524,12 @@ contract GuardFuzzTest is PropertyBase {
         if (rerequest) {
             vm.warp(vm.getBlockTimestamp() + d3);
             uint64 before = guard.safeUnpauseExecutableAt(address(safe));
-            _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestUnpauseSafe, ()), Enum.Operation.Call);
+            _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestUnpauseSafe, ()), Enum.Operation.Call);
             assertGe(guard.safeUnpauseExecutableAt(address(safe)), before, "re-request shortened the unpause timelock");
             requestedAt = vm.getBlockTimestamp();
         }
         vm.warp(vm.getBlockTimestamp() + d2);
-        (bool ok,) = _tryExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.unpauseSafe, ()), Enum.Operation.Call, 0);
+        (bool ok,) = _tryExec(address(guard), 0, abi.encodeCall(FermionGuard.unpauseSafe, ()), Enum.Operation.Call, 0);
         assertEq(ok, vm.getBlockTimestamp() >= requestedAt + ADMIN_TIMELOCK, "unpause timelock");
         assertEq(guard.safePaused(address(safe)), !ok);
         if (ok) {
@@ -537,13 +537,13 @@ contract GuardFuzzTest is PropertyBase {
             uint256 unpausedAt = vm.getBlockTimestamp();
             vm.warp(vm.getBlockTimestamp() + d3);
             vm.prank(owner3);
-            (bool paused,) = address(guard).call(abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe))));
+            (bool paused,) = address(guard).call(abi.encodeCall(FermionGuard.pauseSafe, (address(safe))));
             assertEq(paused, vm.getBlockTimestamp() >= unpausedAt + ADMIN_TIMELOCK, "pause cooldown");
             vm.prank(ledger);
-            (bool pausedByAdmin,) = address(guard).call(abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe))));
+            (bool pausedByAdmin,) = address(guard).call(abi.encodeCall(FermionGuard.pauseSafe, (address(safe))));
             assertEq(pausedByAdmin, vm.getBlockTimestamp() >= unpausedAt + ADMIN_TIMELOCK, "admin pause cooldown");
             vm.prank(stranger);
-            (bool pausedByStranger,) = address(guard).call(abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe))));
+            (bool pausedByStranger,) = address(guard).call(abi.encodeCall(FermionGuard.pauseSafe, (address(safe))));
             assertFalse(pausedByStranger);
         }
     }
@@ -554,12 +554,12 @@ contract GuardFuzzTest is PropertyBase {
     function testFuzz_EmergencyDeGuardTimelock(uint32 d, uint32 gap, bool rerequest) public {
         d = uint32(bound(d, 0, 3 * EMERGENCY_TIMELOCK));
         gap = uint32(bound(gap, 0, EMERGENCY_TIMELOCK));
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
         uint256 requestedAt = vm.getBlockTimestamp();
         if (rerequest) {
             vm.warp(vm.getBlockTimestamp() + gap);
             uint64 before = guard.emergencyDeGuardExecutableAt(address(safe));
-            _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
+            _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
             assertGe(guard.emergencyDeGuardExecutableAt(address(safe)), before);
             requestedAt = vm.getBlockTimestamp();
         }
@@ -598,14 +598,14 @@ contract GuardFuzzTest is PropertyBase {
         gasPrice = bound(gasPrice, 1, 1e30);
         baseGas = bound(baseGas, 0, 1e6);
         (address to, bytes memory data) = escapeCall
-            ? (address(guard), abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()))
+            ? (address(guard), abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()))
             : (address(token), _transferData(recipient, AMT_A));
         address gasToken = refundInToken ? address(token) : address(0);
         bytes32 h = safe.getTransactionHash(
             to, 0, data, Enum.Operation.Call, 0, baseGas, gasPrice, gasToken, stranger, safe.nonce()
         );
         bytes memory sigs = _ownerSigs(h);
-        vm.expectRevert(FermionWalletGuard.GasRefundForbidden.selector);
+        vm.expectRevert(FermionGuard.GasRefundForbidden.selector);
         safe.execTransaction(to, 0, data, Enum.Operation.Call, 0, baseGas, gasPrice, gasToken, payable(stranger), sigs);
     }
 
@@ -620,7 +620,7 @@ contract GuardFuzzTest is PropertyBase {
     {
         vm.assume(handler != address(0));
         bytes memory data = abi.encodePacked(abi.encodeWithSignature("setFallbackHandler(address)", handler), tail);
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), handler));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.FallbackHandlerForbidden.selector, address(safe), handler));
         vm.prank(address(safe));
         if (viaModule) {
             guard.checkModuleTransaction(address(safe), 0, data, Enum.Operation.Call, module);
@@ -643,16 +643,16 @@ contract GuardFuzzTest is PropertyBase {
         vm.warp(T0 + ADMIN_TIMELOCK + 1);
         (bool ok, bytes memory err) = _tryExec(address(safe), 0, data, Enum.Operation.Call, 0);
         assertFalse(ok, "padded setFallbackHandler executed");
-        assertEq(err, abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), handler));
+        assertEq(err, abi.encodeWithSelector(FermionGuard.FallbackHandlerForbidden.selector, address(safe), handler));
         assertEq(uint256(vm.load(address(safe), FALLBACK_SLOT)), 0);
     }
 
     /// End to end: a padded ADMIN-approved `setGuard(other)` still ends this Guard's
     /// tenure, so a pending emergency de-guard request must not survive it.
     function test_PaddedSetGuard_ClearsPendingEmergencyRequest() public {
-        FermionWalletGuardHarness other =
-            new FermionWalletGuardHarness(address(msco), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, MAX_BATCH_LEGS, MAX_QUEUE);
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
+        FermionGuardHarness other =
+            new FermionGuardHarness(address(msco), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, MAX_BATCH_LEGS, MAX_QUEUE);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
         bytes memory data = abi.encodePacked(abi.encodeWithSignature("setGuard(address)", address(other)), bytes4(0));
         PreApprovalEngine.PreApprovalRequest memory req =
             _payloadReq(address(safe), 0, keccak256(data), 10, T0 + ADMIN_TIMELOCK, T0 + ADMIN_TIMELOCK + 1 days, bytes32(0));

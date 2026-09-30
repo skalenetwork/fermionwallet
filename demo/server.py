@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""FermionWallet demo server.
+"""FermionGuard demo server.
 
 Serves the demo dashboard (static files from ./ui) and a small JSON API that
 drives the on-chain demo flows by shelling out to `forge script` against the
@@ -27,7 +27,7 @@ RPC = os.environ.get("RPC_URL", "http://127.0.0.1:8545")
 FORGE = os.environ.get("FORGE_BIN", "forge")
 PORT = int(os.environ.get("PORT", "8080"))
 STATE_FILE = os.path.join(CONTRACTS, "demo-state", "deployment.json")
-# The simulated FermionWallet Ledger (demo/ledger_sim.py) — the only signer of approvals.
+# The simulated FermionGuard Ledger (demo/ledger_sim.py) — the only signer of approvals.
 LEDGER = os.environ.get("LEDGER_SIM_URL", "http://127.0.0.1:9999")
 LEDGER_SLOT = 1
 # keccak256("demo-policy-v1") — must match Demo.s.sol submitApproval().
@@ -363,10 +363,10 @@ class Handler(BaseHTTPRequestHandler):
             # Browsers that ignore the pages' <link rel="icon"> still ask for this.
             path = "/safe-app/logo.svg"
         elif path in ("/ledger", "/ledger/"):
-            # Stand-in for the physical Ledger running the FermionWallet XMSS app.
+            # Stand-in for the physical Ledger running the FermionGuard XMSS app.
             path = "/ledger/index.html"
         elif path in ("/safe-app", "/safe-app/"):
-            # The FermionWallet Safe App, loaded by Safe{Wallet} in an iframe.
+            # The FermionGuard Safe App, loaded by Safe{Wallet} in an iframe.
             path = "/safe-app/index.html"
         fs_path = os.path.normpath(os.path.join(UI_DIR, path.lstrip("/")))
         if fs_path.startswith(UI_DIR) and os.path.isfile(fs_path):
@@ -420,5 +420,5 @@ if __name__ == "__main__":
     # (or `docker compose restart`) would wait its full grace period, serving the
     # old chain's state all the while.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    print(f"FermionWallet demo UI on http://0.0.0.0:{PORT}", flush=True)
+    print(f"FermionGuard demo UI on http://0.0.0.0:{PORT}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

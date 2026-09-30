@@ -1,4 +1,4 @@
-# FermionWallet Guard Contract
+# FermionGuard Contract
 
 ## Table of contents
 
@@ -13,7 +13,7 @@
 - [Required inheritance (this is the contract)](#required-inheritance-this-is-the-contract)
 - [Forbidden original code](#forbidden-original-code)
 - [Official Safe interface (reference only — import, do not paste into production)](#official-safe-interface-reference-only--import-do-not-paste-into-production)
-- [FermionWallet-specific ABI](#fermionwallet-specific-abi)
+- [FermionGuard-specific ABI](#fermionguard-specific-abi)
 - [Mandatory Safe Guard rules](#mandatory-safe-guard-rules)
 - [Access control rules](#access-control-rules)
 - [Module bypass — mandatory mitigation](#module-bypass--mandatory-mitigation)
@@ -31,7 +31,7 @@
   - [Timestamp handling](#timestamp-handling)
   - [Immutability and deployment hygiene](#immutability-and-deployment-hygiene)
 - [Virtual brain test against Safe semantics](#virtual-brain-test-against-safe-semantics)
-- [Guard behavior requirements for FermionWallet](#guard-behavior-requirements-for-fermionwallet)
+- [Guard behavior requirements for FermionGuard](#guard-behavior-requirements-for-fermionguard)
 - [Low-level Safe execution model](#low-level-safe-execution-model)
 - [Who calls `checkTransaction`, exactly](#who-calls-checktransaction-exactly)
   - [The contracts involved](#the-contracts-involved)
@@ -47,7 +47,7 @@
 
 ## Principle: library-first, almost no original code
 
-The Guard is glue. Every security primitive must come from an audited, pinned open-source library. FermionWallet-owned Solidity is limited to:
+The Guard is glue. Every security primitive must come from an audited, pinned open-source library. FermionGuard-owned Solidity is limited to:
 
 1. mapping a decoded ERC-20 `transfer` onto a stored pre-approval, and
 2. reverting when that mapping fails.
@@ -113,7 +113,7 @@ The second authorization is produced by a designated **Quantum Administrator** h
 | State management (critical) | Each signature consumes one leaf index. **Index reuse is catastrophic** (forgery becomes possible), so the contract tracks used indices in an OpenZeppelin `BitMaps` bitmap keyed by `(quantumKeyId, leafIndex)` and reverts on reuse. The Ledger app commits its leaf counter before releasing any signature |
 | Classical hybrid half (on-chain) | OpenZeppelin `SignatureChecker` + `EIP712` — the pre-approval is valid only if **both** the XMSS and the classical signature verify |
 | Key lifecycle | Registered as a single XMSS root (`xmssRoot`) in the registry via the co-signed one-shot `registerQuantumKey`. When leaf indices near exhaustion, the Administrator rotates to a new root via `rotateQuantumKey` (owner co-signatures, the Ledger's attestation of the new key, and an XMSS possession proof by the old key, per the access-control rules) |
-| Off-chain signing | The FermionWallet XMSS Ledger app — the only signer; the add-on service holds no keys (the demo simulates the device with the RFC 8391 reference code in `contracts/py/`). Never `crypto.createHmac` labeled as quantum-safe |
+| Off-chain signing | The FermionGuard XMSS Ledger app — the only signer; the add-on service holds no keys (the demo simulates the device with the RFC 8391 reference code in `contracts/py/`). Never `crypto.createHmac` labeled as quantum-safe |
 
 ### Existing open-source Solidity code for XMSS
 
@@ -126,7 +126,7 @@ Surveyed (2026-09); use as reference/baseline, not drop-in:
 
 Nothing else exists: ZKNox (ETHFALCON/ETHDILITHIUM) covers only lattice schemes; no LMS or other XMSS Solidity implementations were found.
 
-**Plan of record — implemented:** FermionWallet's XMSS verifier is implemented in-house as a clean-room, **MIT-licensed** Solidity library, published separately as [skalenetwork/xmss-solidity](https://github.com/skalenetwork/xmss-solidity) and included as the submodule `contracts/lib/xmss-solidity`, and **formally verified** against RFC 8391 (its `PROOF.md` states what is proven and assumed) (no code taken from the unlicensed or AGPL repos above; written directly from RFC 8391), with leaf consumption enforced by the registry's used-leaf bitmap in [`contracts/src/QuantumKeyRegistry.sol`](./contracts/src/QuantumKeyRegistry.sol). It is validated against an independent Python RFC 8391 reference (`contracts/py/xmss_ref.py`) with positive vectors at h = 4, 10, and **20 (the production parameter set)** plus tamper and fuzz tests, and benchmarked in Foundry: **744,906 gas measured** per verification at h=20 — within the 0.4–1M target. Remaining before mainnet: cross-check against poqeth's published numbers and the same external audit as the Guard.
+**Plan of record — implemented:** FermionGuard's XMSS verifier is implemented in-house as a clean-room, **MIT-licensed** Solidity library, published separately as [skalenetwork/xmss-solidity](https://github.com/skalenetwork/xmss-solidity) and included as the submodule `contracts/lib/xmss-solidity`, and **formally verified** against RFC 8391 (its `PROOF.md` states what is proven and assumed) (no code taken from the unlicensed or AGPL repos above; written directly from RFC 8391), with leaf consumption enforced by the registry's used-leaf bitmap in [`contracts/src/QuantumKeyRegistry.sol`](./contracts/src/QuantumKeyRegistry.sol). It is validated against an independent Python RFC 8391 reference (`contracts/py/xmss_ref.py`) with positive vectors at h = 4, 10, and **20 (the production parameter set)** plus tamper and fuzz tests, and benchmarked in Foundry: **744,906 gas measured** per verification at h=20 — within the 0.4–1M target. Remaining before mainnet: cross-check against poqeth's published numbers and the same external audit as the Guard.
 
 Why XMSS over the alternatives:
 - **ML-DSA / Falcon**: lattice math costs tens of millions of gas on the EVM — no audited gas-viable verifier exists.
@@ -145,8 +145,8 @@ Why XMSS over the alternatives:
 // SPDX-License-Identifier: LGPL-3.0-only
 pragma solidity ^0.8.24;
 
-// contracts/src/FermionWalletGuard.sol (abridged)
-contract FermionWalletGuard is
+// contracts/src/FermionGuard.sol (abridged)
+contract FermionGuard is
     PreApprovalEngine,     // abstract: pre-approvals; inherits QuantumKeyRegistry
                            // (abstract: keys, leaf bitmaps; inherits EIP712, Nonces)
     BaseTransactionGuard,  // Safe: checkTransaction / checkAfterExecution
@@ -202,15 +202,15 @@ function checkTransaction(
 function checkAfterExecution(bytes32 hash, bool success) external;
 ```
 
-## FermionWallet-specific ABI
+## FermionGuard-specific ABI
 
 This is the application-level ABI for key registration, policy pre-approvals, and Safe enforcement. It is additive to the official Safe Guard interface; it is not a replacement for it.
 
 ```solidity
-// The deployed contract is FermionWalletGuard, which also contains
+// The deployed contract is FermionGuard, which also contains
 // QuantumKeyRegistry and PreApprovalEngine (abstract bases — never deployed alone).
 // Every function below is on that one address. Reference: contracts/src/*.sol.
-interface IFermionWalletGuard is ITransactionGuard, IModuleGuard {
+interface IFermionGuard is ITransactionGuard, IModuleGuard {
     // ── Types ────────────────────────────────────────────────────────────────
     enum KeyStatus { None, Active, Rotated, Revoked }
 
@@ -462,8 +462,8 @@ interface IFermionWalletGuard is ITransactionGuard, IModuleGuard {
     //   MalformedTransferCalldata, MalformedBatch, BatchTooLarge,
     //   ForbiddenBatchLegTarget.
     // No matching pre-approval is NOT a custom error: it reverts with the string
-    //   "FermionWallet: no quantum pre-approval for this transaction. Approve it in the
-    //   FermionWallet app first." (PreApprovalEngine's NO_MATCHING_PRE_APPROVAL), because
+    //   "FermionGuard: no quantum pre-approval for this transaction. Approve it in the
+    //   FermionGuard app first." (PreApprovalEngine's NO_MATCHING_PRE_APPROVAL), because
     //   Safe{Wallet} decodes only Error(string) reasons and this is the block owners hit.
     // Pre-approvals: ApprovalExists, InvalidWindow, AdminTimelockNotRespected,
     //   InvalidAdminTarget, NonZeroClassFields, InvalidEcdsaSignature, WrongQuantumKey,
@@ -507,9 +507,9 @@ Safe transaction guards are only invoked in the `execTransaction` path. Transact
 Required mitigations:
 
 - The Safe must have **no enabled modules**, verified at enrollment and re-checked in `checkTransaction`, or
-- On Safe v1.5.0+, this same FermionWallet contract must already be installed as the Safe's `IModuleGuard` via `setModuleGuard(...)`, implementing `checkModuleTransaction(...)` and `checkAfterModuleExecution(...)` with the same policy checks.
+- On Safe v1.5.0+, this same FermionGuard contract must already be installed as the Safe's `IModuleGuard` via `setModuleGuard(...)`, implementing `checkModuleTransaction(...)` and `checkAfterModuleExecution(...)` with the same policy checks.
 
-**Module-guard architecture (resolved):** the tx guard and the module guard are **one contract**. `FermionWalletGuard` inherits `BaseTransactionGuard` *and* `BaseModuleGuard`, overrides `supportsInterface` to report both `type(ITransactionGuard).interfaceId` and `type(IModuleGuard).interfaceId` (per the note in "Contract header" above), and routes `checkModuleTransaction(to, value, data, operation, module)` through the same class-dispatch pipeline as `checkTransaction` — with these module-specific rules: `operation == DELEGATECALL` from a module is always rejected (no MultiSend exception); matching is Tier 2 only (module transactions have no `safeTxHash`); the module address is logged in `ModuleTransactionChecked`; the same fallback-handler rules apply (a module can never install a handler); and a module-executed `setGuard` clears any emergency de-guard request, via `checkAfterModuleExecution`. The Safe's own pause applies to module transactions too. On Safe < 1.5.0 the module-guard entry points are never wired, so `enableModule` is rejected outright and enrollment enforces the "no enabled modules" rule. "Wired" means both that the Safe's module-guard slot (`keccak256("module_manager.module_guard.address")`) holds this Guard **and** that the Safe's `VERSION()` is ≥ 1.5.0: on v1.3.0/v1.4.1 that slot is ordinary storage the singleton never reads (a Safe downgraded from 1.5 keeps a stale value, and a pre-enrollment delegatecall can plant one), so the Guard never trusts it there — a Safe without a parseable `VERSION()` ≥ 1.5 counts as unwired (fail closed). On those versions the residual posture is therefore: a module enabled in the window between enrollment and `setGuard` still executes unguarded (the Guard never sees `execTransactionFromModule`), while every owner transaction fails closed with `ModulesEnabledWithoutModuleGuard` until the quantum-approved `disableModule` remediation.
+**Module-guard architecture (resolved):** the tx guard and the module guard are **one contract**. `FermionGuard` inherits `BaseTransactionGuard` *and* `BaseModuleGuard`, overrides `supportsInterface` to report both `type(ITransactionGuard).interfaceId` and `type(IModuleGuard).interfaceId` (per the note in "Contract header" above), and routes `checkModuleTransaction(to, value, data, operation, module)` through the same class-dispatch pipeline as `checkTransaction` — with these module-specific rules: `operation == DELEGATECALL` from a module is always rejected (no MultiSend exception); matching is Tier 2 only (module transactions have no `safeTxHash`); the module address is logged in `ModuleTransactionChecked`; the same fallback-handler rules apply (a module can never install a handler); and a module-executed `setGuard` clears any emergency de-guard request, via `checkAfterModuleExecution`. The Safe's own pause applies to module transactions too. On Safe < 1.5.0 the module-guard entry points are never wired, so `enableModule` is rejected outright and enrollment enforces the "no enabled modules" rule. "Wired" means both that the Safe's module-guard slot (`keccak256("module_manager.module_guard.address")`) holds this Guard **and** that the Safe's `VERSION()` is ≥ 1.5.0: on v1.3.0/v1.4.1 that slot is ordinary storage the singleton never reads (a Safe downgraded from 1.5 keeps a stale value, and a pre-enrollment delegatecall can plant one), so the Guard never trusts it there — a Safe without a parseable `VERSION()` ≥ 1.5 counts as unwired (fail closed). On those versions the residual posture is therefore: a module enabled in the window between enrollment and `setGuard` still executes unguarded (the Guard never sees `execTransactionFromModule`), while every owner transaction fails closed with `ModulesEnabledWithoutModuleGuard` until the quantum-approved `disableModule` remediation.
 - `enableModule(...)` is rejected with `ModuleGuardNotWired` unless this Guard is already wired as the Safe's module guard. On Safe v1.5 the required order is two separate quantum-approved admin actions: `setModuleGuard(guard)` first, then `enableModule(...)`.
 - The module-posture check must exempt remediation self-calls: `disableModule(...)`, `setModuleGuard(...)`, and the quantum-approved `setGuard(address(0))` Guard removal path, so an unsafe module posture never blocks its own repair. Every remediation self-call (`disableModule`, `setModuleGuard`, `setFallbackHandler(address(0))`) is exempt from **both** posture checks: a Safe that installed a handler and a module before attaching the Guard is bad on both counts, and neither repair may be blocked by the other defect.
 
@@ -526,7 +526,7 @@ Note the operational trade-off: a buggy Guard can brick the Safe (every tx rever
 
 ## ERC-1271 fallback-handler mitigation
 
-Safe's default `CompatibilityFallbackHandler` can validate owner ECDSA signatures through `isValidSignature` without creating a Safe transaction, which lets Permit/Permit2 and signature-order protocols bypass the Guard. FermionWallet therefore treats fallback-handler posture as part of enrollment and every checked transaction:
+Safe's default `CompatibilityFallbackHandler` can validate owner ECDSA signatures through `isValidSignature` without creating a Safe transaction, which lets Permit/Permit2 and signature-order protocols bypass the Guard. FermionGuard therefore treats fallback-handler posture as part of enrollment and every checked transaction:
 
 - A guarded Safe has **no** fallback handler. There is no allowlist: curating one would be a global power over every Safe (see "No global powers").
 - `checkTransaction`, `checkModuleTransaction`, and enrollment read the Safe fallback-handler slot and revert if it is nonzero.
@@ -716,7 +716,7 @@ An outright MultiSend ban is unusable for the target audience — a 50-recipient
 
 ## Virtual brain test against Safe semantics
 
-The following checks are the minimum correctness review for the FermionWallet guard.
+The following checks are the minimum correctness review for the FermionGuard guard.
 
 1. If `Safe.setGuard(address(guard))` is called with a contract that does not implement `ITransactionGuard`, Safe reverts.
 2. If the Guard is set correctly but a transaction is invalid, `checkTransaction` must revert.
@@ -746,7 +746,7 @@ The following checks are the minimum correctness review for the FermionWallet gu
 24. If hybrid/PQ verification uses HMAC or a custom lattice implementation, that is a defect — `SignatureChecker` + pinned audited PQ verifier or `liboqs` / `@noble/post-quantum` at the documented trust boundary.
 25. `supportsInterface` must report the Safe package's `ITransactionGuard` and `IModuleGuard` interface IDs (plus ERC-165), never locally re-declared interfaces.
 
-## Guard behavior requirements for FermionWallet
+## Guard behavior requirements for FermionGuard
 
 The Guard must:
 
@@ -769,7 +769,7 @@ The real Safe flow is:
 2. The transaction is submitted to the Safe.
 3. Safe verifies owner signatures using its normal multisig logic.
 4. If a guard is set, Safe calls `checkTransaction(...)` before it executes the target contract call.
-5. The Guard validates the transaction against policy and FermionWallet auth metadata.
+5. The Guard validates the transaction against policy and FermionGuard auth metadata.
 6. If the Guard reverts, the Safe transaction fails before reaching the destination contract.
 7. If the Guard returns, execution continues to the target address.
 8. After execution, Safe may call `checkAfterExecution(...)` for audit or state checks.
@@ -784,7 +784,7 @@ This is not a “contract signer” flow. It is a guard veto pattern between Saf
 
 1. **SafeProxy** — the on-chain address of the Safe account (the address that holds the funds). It contains no logic; every call to it is `DELEGATECALL`ed to the Safe singleton.
 2. **Safe singleton** (`Safe.sol`, e.g. v1.4.1) — the canonical implementation. It inherits `GuardManager`, which stores the guard address in the dedicated storage slot `GUARD_STORAGE_SLOT` (`keccak256("guard_manager.guard.address")`), set previously by `setGuard(address)` — itself callable only via a Safe transaction (`SelfAuthorized`).
-3. **FermionWalletGuard** — this contract. It receives a plain external `CALL` from the Safe proxy address.
+3. **FermionGuard** — this contract. It receives a plain external `CALL` from the Safe proxy address.
 
 ### The exact call sequence inside `Safe.execTransaction`
 
@@ -809,7 +809,7 @@ When an owner or relayer calls `execTransaction(to, value, data, operation, safe
 
 - **Caller identity check**: the only valid `msg.sender` for `checkTransaction`/`checkAfterExecution` is an enrolled Safe proxy. Anyone can *technically* call the Guard (it is a public external function on a public contract), which is precisely why the Guard must revert for non-enrolled callers instead of mutating state.
 - **Nonce is already incremented** when the Guard runs (step 3 precedes step 6): recompute the safeTxHash with `ISafe(msg.sender).nonce() - 1`.
-- **The guard slot is per-Safe**: each Safe proxy stores its own guard address; one deployed FermionWalletGuard instance can serve many Safes, keyed by `msg.sender`.
+- **The guard slot is per-Safe**: each Safe proxy stores its own guard address; one deployed FermionGuard instance can serve many Safes, keyed by `msg.sender`.
 - **Module path is separate**: `execTransactionFromModule` does not run this sequence and never touches `GUARD_STORAGE_SLOT` (pre-1.5); the module-guard mitigation section above applies.
 - **Signature validation precedes the guard**: the Guard can assume owner approval already happened; it is strictly the *second* authorization.
 
@@ -846,7 +846,7 @@ The major problems fixed here are:
 
 ## Production constraints
 
-Before production deployment, FermionWallet must ensure:
+Before production deployment, FermionGuard must ensure:
 
 - real post-quantum or hybrid cryptography is used for the quantum approval path,
 - signatures are bound to chain ID, Safe address, nonce, token, recipient, amount, and policy hash,
@@ -866,12 +866,12 @@ Before production deployment, FermionWallet must ensure:
 
 ## Summary
 
-The FermionWallet Guard must be a real Safe Guard, not a pseudo-signer contract.
+The FermionGuard must be a real Safe Guard, not a pseudo-signer contract.
 
 The correct design is:
 
 - Safe owner signatures remain the first approval layer.
-- FermionWallet adds a second approval layer by validating a quantum-based authorization inside `checkTransaction(...)`.
+- FermionGuard adds a second approval layer by validating a quantum-based authorization inside `checkTransaction(...)`.
 - If the validation is invalid, the Guard reverts and the safe transaction fails.
 - If the validation is valid, Safe continues execution normally.
 

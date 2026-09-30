@@ -1,21 +1,21 @@
-# FermionWallet demo on the real Safe{Wallet}.
+# FermionGuard demo on the real Safe{Wallet}.
 #
 # The open-source Safe stack (safe-global/safe-infrastructure: Safe{Wallet} web UI,
 # Client Gateway, Config Service, Transaction Service) runs against a local anvil
 # chain that carries Safe v1.4.1 at its canonical addresses, a demo Safe protected
-# by the FermionWalletGuard, and the FermionWallet Safe App with a simulated Ledger.
+# by the FermionGuard, and the FermionGuard Safe App with a simulated Ledger.
 #
 #   docker compose up -d --wait   # about a minute once the images are pulled
 #   open http://localhost:8000    # Safe{Wallet}
 #   docker compose down -v        # stop and reset everything (chain + databases)
 #
-# From a source checkout, build the two FermionWallet images instead of pulling:
+# From a source checkout, build the two FermionGuard images instead of pulling:
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
 #
-# Ports: 8000 Safe{Wallet} + services (RPC at /rpc), 8001 the FermionWallet Safe App.
+# Ports: 8000 Safe{Wallet} + services (RPC at /rpc), 8001 the FermionGuard Safe App.
 # Nothing is persisted: the chain and the Safe services' databases live in memory,
 # so any restart (or `down -v`) resets the demo to a fresh, consistent state.
-name: fermionwallet-demo
+name: fermionguard-demo
 
 x-pg: &pg
   image: postgres:14-alpine
@@ -52,9 +52,9 @@ x-txs: &txs
     chain: { condition: service_healthy }
 
 services:
-  # ── FermionWallet: anvil chain + Guard + demo Safe + simulated Ledger + Safe App ──
+  # ── FermionGuard: anvil chain + Guard + demo Safe + simulated Ledger + Safe App ──
   chain:
-    image: ${FERMION_DEMO_IMAGE:-ghcr.io/skalenetwork/fermionwallet-demo:latest}
+    image: ${FERMION_DEMO_IMAGE:-ghcr.io/skalenetwork/fermionguard-demo:latest}
     environment:
       DEMO_MODE: wallet
       # The Safe App's backend reads each Safe's queue from the Transaction Service.
@@ -72,7 +72,7 @@ services:
 
   # ── Safe{Wallet} (static export) + reverse proxy for all Safe services ──
   nginx:
-    image: ${FERMION_WALLET_UI_IMAGE:-ghcr.io/skalenetwork/fermionwallet-demo-wallet:latest}
+    image: ${FERMION_WALLET_UI_IMAGE:-ghcr.io/skalenetwork/fermionguard-demo-wallet:latest}
     ports:
       - "8000:8000"
     volumes:
@@ -183,7 +183,7 @@ services:
     depends_on:
       txs-worker-indexer: { condition: service_healthy }
 
-  # ── Safe Config Service (chain 31337 + the FermionWallet Safe App, seeded) ──
+  # ── Safe Config Service (chain 31337 + the FermionGuard Safe App, seeded) ──
   cfg-db: *pg
   cfg-init:
     image: ghcr.io/safe-global/safe-config-service:${CFG_VERSION:-v2.96.1}

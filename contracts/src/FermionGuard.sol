@@ -21,8 +21,8 @@ import {TransientSlot} from "@openzeppelin/contracts/utils/TransientSlot.sol";
 import {PreApprovalEngine} from "./PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "./QuantumKeyRegistry.sol";
 
-/// @title FermionWalletGuard — quantum second-authorization Guard for Gnosis Safe
-/// @notice The enforcement layer per fermionwallet-guard-module.md. One contract serves
+/// @title FermionGuard — quantum second-authorization Guard for Gnosis Safe
+/// @notice The enforcement layer per fermionguard-module.md. One contract serves
 ///         both hook families (BaseTransactionGuard + BaseModuleGuard — one storage, one
 ///         address for `setGuard` and `setModuleGuard`) and embeds the QuantumKeyRegistry
 ///         and PreApprovalEngine, so the Guard can only ever enforce what it can read
@@ -37,7 +37,7 @@ import {QuantumKeyRegistry} from "./QuantumKeyRegistry.sol";
 ///         No global powers: there is no admin, guardian, role, global pause, or
 ///         governance-curated list. Every control is scoped to one Safe and held by
 ///         that Safe's own owners.
-contract FermionWalletGuard is
+contract FermionGuard is
     PreApprovalEngine,
     BaseTransactionGuard,
     BaseModuleGuard
@@ -117,8 +117,8 @@ contract FermionWalletGuard is
     address private constant SENTINEL_MODULES = address(0x1);
 
     /// Transient-storage namespaces, derived per Safe (SlotDerivation.deriveMapping).
-    bytes32 private constant DEPTH_NAMESPACE = keccak256("fermionwallet.guard.depth");
-    bytes32 private constant CLEAR_EMERGENCY_NAMESPACE = keccak256("fermionwallet.guard.clearEmergency");
+    bytes32 private constant DEPTH_NAMESPACE = keccak256("fermionguard.guard.depth");
+    bytes32 private constant CLEAR_EMERGENCY_NAMESPACE = keccak256("fermionguard.guard.clearEmergency");
 
     /// MultiSendCallOnly packed leg header: uint8 op + address to + uint256 value + uint256 dataLength.
     uint256 private constant LEG_HEADER = 85;
@@ -148,7 +148,7 @@ contract FermionWalletGuard is
     )
         QuantumKeyRegistry(emergencyTimelock)
         PreApprovalEngine(adminTimelock, maxCommitmentQueue)
-        EIP712("FermionWalletGuard", "1")
+        EIP712("FermionGuard", "1")
     {
         if (multiSendCallOnly == address(0)) revert ZeroAddress();
         if (multiSendCallOnly.code.length == 0) revert InvalidKeyParams();

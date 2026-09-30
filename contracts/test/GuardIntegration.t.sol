@@ -13,7 +13,7 @@ import {ITransactionGuard} from "@safe-global/safe-contracts/contracts/base/Guar
 import {IModuleGuard} from "@safe-global/safe-contracts/contracts/base/ModuleManager.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
-import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
+import {FermionGuard} from "../src/FermionGuard.sol";
 import {PreApprovalEngine, NO_MATCHING_PRE_APPROVAL} from "../src/PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "../src/QuantumKeyRegistry.sol";
 import {XMSS} from "xmss-solidity/XMSS.sol";
@@ -43,7 +43,7 @@ contract ReentrantToken {
     }
 }
 
-/// End-to-end integration suite mandated by fermionwallet-guard-module.md, "Production
+/// End-to-end integration suite mandated by fermionguard-module.md, "Production
 /// checklist": a REAL Safe v1.5.0 proxy (SafeProxyFactory + singleton), the real
 /// MultiSendCallOnly, and XMSS signatures from the RFC 8391 reference implementation
 /// via FFI (test key h = 4; rotation target h = 5). Exercises the nonce()-1 hash
@@ -94,7 +94,7 @@ contract GuardIntegrationTest is Test {
     // ── Fixtures ────────────────────────────────────────────────────────────
     Safe internal safe;
     MultiSendCallOnly internal msco;
-    FermionWalletGuard internal guard;
+    FermionGuard internal guard;
     MockToken internal token;
     bytes32 internal keyId;
     bytes32 internal xmssRoot;
@@ -118,7 +118,7 @@ contract GuardIntegrationTest is Test {
         );
         safe = Safe(payable(factory.createProxyWithNonce(address(singleton), initializer, 0xF3E)));
 
-        guard = new FermionWalletGuard(
+        guard = new FermionGuard(
             address(msco), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, MAX_BATCH_LEGS, MAX_QUEUE
         );
 
@@ -266,7 +266,7 @@ contract GuardIntegrationTest is Test {
             address(token),
             0,
             abi.encodeCall(IERC20.approve, (recipient, 1 ether)),
-            abi.encodeWithSelector(FermionWalletGuard.DeniedSelector.selector, IERC20.approve.selector)
+            abi.encodeWithSelector(FermionGuard.DeniedSelector.selector, IERC20.approve.selector)
         );
     }
 
@@ -276,7 +276,7 @@ contract GuardIntegrationTest is Test {
             0,
             abi.encodeCall(MockToken.mint, (recipient, 1 ether)),
             abi.encodeWithSelector(
-                FermionWalletGuard.SelectorNotAllowed.selector, address(safe), MockToken.mint.selector
+                FermionGuard.SelectorNotAllowed.selector, address(safe), MockToken.mint.selector
             )
         );
     }
@@ -286,14 +286,14 @@ contract GuardIntegrationTest is Test {
         bytes32 txHash = safe.getTransactionHash(
             address(token), 0, data, Enum.Operation.Call, 0, 0, 1, address(0), address(0), safe.nonce()
         );
-        vm.expectRevert(FermionWalletGuard.GasRefundForbidden.selector);
+        vm.expectRevert(FermionGuard.GasRefundForbidden.selector);
         safe.execTransaction(
             address(token), 0, data, Enum.Operation.Call, 0, 0, 1, address(0), payable(address(0)), _ownerSigs(txHash)
         );
     }
 
     function test_DirectCheckTransaction_NonEnrolled_Reverts() public {
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.NotEnrolledSafe.selector, address(0xBAD)));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.NotEnrolledSafe.selector, address(0xBAD)));
         vm.prank(address(0xBAD));
         guard.checkTransaction(
             address(token), 0, "", Enum.Operation.Call, 0, 0, 0, address(0), payable(address(0)), "", relayer
@@ -306,7 +306,7 @@ contract GuardIntegrationTest is Test {
             0,
             "",
             Enum.Operation.DelegateCall,
-            abi.encodeWithSelector(FermionWalletGuard.DelegateCallForbidden.selector, address(token))
+            abi.encodeWithSelector(FermionGuard.DelegateCallForbidden.selector, address(token))
         );
     }
 
@@ -346,7 +346,7 @@ contract GuardIntegrationTest is Test {
 
     function test_AdminTimelock_TooEarly_Reverts() public {
         bytes memory call =
-            abi.encodeCall(FermionWalletGuard.setSelectorPolicy, (address(safe), MockToken.mint.selector, true));
+            abi.encodeCall(FermionGuard.setSelectorPolicy, (address(safe), MockToken.mint.selector, true));
         PreApprovalEngine.PreApprovalRequest memory req = _adminReq(address(guard), keccak256(call), 1);
         req.validFrom = uint64(block.timestamp) + ADMIN_TIMELOCK - 1; // one second short
         (bytes memory ecdsaSig, bytes memory xmssSig) = _hybridSign(req, 2);
@@ -365,7 +365,7 @@ contract GuardIntegrationTest is Test {
     /// mutates its own selector permit-list through the Guard's ADMIN dispatch path.
     function test_AdminFlow_SetSelectorPolicy_EndToEnd() public {
         bytes memory call =
-            abi.encodeCall(FermionWalletGuard.setSelectorPolicy, (address(safe), MockToken.mint.selector, true));
+            abi.encodeCall(FermionGuard.setSelectorPolicy, (address(safe), MockToken.mint.selector, true));
         _createAdmin(address(guard), keccak256(call), 1);
         vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
         _safeExec(address(guard), 0, call, Enum.Operation.Call);
@@ -379,7 +379,7 @@ contract GuardIntegrationTest is Test {
     }
 
     function test_SetSelectorPolicy_DenyListImmutable() public {
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.DeniedSelector.selector, IERC20.approve.selector));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.DeniedSelector.selector, IERC20.approve.selector));
         vm.prank(address(safe));
         guard.setSelectorPolicy(address(safe), IERC20.approve.selector, true);
     }
@@ -391,7 +391,7 @@ contract GuardIntegrationTest is Test {
     /// detach the Guard with setGuard(0), and confirm the Safe is free. End to end.
     function test_EmergencyDeGuard_WorksWhilePaused_EndToEnd() public {
         _safeExec(
-            address(guard), 0, abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe))), Enum.Operation.Call
+            address(guard), 0, abi.encodeCall(FermionGuard.pauseSafe, (address(safe))), Enum.Operation.Call
         );
 
         // Any normal transaction is now dead…
@@ -399,12 +399,12 @@ contract GuardIntegrationTest is Test {
             address(token),
             0,
             abi.encodeCall(IERC20.transfer, (recipient, 1 ether)),
-            abi.encodeWithSelector(FermionWalletGuard.SafePausedError.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.SafePausedError.selector, address(safe))
         );
 
         // …but the escape hatch is not (check-order rule #1).
         _safeExec(
-            address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call
+            address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call
         );
         uint64 executableAt = guard.emergencyDeGuardExecutableAt(address(safe));
         assertEq(executableAt, uint64(block.timestamp) + EMERGENCY_TIMELOCK);
@@ -422,7 +422,7 @@ contract GuardIntegrationTest is Test {
 
     function test_EmergencyDeGuard_SetNonZeroGuard_NotUnlocked() public {
         _safeExec(
-            address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call
+            address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call
         );
         vm.warp(guard.emergencyDeGuardExecutableAt(address(safe)) + 1);
         // Swapping to a DIFFERENT guard is not part of the escape hatch → ADMIN path →
@@ -441,16 +441,16 @@ contract GuardIntegrationTest is Test {
             address(token),
             0,
             abi.encodeCall(IERC20.transfer, (recipient, 1 ether)),
-            abi.encodeWithSelector(FermionWalletGuard.SafePausedError.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.SafePausedError.selector, address(safe))
         );
 
         // Unpause request passes THROUGH the guard while frozen (escape hatch).
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestUnpauseSafe, ()), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestUnpauseSafe, ()), Enum.Operation.Call);
         uint64 executableAt = guard.safeUnpauseExecutableAt(address(safe));
         assertEq(executableAt, uint64(block.timestamp) + ADMIN_TIMELOCK);
 
         vm.warp(executableAt + 1);
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.unpauseSafe, ()), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.unpauseSafe, ()), Enum.Operation.Call);
         assertFalse(guard.safePaused(address(safe)));
 
         _createTransfer(recipient, 1 ether, 1, bytes32(0));
@@ -475,20 +475,20 @@ contract GuardIntegrationTest is Test {
 
     function test_Batch_TruncatedHeader_Reverts() public {
         bytes memory txs = new bytes(50); // < one 85-byte leg header
-        _expectDirectBatchRevert(txs, abi.encodeWithSelector(FermionWalletGuard.MalformedBatch.selector));
+        _expectDirectBatchRevert(txs, abi.encodeWithSelector(FermionGuard.MalformedBatch.selector));
     }
 
     function test_Batch_DataLengthOverrun_Reverts() public {
         // Header claims 1000 bytes of leg calldata; only 4 are present.
         bytes memory txs =
             abi.encodePacked(uint8(0), address(token), uint256(0), uint256(1000), IERC20.transfer.selector);
-        _expectDirectBatchRevert(txs, abi.encodeWithSelector(FermionWalletGuard.MalformedBatch.selector));
+        _expectDirectBatchRevert(txs, abi.encodeWithSelector(FermionGuard.MalformedBatch.selector));
     }
 
     function test_Batch_TrailingBytes_Reverts() public {
         bytes memory leg = _leg(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)));
         bytes memory txs = bytes.concat(leg, hex"deadbe"); // 3-byte smuggled suffix
-        _expectDirectBatchRevert(txs, abi.encodeWithSelector(FermionWalletGuard.MalformedBatch.selector));
+        _expectDirectBatchRevert(txs, abi.encodeWithSelector(FermionGuard.MalformedBatch.selector));
     }
 
     function test_Batch_TooManyLegs_Reverts() public {
@@ -498,21 +498,21 @@ contract GuardIntegrationTest is Test {
             txs = bytes.concat(txs, leg);
         }
         _expectDirectBatchRevert(
-            txs, abi.encodeWithSelector(FermionWalletGuard.BatchTooLarge.selector, MAX_BATCH_LEGS + 1, MAX_BATCH_LEGS)
+            txs, abi.encodeWithSelector(FermionGuard.BatchTooLarge.selector, MAX_BATCH_LEGS + 1, MAX_BATCH_LEGS)
         );
     }
 
     function test_Batch_LegTargetingSafe_Reverts() public {
         bytes memory txs = _leg(address(safe), 0, abi.encodeWithSignature("setGuard(address)", address(0)));
         _expectDirectBatchRevert(
-            txs, abi.encodeWithSelector(FermionWalletGuard.ForbiddenBatchLegTarget.selector, address(safe))
+            txs, abi.encodeWithSelector(FermionGuard.ForbiddenBatchLegTarget.selector, address(safe))
         );
     }
 
     function test_Batch_LegWithDeniedSelector_Reverts() public {
         bytes memory txs = _leg(address(token), 0, abi.encodeCall(IERC20.approve, (recipient, 1 ether)));
         _expectDirectBatchRevert(
-            txs, abi.encodeWithSelector(FermionWalletGuard.DeniedSelector.selector, IERC20.approve.selector)
+            txs, abi.encodeWithSelector(FermionGuard.DeniedSelector.selector, IERC20.approve.selector)
         );
     }
 
@@ -655,10 +655,10 @@ contract GuardIntegrationTest is Test {
             address(token),
             0,
             abi.encodeCall(IERC20.transfer, (recipient, 1 ether)),
-            abi.encodeWithSelector(FermionWalletGuard.NotEnrolledSafe.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.NotEnrolledSafe.selector, address(safe))
         );
         _safeExec(
-            address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call
+            address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call
         );
     }
 
@@ -803,7 +803,7 @@ contract GuardIntegrationTest is Test {
             address(token),
             0,
             abi.encodeCall(IERC20.transfer, (recipient, 1 ether)),
-            abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), evil)
+            abi.encodeWithSelector(FermionGuard.FallbackHandlerForbidden.selector, address(safe), evil)
         );
     }
 
@@ -818,7 +818,7 @@ contract GuardIntegrationTest is Test {
             address(safe),
             0,
             data,
-            abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), evil)
+            abi.encodeWithSelector(FermionGuard.FallbackHandlerForbidden.selector, address(safe), evil)
         );
     }
 
@@ -849,7 +849,7 @@ contract GuardIntegrationTest is Test {
             address(safe),
             0,
             enable,
-            abi.encodeWithSelector(FermionWalletGuard.ModuleGuardNotWired.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.ModuleGuardNotWired.selector, address(safe))
         );
 
         // Wire the module guard first (its own quantum-approved admin step)…
@@ -905,10 +905,10 @@ contract GuardIntegrationTest is Test {
         }
     }
 
-    /// Guard-domain EIP-712 digest (name "FermionWalletGuard", version "1").
+    /// Guard-domain EIP-712 digest (name "FermionGuard", version "1").
     function _guardDigest(bytes32 structHash) internal view returns (bytes32) {
         bytes32 domain = keccak256(
-            abi.encode(DOMAIN_TYPEHASH, keccak256("FermionWalletGuard"), keccak256("1"), block.chainid, address(guard))
+            abi.encode(DOMAIN_TYPEHASH, keccak256("FermionGuard"), keccak256("1"), block.chainid, address(guard))
         );
         return keccak256(abi.encodePacked(hex"1901", domain, structHash));
     }
@@ -1157,14 +1157,14 @@ contract GuardIntegrationTest is Test {
     /// quantum layer distrusts) drain any token as a "gas refund" of an escape call.
     function test_EscapeHatch_GasRefund_CannotDrain() public {
         address thief = makeAddr("thief");
-        bytes memory data = abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ());
+        bytes memory data = abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ());
         uint256 baseGas = 100_000;
         uint256 gasPrice = 1 ether; // token units per gas → ~1e5 ether refund
         bytes32 txHash = safe.getTransactionHash(
             address(guard), 0, data, Enum.Operation.Call, 0, baseGas, gasPrice, address(token), thief, safe.nonce()
         );
         bytes memory sigs = _ownerSigs(txHash);
-        vm.expectRevert(FermionWalletGuard.GasRefundForbidden.selector);
+        vm.expectRevert(FermionGuard.GasRefundForbidden.selector);
         safe.execTransaction(
             address(guard), 0, data, Enum.Operation.Call, 0, baseGas, gasPrice, address(token), payable(thief), sigs
         );
@@ -1179,7 +1179,7 @@ contract GuardIntegrationTest is Test {
     /// Safe permit-lists that selector for a Zodiac-style modifier contract.
     function test_Batch_LegZeroTarget_IsSafeSelfCall_Reverts() public {
         bytes memory policy = abi.encodeCall(
-            FermionWalletGuard.setSelectorPolicy, (address(safe), bytes4(keccak256("enableModule(address)")), true)
+            FermionGuard.setSelectorPolicy, (address(safe), bytes4(keccak256("enableModule(address)")), true)
         );
         _createAdmin(address(guard), keccak256(policy), 1);
         vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
@@ -1194,7 +1194,7 @@ contract GuardIntegrationTest is Test {
             0,
             data,
             Enum.Operation.DelegateCall,
-            abi.encodeWithSelector(FermionWalletGuard.ForbiddenBatchLegTarget.selector, address(0))
+            abi.encodeWithSelector(FermionGuard.ForbiddenBatchLegTarget.selector, address(0))
         );
         assertFalse(safe.isModuleEnabled(evilModule));
     }
@@ -1236,7 +1236,7 @@ contract GuardIntegrationTest is Test {
         _createTransfer(recipient, 2 ether, 2, bytes32(0));
 
         uint256 n = safe.nonce();
-        bytes memory escData = abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ());
+        bytes memory escData = abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ());
         bytes32 escHash = safe.getTransactionHash(
             address(guard), 0, escData, Enum.Operation.Call, 0, 0, 0, address(0), address(0), n + 1
         );
@@ -1290,7 +1290,7 @@ contract GuardIntegrationTest is Test {
 
     function _disableTransferSelector() internal {
         bytes memory policy =
-            abi.encodeCall(FermionWalletGuard.setSelectorPolicy, (address(safe), IERC20.transfer.selector, false));
+            abi.encodeCall(FermionGuard.setSelectorPolicy, (address(safe), IERC20.transfer.selector, false));
         _createAdmin(address(guard), keccak256(policy), 1);
         vm.warp(block.timestamp + ADMIN_TIMELOCK + 1);
         _safeExec(address(guard), 0, policy, Enum.Operation.Call);
@@ -1316,7 +1316,7 @@ contract GuardIntegrationTest is Test {
             address(token),
             0,
             pay,
-            abi.encodeWithSelector(FermionWalletGuard.SelectorNotAllowed.selector, address(safe), IERC20.transfer.selector)
+            abi.encodeWithSelector(FermionGuard.SelectorNotAllowed.selector, address(safe), IERC20.transfer.selector)
         );
 
         bytes memory batch = abi.encodeWithSignature("multiSend(bytes)", _leg(address(token), 0, pay));
@@ -1326,7 +1326,7 @@ contract GuardIntegrationTest is Test {
             0,
             batch,
             Enum.Operation.DelegateCall,
-            abi.encodeWithSelector(FermionWalletGuard.SelectorNotAllowed.selector, address(safe), IERC20.transfer.selector)
+            abi.encodeWithSelector(FermionGuard.SelectorNotAllowed.selector, address(safe), IERC20.transfer.selector)
         );
         assertEq(token.balanceOf(recipient), 0);
     }
@@ -1370,8 +1370,8 @@ contract GuardIntegrationTest is Test {
         vm.prank(relayer);
         guard.requestKeyRevocation(address(safe), validUntil, _ownerSigs(revokeDigest));
 
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe))), Enum.Operation.Call);
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestUnpauseSafe, ()), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.pauseSafe, (address(safe))), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestUnpauseSafe, ()), Enum.Operation.Call);
         vm.warp(block.timestamp + ADMIN_TIMELOCK + 1); // unpause + ADMIN approval mature
         vm.store(address(safe), FALLBACK_SLOT, bytes32(uint256(uint160(makeAddr("evilHandler")))));
 
@@ -1381,13 +1381,13 @@ contract GuardIntegrationTest is Test {
         for (uint256 i = 0; i < 7; ++i) {
             tos[i] = address(guard);
         }
-        datas[0] = abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ());
-        datas[1] = abi.encodeCall(FermionWalletGuard.cancelEmergencyDeGuard, (address(safe)));
+        datas[0] = abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ());
+        datas[1] = abi.encodeCall(FermionGuard.cancelEmergencyDeGuard, (address(safe)));
         datas[2] = abi.encodeCall(PreApprovalEngine.revokePreApproval, (doomed));
         datas[3] = abi.encodeCall(QuantumKeyRegistry.cancelKeyRevocation, (address(safe)));
-        datas[4] = abi.encodeCall(FermionWalletGuard.unpauseSafe, ());
-        datas[5] = abi.encodeCall(FermionWalletGuard.pauseSafe, (address(safe)));
-        datas[6] = abi.encodeCall(FermionWalletGuard.requestUnpauseSafe, ());
+        datas[4] = abi.encodeCall(FermionGuard.unpauseSafe, ());
+        datas[5] = abi.encodeCall(FermionGuard.pauseSafe, (address(safe)));
+        datas[6] = abi.encodeCall(FermionGuard.requestUnpauseSafe, ());
         // Last: the quantum-approved Guard removal — a non-escape transaction that
         // passes the depth check (and works while paused with a bad posture).
         tos[7] = address(safe);
@@ -1418,7 +1418,7 @@ contract GuardIntegrationTest is Test {
         bytes[] memory datas = new bytes[](3);
         uint256[] memory gasArr = new uint256[](3);
         tos[0] = address(guard); // escape call reverting inside the Guard (nothing to cancel)
-        datas[0] = abi.encodeCall(FermionWalletGuard.cancelEmergencyDeGuard, (address(safe)));
+        datas[0] = abi.encodeCall(FermionGuard.cancelEmergencyDeGuard, (address(safe)));
         gasArr[0] = 100_000;
         tos[1] = address(token); // approved transfer reverting inside the token
         datas[1] = abi.encodeCall(IERC20.transfer, (recipient, tooMuch));
@@ -1501,7 +1501,7 @@ contract GuardIntegrationTest is Test {
     /// matured owners-only removal works while paused. The Administrator pauses (its
     /// fast-pause right) and a routine rotation happens mid-window; the clock runs on.
     function test_TM_DeGuardClockSurvivesPauseAndRotation() public {
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
         uint64 executableAt = guard.emergencyDeGuardExecutableAt(address(safe));
         assertEq(executableAt, uint64(block.timestamp) + EMERGENCY_TIMELOCK);
 
@@ -1664,7 +1664,7 @@ contract GuardIntegrationTest is Test {
 
         address handler = makeAddr("handler");
         vm.store(address(safe), FALLBACK_SLOT, bytes32(uint256(uint160(handler))));
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), handler));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.FallbackHandlerForbidden.selector, address(safe), handler));
         guard.registerQuantumKey(address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil, attest, sigs);
         vm.store(address(safe), FALLBACK_SLOT, bytes32(0));
 
@@ -1672,7 +1672,7 @@ contract GuardIntegrationTest is Test {
         vm.store(address(safe), keccak256(abi.encode(address(1), uint256(1))), bytes32(uint256(uint160(module))));
         vm.store(address(safe), keccak256(abi.encode(module, uint256(1))), bytes32(uint256(1)));
         vm.expectRevert(
-            abi.encodeWithSelector(FermionWalletGuard.ModulesEnabledWithoutModuleGuard.selector, address(safe))
+            abi.encodeWithSelector(FermionGuard.ModulesEnabledWithoutModuleGuard.selector, address(safe))
         );
         guard.registerQuantumKey(address(safe), ledger, newRoot, newSeed, H_NEW, PARAM_SET, validUntil, attest, sigs);
     }
@@ -1719,11 +1719,11 @@ contract GuardIntegrationTest is Test {
         assertFalse(guard.supportsInterface(type(IERC20).interfaceId));
 
         vm.expectRevert(QuantumKeyRegistry.ZeroAddress.selector);
-        new FermionWalletGuard(address(0), 2 days, 14 days, 4, 8);
+        new FermionGuard(address(0), 2 days, 14 days, 4, 8);
         vm.expectRevert(QuantumKeyRegistry.InvalidKeyParams.selector);
-        new FermionWalletGuard(makeAddr("noCode"), 2 days, 14 days, 4, 8);
+        new FermionGuard(makeAddr("noCode"), 2 days, 14 days, 4, 8);
         vm.expectRevert(bytes("EMERGENCY_TIMELOCK must exceed ADMIN_TIMELOCK"));
-        new FermionWalletGuard(address(msco), 2 days, 2 days, 4, 8);
+        new FermionGuard(address(msco), 2 days, 2 days, 4, 8);
     }
 
     /// Residual risk documented in threat-model.md §2.1: once an emergency revocation
@@ -1798,7 +1798,7 @@ contract GuardIntegrationTest is Test {
 
         bytes32 id = _createTransfer(recipient, 1 ether, 4, bytes32(0));
         vm.expectEmit(true, true, true, false, address(guard));
-        emit FermionWalletGuard.ModuleTransactionChecked(address(safe), module, id);
+        emit FermionGuard.ModuleTransactionChecked(address(safe), module, id);
         vm.prank(module);
         assertTrue(safe.execTransactionFromModule(address(token), 0, data, Enum.Operation.Call));
         assertEq(token.balanceOf(recipient), 1 ether);
@@ -1814,12 +1814,12 @@ contract GuardIntegrationTest is Test {
             "multiSend(bytes)", _leg(address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)))
         );
         vm.prank(module);
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.ModuleDelegateCallForbidden.selector, module));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.ModuleDelegateCallForbidden.selector, module));
         safe.execTransactionFromModule(address(msco), 0, batch, Enum.Operation.DelegateCall);
 
         address handler = makeAddr("handler");
         vm.prank(module);
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.FallbackHandlerForbidden.selector, address(safe), handler));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.FallbackHandlerForbidden.selector, address(safe), handler));
         safe.execTransactionFromModule(
             address(safe), 0, abi.encodeWithSignature("setFallbackHandler(address)", handler), Enum.Operation.Call
         );
@@ -1828,7 +1828,7 @@ contract GuardIntegrationTest is Test {
         vm.prank(owner1);
         guard.pauseSafe(address(safe));
         vm.prank(module);
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.SafePausedError.selector, address(safe)));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.SafePausedError.selector, address(safe)));
         safe.execTransactionFromModule(
             address(token), 0, abi.encodeCall(IERC20.transfer, (recipient, 1 ether)), Enum.Operation.Call
         );
@@ -1838,7 +1838,7 @@ contract GuardIntegrationTest is Test {
     /// ends the Guard's tenure and clears the pending emergency request.
     function test_TM_ModuleExecutedSetGuardClearsEmergencyRequest() public {
         address module = _enableModule();
-        _safeExec(address(guard), 0, abi.encodeCall(FermionWalletGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
+        _safeExec(address(guard), 0, abi.encodeCall(FermionGuard.requestEmergencyDeGuard, ()), Enum.Operation.Call);
         assertGt(guard.emergencyDeGuardExecutableAt(address(safe)), 0);
 
         bytes memory remove = abi.encodeWithSignature("setGuard(address)", address(0));

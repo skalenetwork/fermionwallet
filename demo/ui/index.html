@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FermionWallet — Live Demo</title>
+<title>FermionGuard — Live Demo</title>
 <link rel="icon" type="image/svg+xml" href="/safe-app/logo.svg">
 <style>
   :root {
@@ -73,9 +73,9 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>FermionWallet <span class="badge ok" id="net">testnet</span></h1>
+  <h1>FermionGuard <span class="badge ok" id="net">testnet</span></h1>
   <p class="sub">Quantum security add-on for Gnosis Safe — live demo. A real Safe
-  v<span id="safe-ver">1.5.0</span> runs on an anvil testnet inside this container, protected by the FermionWalletGuard:
+  v<span id="safe-ver">1.5.0</span> runs on an anvil testnet inside this container, protected by the FermionGuard:
   every transfer must carry a hybrid <strong>ECDSA + XMSS (RFC 8391)</strong> pre-approval.</p>
 
   <div class="grid">
@@ -98,7 +98,7 @@
   </div>
 
   <div class="card device">
-    <h2>Quantum Administrator's Ledger — FermionWallet XMSS app <span class="badge bad">simulated</span></h2>
+    <h2>Quantum Administrator's Ledger — FermionGuard XMSS app <span class="badge bad">simulated</span></h2>
     <div class="device-body">
       <div class="lcd" id="lcd">Connecting to device…</div>
       <div class="device-ctl">
@@ -107,7 +107,7 @@
         <button class="reject" id="dev-reject" disabled>Reject</button>
       </div>
     </div>
-    <p class="sim">The real FermionWallet Ledger app isn't built yet, so this device is simulated: it follows
+    <p class="sim">The real FermionGuard Ledger app isn't built yet, so this device is simulated: it follows
     the app spec — it holds the keys, picks the leaf from its own counter, shows every signed field, and
     signs only after you've paged through every screen and pressed Approve. Rejecting — or leaving it
     60 s on the decision screen without pressing a button — signs nothing and consumes no leaf.</p>
@@ -152,7 +152,7 @@
   <footer>
     Everything runs inside this container: anvil chain <span id="chain"></span>,
     block <span id="block"></span>. Contracts &amp; full Foundry test suite:
-    <a href="https://github.com/skalenetwork/fermionwallet" target="_blank" rel="noopener">skalenetwork/fermionwallet</a>.
+    <a href="https://github.com/skalenetwork/fermionwallet" target="_blank" rel="noopener">skalenetwork/fermionguard</a>.
     Demo XMSS key h=4 (16 one-time leaves) — restart the container to reset.
   </footer>
 </div>
@@ -208,7 +208,7 @@ async function flow(name, btn, out) {
     })).json();
     if (r.ok && r.outcome === 'blocked') {
       out.className = 'out show good';
-      out.textContent = '✔ BLOCKED by FermionWalletGuard\n' + r.reason +
+      out.textContent = '✔ BLOCKED by FermionGuard\n' + r.reason +
         (r.revertData ? '\nrevert: ' + r.revertData : '');
     } else if (r.ok && r.outcome === 'allowed') {
       out.className = 'out show';
@@ -247,7 +247,7 @@ async function refreshDevice() {
     const d = await (await fetch('/api/device/screen')).json();
     if (d.error) throw new Error(d.error);
     if (!d.active) {
-      $('lcd').innerHTML = '<div class="t">FermionWallet XMSS</div>' +
+      $('lcd').innerHTML = '<div class="t">FermionGuard XMSS</div>' +
         '<div class="l">' + esc(d.key) + '</div>' +
         '<div class="l">Next leaf #' + d.nextLeaf + ' of ' + d.totalLeaves + '</div>' +
         '<div class="l">Idle — waiting for a signing request</div>';

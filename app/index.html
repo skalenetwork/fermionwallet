@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FermionWallet — Safe App</title>
+<title>FermionGuard — Safe App</title>
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <style>
   :root {
@@ -52,7 +52,7 @@
 <div class="wrap">
   <header>
     <img src="logo.svg" alt="">
-    <h1>FermionWallet<small>Quantum security add-on for your Safe</small></h1>
+    <h1>FermionGuard<small>Quantum security add-on for your Safe</small></h1>
   </header>
 
   <div id="status"><span class="badge off">Connecting to Safe…</span></div>
@@ -72,9 +72,9 @@
   <div class="card">
     <h2>Quantum protection</h2>
     <p class="note">
-      FermionWallet adds a second, post-quantum authorization layer to this Safe:
+      FermionGuard adds a second, post-quantum authorization layer to this Safe:
       every transaction must carry a hybrid ECDSA&nbsp;+&nbsp;XMSS (RFC&nbsp;8391)
-      pre-approval signed on a Ledger, enforced on-chain by the FermionWallet Guard.
+      pre-approval signed on a Ledger, enforced on-chain by the FermionGuard.
       Your owner keys and address stay exactly as they are — the Guard is an
       add-on, and it is removable by design (no-brick escape hatch).
     </p>
@@ -82,7 +82,7 @@
       <strong>Onboarding preflight:</strong> before enrollment, the Safe's fallback
       handler must be removed (ERC-1271 <code>isValidSignature</code> would otherwise
       bypass the Guard), the Safe must have no enabled modules (modules skip the
-      transaction Guard) unless it is on Safe&nbsp;1.5+ with the FermionWallet module
+      transaction Guard) unless it is on Safe&nbsp;1.5+ with the FermionGuard module
       guard wired too, and existing token / Permit2 allowances must be revoked.
       This app checks the handler and modules above; allowances are not checked here.
     </p>
@@ -146,10 +146,10 @@
       '0000000000000000000000000000000000000000000000000000000000000001' +
       '000000000000000000000000000000000000000000000000000000000000000a';
 
-    // Canonical FermionWallet Guard deployments, by chain ID (lower-case addresses).
+    // Canonical FermionGuard deployments, by chain ID (lower-case addresses).
     // Empty until deployments.json is published: until then no guard can be shown as
-    // a verified FermionWallet Guard.
-    const FERMIONWALLET_GUARDS = {};
+    // a verified FermionGuard.
+    const FERMIONGUARD_GUARDS = {};
 
     const sdk = new SafeAppsSDK();
     const timeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms));
@@ -157,7 +157,7 @@
     const info = await Promise.race([sdk.safe.getInfo(), timeout(15000)]);
     const safe = info.safeAddress;
     const isFermionGuard = (addr) =>
-      (FERMIONWALLET_GUARDS[String(info.chainId)] || []).includes(addr.toLowerCase());
+      (FERMIONGUARD_GUARDS[String(info.chainId)] || []).includes(addr.toLowerCase());
 
     async function slotAddress(slot) {
       const raw = await sdk.eth.getStorageAt([safe, slot, 'latest']);
@@ -196,12 +196,12 @@
       const supported = maj > 1 || (maj === 1 && min >= 3);
       setCell('safe-version', supported
         ? document.createTextNode(version)
-        : badge('warn', version + ' — FermionWallet needs Safe 1.3.0+'));
+        : badge('warn', version + ' — FermionGuard needs Safe 1.3.0+'));
     } catch { $('safe-version').textContent = 'unavailable'; }
     const v15 = version ? (() => { const [a, b] = version.split('.').map(Number); return a > 1 || (a === 1 && b >= 5); })() : false;
 
-    // Transaction Guard. Any guard other than a published FermionWallet deployment
-    // (another vendor's, or a look-alike) must not read as FermionWallet protection.
+    // Transaction Guard. Any guard other than a published FermionGuard deployment
+    // (another vendor's, or a look-alike) must not read as FermionGuard protection.
     // Addresses are RPC data: insert as text only.
     let guardIsFermion = false;
     try {
@@ -212,14 +212,14 @@
         guardIsFermion = isFermionGuard(guard);
         setCell('safe-guard',
           guardIsFermion
-            ? badge('ok', 'FermionWallet Guard (published deployment)')
-            : badge('warn', 'set — not a verified FermionWallet Guard'),
+            ? badge('ok', 'FermionGuard (published deployment)')
+            : badge('warn', 'set — not a verified FermionGuard'),
           document.createElement('br'),
           document.createTextNode(guard));
       }
     } catch { $('safe-guard').textContent = 'unavailable'; }
 
-    // Fallback handler. "Bypass closed" is only true while a FermionWallet Guard is
+    // Fallback handler. "Bypass closed" is only true while a FermionGuard is
     // attached (it refuses to set a handler); without one, an empty slot just means
     // this preflight item passes.
     try {
@@ -242,8 +242,8 @@
         if (!moduleGuard) setCell('safe-module-guard', document.createTextNode('none'));
         else setCell('safe-module-guard',
           isFermionGuard(moduleGuard)
-            ? badge('ok', 'FermionWallet Guard (published deployment)')
-            : badge('warn', 'set — not a verified FermionWallet Guard'),
+            ? badge('ok', 'FermionGuard (published deployment)')
+            : badge('warn', 'set — not a verified FermionGuard'),
           document.createElement('br'), document.createTextNode(moduleGuard));
       } catch { $('safe-module-guard').textContent = 'unavailable'; }
     }
@@ -256,7 +256,7 @@
       } else {
         const covered = v15 && moduleGuard && isFermionGuard(moduleGuard);
         const nodes = [covered
-          ? badge('ok', mods.length + (more ? '+' : '') + ' — covered by the FermionWallet module guard')
+          ? badge('ok', mods.length + (more ? '+' : '') + ' — covered by the FermionGuard module guard')
           : badge('warn', mods.length + (more ? '+' : '') + ' — modules bypass the Guard; ' +
               (v15 ? 'remove them or wire the module guard' : 'remove them before enrollment'))];
         for (const m of mods) nodes.push(document.createElement('br'), document.createTextNode(m));

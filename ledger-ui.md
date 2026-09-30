@@ -1,6 +1,6 @@
 # Ledger XMSS App — Device UI Reference
 
-Screen-by-screen visual reference for the FermionWallet Ledger app. The normative behavior lives in [`ledger-xmss-app.md`](./ledger-xmss-app.md) ("Device UI specification"); this document is the illustrated companion — what the Administrator actually sees, in order, for every flow. Mockups show the Nano-class (BAGL) layout; Stax/Flex (NBGL) renders the same fields as touch pages with identical content and ordering.
+Screen-by-screen visual reference for the FermionGuard Ledger app. The normative behavior lives in [`ledger-xmss-app.md`](./ledger-xmss-app.md) ("Device UI specification"); this document is the illustrated companion — what the Administrator actually sees, in order, for every flow. Mockups show the Nano-class (BAGL) layout; Stax/Flex (NBGL) renders the same fields as touch pages with identical content and ordering.
 
 The framing convention carries meaning and is enforced by firmware, not styling choice:
 

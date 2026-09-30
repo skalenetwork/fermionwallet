@@ -2,7 +2,7 @@
   <rect width="860" height="440" fill="#0c1626"/>
   <rect width="860" height="56" fill="#16263f"/>
   <circle cx="34" cy="28" r="14" fill="#57d6c0"/>
-  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONWALLET</text>
+  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONGUARD</text>
   <text x="250" y="34" fill="#8fa3bf" font-size="14">Owner signing session</text>
   <text x="660" y="34" fill="#f2b84b" font-size="13">Session expires in 41 h 12 m</text>
   <!-- identity -->

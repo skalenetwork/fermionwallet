@@ -1,6 +1,6 @@
 export {
   ERC20Token,
-  FermionWallet,
+  FermionGuard,
   QuantumKeyManager,
   MIN_WINDOW_MS,
   DEMO_SIGNATURE_ALGORITHM

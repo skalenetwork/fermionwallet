@@ -7,7 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Enum} from "@safe-global/safe-contracts/contracts/libraries/Enum.sol";
 import {ITransactionGuard} from "@safe-global/safe-contracts/contracts/base/GuardManager.sol";
 
-import {FermionWalletGuard} from "../src/FermionWalletGuard.sol";
+import {FermionGuard} from "../src/FermionGuard.sol";
 import {PreApprovalEngine} from "../src/PreApprovalEngine.sol";
 import {QuantumKeyRegistry} from "../src/QuantumKeyRegistry.sol";
 import {XMSS} from "xmss-solidity/XMSS.sol";
@@ -86,7 +86,7 @@ contract MockSafe {
 
 contract Placeholder {}
 
-contract FermionWalletGuardTest is Test {
+contract FermionGuardTest is Test {
     uint64 constant ADMIN_TIMELOCK = 48 hours;
     uint64 constant EMERGENCY_TIMELOCK = 14 days;
 
@@ -104,7 +104,7 @@ contract FermionWalletGuardTest is Test {
     );
     bytes32 constant PARAM_SET = keccak256("XMSS-SHA2_4_256-test");
 
-    FermionWalletGuard guard;
+    FermionGuard guard;
     MockSafe safe;
     MockToken token;
 
@@ -121,7 +121,7 @@ contract FermionWalletGuardTest is Test {
 
     function setUp() public {
         admin = vm.addr(adminPk);
-        guard = new FermionWalletGuard(
+        guard = new FermionGuard(
             address(new Placeholder()), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, 100, 16
         );
         safe = new MockSafe(owner);
@@ -140,7 +140,7 @@ contract FermionWalletGuardTest is Test {
         assertTrue(guard.safePaused(address(safe)));
 
         _approveTransfer(500, bytes32(0));
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.SafePausedError.selector, address(safe)));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.SafePausedError.selector, address(safe)));
         safe.exec(address(token), 0, _transferData(500));
     }
 
@@ -182,7 +182,7 @@ contract FermionWalletGuardTest is Test {
         guard.pauseSafe(address(safe));
 
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.SafeNotPaused.selector, owner));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.SafeNotPaused.selector, owner));
         guard.requestUnpauseSafe(); // an owner EOA is not the Safe
 
         safe.exec(address(guard), 0, abi.encodeCall(guard.requestUnpauseSafe, ()));
@@ -217,7 +217,7 @@ contract FermionWalletGuardTest is Test {
         uint64 cooldownUntil = guard.safePauseCooldownUntil(address(safe));
         assertGt(cooldownUntil, block.timestamp);
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.PauseCooldown.selector, address(safe), cooldownUntil));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.PauseCooldown.selector, address(safe), cooldownUntil));
         guard.pauseSafe(address(safe));
 
         // …but the Safe itself (threshold) still can, and the owner can after cooldown.
@@ -403,7 +403,7 @@ contract FermionWalletGuardTest is Test {
         MockSafe fresh = new MockSafe(owner);
         fresh.setGuardDirect(address(guard));
 
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.NotEnrolledSafe.selector, address(fresh)));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.NotEnrolledSafe.selector, address(fresh)));
         fresh.exec(address(token), 0, _transferData(1));
 
         fresh.exec(address(fresh), 0, abi.encodeWithSignature("setGuard(address)", address(0)));
@@ -446,7 +446,7 @@ contract FermionWalletGuardTest is Test {
     function test_transferApprovalDoesNotAuthoriseEthValue() public {
         vm.deal(address(safe), 1 ether);
         _approveTransfer(500, bytes32(0));
-        vm.expectRevert(abi.encodeWithSelector(FermionWalletGuard.NativeValueOnTransfer.selector, 1 ether));
+        vm.expectRevert(abi.encodeWithSelector(FermionGuard.NativeValueOnTransfer.selector, 1 ether));
         safe.exec(address(token), 1 ether, _transferData(500));
     }
 
@@ -455,7 +455,7 @@ contract FermionWalletGuardTest is Test {
     /// A commitment queue full of expired approvals must not lock that payment out
     /// forever — creation prunes dead entries before checking the cap.
     function test_queueOfExpiredApprovalsDoesNotJam() public {
-        guard = new FermionWalletGuard(
+        guard = new FermionGuard(
             address(new Placeholder()), ADMIN_TIMELOCK, EMERGENCY_TIMELOCK, 100, 2
         );
         keyId = _register(safe, 4);
@@ -631,7 +631,7 @@ contract FermionWalletGuardTest is Test {
         bytes32 domain = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("FermionWalletGuard"),
+                keccak256("FermionGuard"),
                 keccak256("1"),
                 block.chainid,
                 address(guard)

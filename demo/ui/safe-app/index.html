@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FermionWallet</title>
+<title>FermionGuard</title>
 <link rel="icon" href="/safe-app/logo.svg" type="image/svg+xml">
 <style>
   :root {
@@ -80,7 +80,7 @@
 <div class="wrap">
   <header>
     <img src="/safe-app/logo.svg" alt="">
-    <h1>FermionWallet</h1>
+    <h1>FermionGuard</h1>
     <span class="pill muted" id="protection">Loading…</span>
   </header>
 
@@ -167,7 +167,7 @@ let retry = 1000;
 async function connect() {
   if (!inSafeWallet) {
     $('protection').textContent = 'Not in a Safe';
-    banner('Open FermionWallet from Safe{Wallet}: Apps → FermionWallet.');
+    banner('Open FermionGuard from Safe{Wallet}: Apps → FermionGuard.');
     return;
   }
   try {
@@ -200,13 +200,13 @@ function renderStatus(s) {
   } else if (s.protected) {
     p.className = 'pill warn'; p.textContent = 'No active key';
     $('c-protection').textContent = 'Guard active, no key';
-    banner('The FermionWallet Guard is installed but this Safe has no active quantum key, so every transaction is blocked. Register or rotate a key.', true);
+    banner('The FermionGuard is installed but this Safe has no active quantum key, so every transaction is blocked. Register or rotate a key.', true);
   } else {
     p.className = 'pill bad'; p.textContent = 'Not protected';
     $('c-protection').textContent = 'Not protected';
     banner(s.activeGuard
-      ? 'This Safe uses a different Guard (' + s.activeGuard + '). FermionWallet approvals have no effect on it.'
-      : 'This Safe is not protected by FermionWallet. Its transactions need only owner signatures.', !s.activeGuard);
+      ? 'This Safe uses a different Guard (' + s.activeGuard + '). FermionGuard approvals have no effect on it.'
+      : 'This Safe is not protected by FermionGuard. Its transactions need only owner signatures.', !s.activeGuard);
   }
   $('c-guard').textContent = s.protected ? 'Guard ' + s.guard : (s.activeGuard ? 'Other guard ' + s.activeGuard : 'No guard');
   if (k) {
@@ -381,7 +381,7 @@ async function refresh() {
       if (!a.error) renderApprovals(a);
     }
   } catch (e) {
-    banner('Could not reach the FermionWallet service: ' + e.message, true);
+    banner('Could not reach the FermionGuard service: ' + e.message, true);
   } finally {
     refreshing = false;
   }

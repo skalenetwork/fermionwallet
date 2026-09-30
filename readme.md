@@ -1,7 +1,7 @@
-# FermionWallet
+# FermionGuard
 
 <p align="center">
-  <img src="./assets/fermionwallet-logo.svg?v=2" alt="FermionWallet logo — a fermion holding a quantum" width="420"/>
+  <img src="./assets/fermionguard-logo.svg?v=2" alt="FermionGuard logo — a fermion holding a quantum" width="420"/>
 </p>
 
 **The quantum-ready second authorization layer for institutional digital-asset custody.**
@@ -10,13 +10,13 @@
 
 > **Official Safe App URL:** `https://skalenetwork.github.io/fermionwallet/app/`
 >
-> Add it in Safe{Wallet} under *Apps → My custom apps → Add custom Safe App*. Only ever copy this URL from this README — never from an email, chat message or search result. The app is a preview: it shows your Safe's FermionWallet readiness (Guard and fallback-handler status); approvals and the key ceremony are not live yet, and the contracts are not audited.
+> Add it in Safe{Wallet} under *Apps → My custom apps → Add custom Safe App*. Only ever copy this URL from this README — never from an email, chat message or search result. The app is a preview: it shows your Safe's FermionGuard readiness (Guard and fallback-handler status); approvals and the key ceremony are not live yet, and the contracts are not audited.
 >
-> **Try it locally:** each release ships a demo container: a local chain with a real Safe, the FermionWallet Guard and a simulated Ledger, plus a web UI. Run `docker run --rm -p 8080:8080 -p 8545:8545 ghcr.io/skalenetwork/fermionwallet-demo:latest` and open http://localhost:8080.
+> **Try it locally:** each release ships a demo container: a local chain with a real Safe, the FermionGuard and a simulated Ledger, plus a web UI. Run `docker run --rm -p 8080:8080 -p 8545:8545 ghcr.io/skalenetwork/fermionguard-demo:latest` and open http://localhost:8080.
 >
-> **Try it in the real Safe{Wallet}:** `cd demo/wallet && docker compose up -d --wait`, then open http://localhost:8000. This runs the open-source Safe{Wallet} stack locally with FermionWallet as a Safe App. You try to pay from the Safe and Safe{Wallet} can't execute it; you approve the payment on the simulated Ledger and it goes through. See [demo/wallet](./demo/wallet/README.md). Both commands pull images that are published with the first release that includes them. Until then, build from a source checkout: `docker build -f demo/Dockerfile -t fermionwallet-demo .` in the repository root, then `docker run --rm -p 8080:8080 -p 8545:8545 fermionwallet-demo`; for Safe{Wallet}, use the build command in [demo/wallet](./demo/wallet/README.md#run-it).
+> **Try it in the real Safe{Wallet}:** `cd demo/wallet && docker compose up -d --wait`, then open http://localhost:8000. This runs the open-source Safe{Wallet} stack locally with FermionGuard as a Safe App. You try to pay from the Safe and Safe{Wallet} can't execute it; you approve the payment on the simulated Ledger and it goes through. See [demo/wallet](./demo/wallet/README.md). Both commands pull images that are published with the first release that includes them. Until then, build from a source checkout: `docker build -f demo/Dockerfile -t fermionguard-demo .` in the repository root, then `docker run --rm -p 8080:8080 -p 8545:8545 fermionguard-demo`; for Safe{Wallet}, use the build command in [demo/wallet](./demo/wallet/README.md#run-it).
 
-Banks, qualified custodians, and enterprise treasuries already run the gold-standard stack: Gnosis Safe, policy engines, hardware keys, and regulated operations. FermionWallet does not replace that stack. It **hardens it** — adding a cryptographically independent second gate that sits in the execution path of every high-value transfer.
+Banks, qualified custodians, and enterprise treasuries already run the gold-standard stack: Gnosis Safe, policy engines, hardware keys, and regulated operations. FermionGuard does not replace that stack. It **hardens it** — adding a cryptographically independent second gate that sits in the execution path of every high-value transfer.
 
 If a signer is compromised, a policy is misconfigured, or classical signatures eventually fall to quantum computers, the transfer still does not move. Not until a separate, domain-bound, post-quantum authorization says yes.
 
@@ -34,7 +34,7 @@ That is the product: **keep the wallets you already trust. Make the next decade 
 
 Few people on earth have run quantum-materials research at a national lab, directed a NIST-accredited cryptographic validation laboratory, shipped enterprise-grade cryptography, and operated a live blockchain network. That intersection is exactly what post-quantum custody requires — and it is why institutions evaluating their PQ migration path start the conversation with Stan.
 
-FermionWallet is his answer to the question every custody board is now asking: *what protects the vault the day classical signatures stop being enough?*
+FermionGuard is his answer to the question every custody board is now asking: *what protects the vault the day classical signatures stop being enough?*
 
 ---
 
@@ -46,7 +46,7 @@ Institutional custody is already excellent at *who* can sign. It is not yet exce
 - Hardware isolation is operational security. It is not a second cryptographic domain.
 - Off-chain policy is useful. It is not an on-chain veto.
 
-FermionWallet closes that gap. It installs as a **Safe Guard** — the official Gnosis Safe pre-execution hook — and refuses any ERC-20 movement that lacks a matching, time-bound, nonce-protected, quantum-signed pre-approval.
+FermionGuard closes that gap. It installs as a **Safe Guard** — the official Gnosis Safe pre-execution hook — and refuses any ERC-20 movement that lacks a matching, time-bound, nonce-protected, quantum-signed pre-approval.
 
 Owners still sign. Governance still governs. The Guard is the last word.
 
@@ -57,7 +57,7 @@ Owners still sign. Governance still governs. The Guard is the last word.
 | Layer | What it is | Who it protects against |
 |---|---|---|
 | **First authorization** | Existing Safe owners, thresholds, and treasury workflow | Rogue operators, lost devices, internal process failure |
-| **Second authorization** | FermionWallet quantum key + policy-bound pre-approval, enforced on-chain | Compromised signers, replay, allowance drains, future quantum attacks on classical keys |
+| **Second authorization** | FermionGuard quantum key + policy-bound pre-approval, enforced on-chain | Compromised signers, replay, allowance drains, future quantum attacks on classical keys |
 
 Two independent cryptographic domains. One execution path. Zero silent bypasses.
 
@@ -67,7 +67,7 @@ This is the control model regulated custodians already describe to examiners —
 
 ## Built for the desks that move real AUM
 
-FermionWallet is designed for teams that cannot afford a “move fast and hope” wallet:
+FermionGuard is designed for teams that cannot afford a “move fast and hope” wallet:
 
 - **Qualified custodians and digital-asset banks** that must prove dual control to regulators, not just to themselves
 - **Corporate and protocol treasuries** sitting on Safe vaults that already hold eight- and nine-figure balances
@@ -82,7 +82,7 @@ If your mandate is *client assets, bank-grade controls, and a 10-year cryptograp
 
 **Category.** Post-quantum security for on-chain institutional custody — not a new wallet, not a new chain, not another consumer seed-phrase app.
 
-**Wedge.** The Gnosis Safe Guard is a standard, audited integration point already in production at the institutions that matter. FermionWallet rides that rail. Sales cycle starts with “install a Guard,” not “migrate the vault.”
+**Wedge.** The Gnosis Safe Guard is a standard, audited integration point already in production at the institutions that matter. FermionGuard rides that rail. Sales cycle starts with “install a Guard,” not “migrate the vault.”
 
 **Moat.**
 - On-chain enforcement, not a backend promise
@@ -90,7 +90,7 @@ If your mandate is *client assets, bank-grade controls, and a 10-year cryptograp
 - Policy as a hard cap (token, amount, recipient, expiry) — never a suggestion
 - Explicit denial of the classic drain paths: `approve`, `permit`, `transferFrom`, `delegatecall`, module bypass, refund abuse, guard removal
 
-**Why now.** NIST has standardized post-quantum signatures. Institutional boards are asking about cryptographic agility. The wallets that hold the assets have not yet answered. FermionWallet is that answer, shipped as an add-on rather than a rip-and-replace.
+**Why now.** NIST has standardized post-quantum signatures. Institutional boards are asking about cryptographic agility. The wallets that hold the assets have not yet answered. FermionGuard is that answer, shipped as an add-on rather than a rip-and-replace.
 
 **Why this shape of product.** We did not invent a fake “contract signer.” We implemented the real Safe execution model: `ITransactionGuard.checkTransaction` as a veto, `setGuard` as the install path, and a hardening program that treats module bypass, nonce quirks, reentrancy, and refund drains as first-class threats.
 
@@ -108,7 +108,7 @@ A Safe Guard that will not let the vault move a token unless a quantum-safe seco
 Treasury / Ops / Custody UI
             |
             v
-FermionWallet Add-on Service
+FermionGuard Add-on Service
   - generate PQ / hybrid keys
   - create time-bound pre-approvals
   - bind policyHash + chain + Safe
@@ -127,7 +127,7 @@ Quantum Key Registry          Pre-approval Engine
   - executes only if Guard returns
 ```
 
-Full design: [`fermionwalletspec.md`](./fermionwalletspec.md)
+Full design: [`fermionguardspec.md`](./fermionguardspec.md)
 
 ---
 
@@ -142,13 +142,13 @@ Full design: [`fermionwalletspec.md`](./fermionwalletspec.md)
 - Non-upgradeable Guard; new code ships as a new Guard set by Safe governance
 - Selector allowlist: `transfer` only by default; each Safe can add other selectors only through a timelocked admin approval, and `approve`, `increaseAllowance`, `permit` and `transferFrom` can never be allowed
 
-Details live in [`fermionwallet-guard-module.md`](./fermionwallet-guard-module.md).
+Details live in [`fermionguard-module.md`](./fermionguard-module.md).
 
 ---
 
 ## Status
 
-The Solidity contracts are implemented and tested: the `FermionWalletGuard` (transaction guard and module guard, built on the official Safe `ITransactionGuard` / `IModuleGuard` interfaces) with its Quantum Key Registry, Pre-approval Engine and XMSS verifier. The XMSS verifier is formally verified against RFC 8391; the Guard, registry and engine are covered by unit, integration, fuzz and invariant tests but not formally verified. They are not audited and not deployed on any public network. The Ledger app is specified but not built yet (the demos use a simulated Ledger). The repository also keeps an early JavaScript prototype of the key, policy, and pre-approval flows (below).
+The Solidity contracts are implemented and tested: the `FermionGuard` (transaction guard and module guard, built on the official Safe `ITransactionGuard` / `IModuleGuard` interfaces) with its Quantum Key Registry, Pre-approval Engine and XMSS verifier. The XMSS verifier is formally verified against RFC 8391; the Guard, registry and engine are covered by unit, integration, fuzz and invariant tests but not formally verified. They are not audited and not deployed on any public network. The Ledger app is specified but not built yet (the demos use a simulated Ledger). The repository also keeps an early JavaScript prototype of the key, policy, and pre-approval flows (below).
 
 This is early. The category is not.
 
@@ -161,10 +161,10 @@ An early JavaScript model of the key, policy and pre-approval flow (`src/`). It 
 It mirrors the contract's TRANSFER-class rules: the transfer must go to the signed `recipient`, for exactly the signed `amount` of the signed token, once; nonces are unique per wallet; the window must be at least 15 minutes (`MIN_WINDOW_MS`), end in the future, and is inclusive at both ends; one active key per wallet, and approvals made under a rotated key stay executable. It does not model: the Safe address and chain id, EIP-712 digests, XMSS leaf consumption, PAYLOAD/ADMIN classes, Tier-1 `safeTxHash` pins, key revocation, or the selector allowlist. Its clock is in milliseconds (`Date.now()`); the contract's is `block.timestamp` seconds.
 
 ```js
-import { ERC20Token, FermionWallet, MIN_WINDOW_MS } from './src/index.js';
+import { ERC20Token, FermionGuard, MIN_WINDOW_MS } from './src/index.js';
 
 const token = new ERC20Token('Fermion', 'FERM');
-const wallet = new FermionWallet('0xOwner');
+const wallet = new FermionGuard('0xOwner');
 
 token.mint('0xOwner', 1000n);
 const quantumKey = wallet.generateQuantumKeyPair();
@@ -192,7 +192,7 @@ npm test
 
 ## For operators, risk, and investment committees
 
-If you already custody on Safe, FermionWallet is the smallest possible change with the largest possible security delta: one Guard, one second key domain, one on-chain veto.
+If you already custody on Safe, FermionGuard is the smallest possible change with the largest possible security delta: one Guard, one second key domain, one on-chain veto.
 
 If you are allocating to the infrastructure that will still be standing when classical signatures are a footnote, this is the layer to underwrite.
 

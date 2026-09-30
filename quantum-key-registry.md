@@ -8,11 +8,11 @@
 ## Open-source libraries / tooling used
 
 - OpenZeppelin Contracts (non-upgradeable): `EIP712`, `Nonces`, `BitMaps`, `SignatureChecker`, `SafeCast`
-- The registry is `contracts/src/QuantumKeyRegistry.sol`, an abstract base compiled into the one deployed `FermionWalletGuard` contract (one address, one storage)
+- The registry is `contracts/src/QuantumKeyRegistry.sol`, an abstract base compiled into the one deployed `FermionGuard` contract (one address, one storage)
 - ethers.js or viem for contract interaction
 - Node.js crypto APIs for hashing and validation
 
-## Role in the FermionWallet MVP
+## Role in the FermionGuard MVP
 
 The quantum key registry stores the metadata and state of registered quantum keys used for second authorization.
 
@@ -31,7 +31,7 @@ The primary registered key is the **Quantum Administrator's permanent XMSS root*
 
 A key becomes **the quantum approval key** for a Safe in a single on-chain transaction, jointly authorized off-chain:
 
-1. **Generate.** The Quantum Administrator generates the XMSS key with Ledger (see the key ceremony in [fermionwallet-add-on-service.md](./fermionwallet-add-on-service.md)); only the public root leaves the hardware boundary, attested by a Ledger-signed EIP-712 `QuantumKeyAttestation`.
+1. **Generate.** The Quantum Administrator generates the XMSS key with Ledger (see the key ceremony in [fermionguard-add-on-service.md](./fermionguard-add-on-service.md)); only the public root leaves the hardware boundary, attested by a Ledger-signed EIP-712 `QuantumKeyAttestation`.
 2. **Owners co-sign the root itself, off-chain.** Each Safe owner clear-signs EIP-712 `ApproveQuantumKey { safe, quantumAdmin, xmssRoot, xmssSeed, treeHeight, parameterSet, registryNonce, validUntil }` on their own hardware wallet (the public `xmssSeed` is a mandatory RFC 8391 verification input and is registered alongside the root). No opaque key IDs are ever signed — a compromised frontend cannot substitute a root (or swap in an attacker's Administrator address) without invalidating every signature.
 3. **Activate.** The Administrator submits `registerQuantumKey(safe, quantumAdmin, root, xmssSeed, treeHeight, parameterSet, validUntil, ledgerAttestation, ownerSigs)` — `quantumAdmin` is the Administrator's Ledger EOA, stored as the classical verifier address for every hybrid pre-approval. The contract verifies the owner threshold via the Safe's legacy `checkSignatures(bytes32 dataHash, bytes data, bytes signatures)` entry point (with the EIP-712 message itself as `data` — see below), verifies the attestation is signed by `quantumAdmin`, consumes the Safe's `registryNonce`, and sets the key **`Active`**. Registration is refused if the Safe already has an Active key (`SafeAlreadyEnrolled` — a replacement key goes through rotation), if this Safe registered the same root before (`RootAlreadyRegistered`), if `validUntil` has passed, or if the Safe has a fallback handler or unguarded enabled modules (the Guard's enrollment posture check). The Guard initialises the Safe's selector permit-list to `{transfer}` only at the Safe's **first** registration; registering a new key after an emergency revocation keeps the permit-list the owners have governed into place.
 

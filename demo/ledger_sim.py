@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Simulated FermionWallet Ledger device for the demo.
+"""Simulated FermionGuard Ledger device for the demo.
 
-The FermionWallet XMSS Ledger app is specified (ledger-xmss-app.md) but not yet
+The FermionGuard XMSS Ledger app is specified (ledger-xmss-app.md) but not yet
 built, so Ledger's Speculos emulator has no binary to run. This process stands in
 for the device and follows the spec's behaviour for the commands the demo uses:
 
@@ -162,7 +162,7 @@ def eip712_digest(p, leaf, chain_id, verifying_contract):
     """The device hashes the fields it displays — it never signs a host-supplied hash."""
     domain = keccak(cast(
         "abi-encode", "f(bytes32,bytes32,bytes32,uint256,address)",
-        keccak(DOMAIN_TYPE), keccak("FermionWalletGuard"), keccak("1"), str(chain_id), verifying_contract,
+        keccak(DOMAIN_TYPE), keccak("FermionGuard"), keccak("1"), str(chain_id), verifying_contract,
     ))
     struct = keccak(cast(
         "abi-encode",
@@ -384,6 +384,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"[ledger-sim] FermionWallet Ledger (simulated) on 127.0.0.1:{PORT} — "
+    print(f"[ledger-sim] FermionGuard Ledger (simulated) on 127.0.0.1:{PORT} — "
           f"{key_label()}, admin {ADMIN_ADDRESS}", flush=True)
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

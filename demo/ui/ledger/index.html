@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ledger · FermionWallet XMSS</title>
+<title>Ledger · FermionGuard XMSS</title>
 <link rel="icon" href="/safe-app/logo.svg" type="image/svg+xml">
 <style>
   :root { --bg:#16181d; --body:#2a2d33; --edge:#3a3e46; --lcd:#04060a; --ink:#e8f1ff; --dim:#7f8a9c;
@@ -34,7 +34,7 @@
 </head>
 <body>
   <div class="device" role="group" aria-label="Ledger device">
-    <div class="brand"><span>Ledger</span><span>FermionWallet XMSS</span></div>
+    <div class="brand"><span>Ledger</span><span>FermionGuard XMSS</span></div>
     <div class="lcd" id="lcd" aria-live="polite">Connecting…</div>
     <div class="keys">
       <div class="nav">
@@ -47,7 +47,7 @@
       </div>
     </div>
   </div>
-  <p class="hint">Device simulator: the FermionWallet Ledger app is not released yet, so this window plays
+  <p class="hint">Device simulator: the FermionGuard Ledger app is not released yet, so this window plays
   the hardware. It holds the Quantum Administrator's keys, shows every signed field, and signs only after
   you page through all screens and press Approve. 60 s idle on the last screen rejects.</p>
 <script>
@@ -59,7 +59,7 @@ async function refresh() {
     if (d.error) throw new Error(d.error);
     if (!d.active) {
       const exhausted = d.nextLeaf >= d.totalLeaves;
-      $('lcd').innerHTML = '<div class="t"><span>FermionWallet XMSS</span></div>' +
+      $('lcd').innerHTML = '<div class="t"><span>FermionGuard XMSS</span></div>' +
         '<div class="l">' + esc(d.key) + '</div>' +
         '<div class="l' + (exhausted ? ' warn' : '') + '">' + (exhausted ? 'Key exhausted — rotate'
           : 'Leaves left: ' + (d.totalLeaves - d.nextLeaf) + ' of ' + d.totalLeaves) + '</div>' +

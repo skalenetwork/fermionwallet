@@ -1,10 +1,10 @@
-# FermionWallet MVP Spec
+# FermionGuard MVP Spec
 
 ## Component design files
 
 - [Gnosis Safe Wallet](./gnosis-safe-wallet.md)
-- [FermionWallet Guard Contract](./fermionwallet-guard-module.md)
-- [FermionWallet Add-on Service](./fermionwallet-add-on-service.md)
+- [FermionGuard Contract](./fermionguard-module.md)
+- [FermionGuard Add-on Service](./fermionguard-add-on-service.md)
 - [Quantum Key Registry](./quantum-key-registry.md)
 - [Pre-approval Engine](./pre-approval-engine.md)
 - [Ledger XMSS App](./ledger-xmss-app.md)
@@ -16,7 +16,7 @@
 
 ```text
 +---------------------+       +---------------------------+
-| Treasury / Ops      |       | FermionWallet Add-on     |
+| Treasury / Ops      |       | FermionGuard Add-on     |
 | UI / Backend        | ----> | Service                   |
 +---------------------+       | - key ceremony (Ledger)  |
                                 | - pre-approval relaying  |
@@ -51,7 +51,7 @@
 
 ## 1. Product summary
 
-FermionWallet is a security add-on for a standard Gnosis Safe wallet. It adds a second authorization step for high-value token transfers by validating an XMSS quantum signature — from a hardware-generated key held by the Quantum Administrator — before the transfer is executed.
+FermionGuard is a security add-on for a standard Gnosis Safe wallet. It adds a second authorization step for high-value token transfers by validating an XMSS quantum signature — from a hardware-generated key held by the Quantum Administrator — before the transfer is executed.
 
 The MVP is intentionally narrow:
 - it plugs into an existing Gnosis Safe using the standard Safe Guard pattern,
@@ -59,19 +59,19 @@ The MVP is intentionally narrow:
 - it supports a low-friction approval flow for ERC-20 transfers,
 - it keeps the Safe as the main governance and execution layer.
 
-In practice, FermionWallet behaves like a Gnosis Safe with a 2-of-2 approval model:
+In practice, FermionGuard behaves like a Gnosis Safe with a 2-of-2 approval model:
 - first authorization: standard Safe signer approval,
-- second authorization: FermionWallet quantum-key approval validated by a Safe Guard.
+- second authorization: FermionGuard quantum-key approval validated by a Safe Guard.
 
 The quantum key is not a replacement for the Safe. It is an additional security checkpoint for sensitive transfers.
 
-Important implementation note: a smart contract does not act as a normal EOA signer in Gnosis Safe. The correct integration pattern is to deploy a Safe Guard that intercepts Safe transactions and enforces the FermionWallet second authorization before the Safe executes the transaction.
+Important implementation note: a smart contract does not act as a normal EOA signer in Gnosis Safe. The correct integration pattern is to deploy a Safe Guard that intercepts Safe transactions and enforces the FermionGuard second authorization before the Safe executes the transaction.
 
 ## 2. Problem to solve
 
 Enterprise wallets and treasury teams need stronger defense against future cryptographic risk while preserving their existing Safe workflows. Standard Gnosis Safe protection is excellent for multisig governance, but it does not provide a future-proof quantum-security layer.
 
-FermionWallet adds a second approval path that is tied to a quantum-safe XMSS signing key generated on the Quantum Administrator's Ledger and verified on-chain against the key registered for the Safe.
+FermionGuard adds a second approval path that is tied to a quantum-safe XMSS signing key generated on the Quantum Administrator's Ledger and verified on-chain against the key registered for the Safe.
 
 ## 3. MVP goal
 
@@ -90,12 +90,12 @@ Build an MVP add-on that:
    - existing multisig wallet used by treasury or enterprise ops
    - handles standard approval and governance workflow
 
-2. FermionWallet Guard contract
+2. FermionGuard contract
    - standard Safe integration point used to intercept transaction execution
-   - validates that the transaction has a valid FermionWallet quantum authorization before allowing execution
+   - validates that the transaction has a valid FermionGuard quantum authorization before allowing execution
    - is the on-chain enforcement layer for the second authorization
 
-3. FermionWallet add-on service
+3. FermionGuard add-on service
    - runs as a policy and validation layer
    - orchestrates quantum key generation anchored to the Ledger (the sole hardware trust anchor)
    - creates and validates pre-approvals
@@ -118,9 +118,9 @@ Build an MVP add-on that:
 
 ### 5.1 Approval model
 
-Every transfer through FermionWallet must satisfy both checks:
+Every transfer through FermionGuard must satisfy both checks:
 - Safe approval from Gnosis Safe signer(s)
-- FermionWallet quantum approval from a valid quantum key
+- FermionGuard quantum approval from a valid quantum key
 
 This creates a 2-of-2 model for sensitive transfers.
 
@@ -160,7 +160,7 @@ The Ledger signs it with both hybrid halves (ECDSA and XMSS) over one EIP-712 di
 
 ### 6.3 Transfer execution
 
-The user submits the Safe transfer as usual. Before final execution, FermionWallet checks:
+The user submits the Safe transfer as usual. Before final execution, FermionGuard checks:
 - Safe approval is present (the Safe checks owner signatures before calling the Guard)
 - a live pre-approval matches the transfer: token, recipient and exact amount, or the pinned Safe transaction hash
 - the pre-approval is unused, not revoked, inside its validity window, and its key is not revoked
@@ -171,7 +171,7 @@ Only then does the transfer proceed.
 
 ### Gnosis validation flow
 
-Gnosis validation is performed by the FermionWallet Guard contract before the Safe executes the transaction.
+Gnosis validation is performed by the FermionGuard contract before the Safe executes the transaction.
 
 The validation sequence is:
 1. The Safe transaction is submitted.
@@ -185,7 +185,7 @@ The validation sequence is:
 9. If all checks pass, the Guard returns and the Safe continues execution.
 10. If any check fails, the Guard reverts and execution stops before the target call executes.
 
-This ensures that Gnosis validates FermionWallet authorization through the Safe Guard contract, not by treating the smart contract as a normal EOA signer.
+This ensures that Gnosis validates FermionGuard authorization through the Safe Guard contract, not by treating the smart contract as a normal EOA signer.
 
 ### Low-level Safe Guard execution model
 
@@ -199,11 +199,11 @@ The actual Safe Guard model is defined by the Gnosis Safe GuardManager. The impo
 6. After the target call executes, the Guard can also run `checkAfterExecution(hash, success)` for follow-up validation or post-execution state checks.
 7. If the guard reverts, the Safe transaction fails before execution reaches the destination contract.
 
-For FermionWallet, the Guard logic is:
+For FermionGuard, the Guard logic is:
 - decode the target transaction and classify it (ERC-20 `transfer`, native send, permit-listed call, batch, or administrative self-call),
 - extract the target token, destination, amount, and calldata selector,
-- match the transaction against the stored FermionWallet pre-approval,
-- rely on the quantum signature check done at creation, against the public key stored in the FermionWallet registry,
+- match the transaction against the stored FermionGuard pre-approval,
+- rely on the quantum signature check done at creation, against the public key stored in the FermionGuard registry,
 - ensure the approval is within `validFrom` / `validTo`, not consumed or revoked, and not replayed,
 - enforce the selector deny-list and the Safe's permit-list (amount caps, token and recipient allowlists are not enforced on-chain yet),
 - return success only when all checks pass.
@@ -270,7 +270,7 @@ Current status against the code: the on-chain policy limits in items 9, 16 and 2
 
 11. Secret material must never be exposed to untrusted infrastructure
     - Private quantum key material must never be stored in plaintext in a generic Node process, browser localStorage, or app database.
-    - **The Ledger is the sole hardware — and the sole home of key material.** The classical (ECDSA) key and the XMSS key both live inside the Ledger's ST33 secure element, managed by the [FermionWallet Ledger XMSS app](./ledger-xmss-app.md). The monotonic leaf counter is in secure-element NVRAM. There is no server HSM, no cloud enclave, and no host-side seed or software keystore of any kind — the backend only relays signatures it can never produce.
+    - **The Ledger is the sole hardware — and the sole home of key material.** The classical (ECDSA) key and the XMSS key both live inside the Ledger's ST33 secure element, managed by the [FermionGuard Ledger XMSS app](./ledger-xmss-app.md). The monotonic leaf counter is in secure-element NVRAM. There is no server HSM, no cloud enclave, and no host-side seed or software keystore of any kind — the backend only relays signatures it can never produce.
     - If a browser or backend is used, the private key must be wrapped in a secure key store and never transmitted to the backend without encryption and strict access control.
 
 12. Transaction validation must use exact calldata matching, not loose semantic matching
@@ -337,15 +337,15 @@ The API is divided into three layers:
 - Solidity smart-contract methods
 - JavaScript client methods
 
-The Gnosis add-on API is the integration interface that allows a Safe to delegate second-authorization checks to FermionWallet before final execution.
+The Gnosis add-on API is the integration interface that allows a Safe to delegate second-authorization checks to FermionGuard before final execution.
 
 ### 7.0 Gnosis Safe add-on integration API
 
-This is the minimal protocol for integrating FermionWallet as a Safe Guard. This is the supported integration path for the MVP and is the correct way to plug logic into Gnosis Safe without pretending a smart contract can behave like a normal EOA signer.
+This is the minimal protocol for integrating FermionGuard as a Safe Guard. This is the supported integration path for the MVP and is the correct way to plug logic into Gnosis Safe without pretending a smart contract can behave like a normal EOA signer.
 
 #### 1. `POST /api/v1/gnosis/authorize-transfer`
 
-- Purpose: validate whether a proposed Safe transfer is eligible for second authorization by FermionWallet.
+- Purpose: validate whether a proposed Safe transfer is eligible for second authorization by FermionGuard.
 - Body:
 
 ```json
@@ -455,7 +455,7 @@ This is the minimal protocol for integrating FermionWallet as a Safe Guard. This
 
 > **No custom execution entrypoints.** This contract has **no function that moves tokens**. All transfers flow exclusively through `Safe.execTransaction` → Guard `checkTransaction` → target ERC-20 `transfer`. Any function that could execute, wrap, or forward a transfer outside that path would bypass both the Safe multisig and the Guard, and is forbidden (see security rule 5 and the Guard spec's "Forbidden original code").
 
-All functions below live on one deployed contract, `FermionWalletGuard` (the registry and pre-approval engine are abstract bases compiled into it). The normative, complete ABI — every function, event and custom error — is in [fermionwallet-guard-module.md → FermionWallet-specific ABI](./fermionwallet-guard-module.md#fermionwallet-specific-abi); this section summarizes the main entry points.
+All functions below live on one deployed contract, `FermionGuard` (the registry and pre-approval engine are abstract bases compiled into it). The normative, complete ABI — every function, event and custom error — is in [fermionguard-module.md → FermionGuard-specific ABI](./fermionguard-module.md#fermionguard-specific-abi); this section summarizes the main entry points.
 
 #### 1. `registerQuantumKey`
 
@@ -496,7 +496,7 @@ All functions below live on one deployed contract, `FermionWalletGuard` (the reg
 
 - Same signature shape as `createPreApproval`. They authorize what TRANSFER cannot — native currency sends, allowlisted calls, `MultiSendCallOnly` batches (PAYLOAD), and any Safe self-call or Guard policy call (ADMIN) — by binding `target`, `value` and `dataHash = keccak256(calldata)`.
 - `createAdminPreApproval` requires `target` to be the Safe or the Guard and `validFrom ≥ block.timestamp + ADMIN_TIMELOCK`, and emits a loud `AdminPreApprovalCreated` so owners can revoke during the delay.
-- With the quantum-key-independent emergency de-guard path, this guarantees the **no-brick invariant**. Dispatch rules: [fermionwallet-guard-module.md → Pre-approval classes](./fermionwallet-guard-module.md#pre-approval-classes).
+- With the quantum-key-independent emergency de-guard path, this guarantees the **no-brick invariant**. Dispatch rules: [fermionguard-module.md → Pre-approval classes](./fermionguard-module.md#pre-approval-classes).
 
 #### 5. `validatePreApproval(bytes32 preApprovalId)`
 
@@ -583,7 +583,7 @@ The MVP does not include:
 ## 9. MVP acceptance criteria
 
 The MVP is complete when:
-- a normal Gnosis Safe wallet can integrate FermionWallet as a second authorization layer,
+- a normal Gnosis Safe wallet can integrate FermionGuard as a second authorization layer,
 - a Ledger-anchored XMSS key can be registered and rotated with full authentication (owner co-signatures + attestation + old-key proof),
 - a transfer can only proceed when both Safe and quantum approvals are valid,
 - expired, revoked, or replayed pre-approvals are rejected,
@@ -592,4 +592,4 @@ The MVP is complete when:
 
 ## 10. MVP summary
 
-FermionWallet MVP is a Gnosis Safe add-on that adds a second authorization using a quantum key. The Safe remains the governance and execution entry point, while the FermionWallet quantum key becomes an additional, policy-aware authorization layer for sensitive token transfers.
+FermionGuard MVP is a Gnosis Safe add-on that adds a second authorization using a quantum key. The Safe remains the governance and execution entry point, while the FermionGuard quantum key becomes an additional, policy-aware authorization layer for sensitive token transfers.

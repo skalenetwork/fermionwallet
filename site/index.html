@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FermionWallet</title>
+<title>FermionGuard</title>
 <meta name="description" content="A quantum-safe second signature for Gnosis Safe. Install one Safe Guard, keep your owners and threshold, and require an XMSS-signed approval — verified on-chain — for every transfer.">
-<meta property="og:title" content="FermionWallet — a quantum-safe second signature for Gnosis Safe">
+<meta property="og:title" content="FermionGuard — a quantum-safe second signature for Gnosis Safe">
 <meta property="og:description" content="No migration. Keep your owners and threshold. Every transfer also needs a post-quantum approval, verified on-chain.">
 <meta property="og:url" content="https://skalenetwork.github.io/fermionwallet/">
 <meta property="og:type" content="website">
@@ -13,7 +13,7 @@
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="icon" href="assets/fermionwallet-icon.svg" type="image/svg+xml">
+<link rel="icon" href="assets/fermionguard-icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -276,7 +276,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
 
 <nav>
   <div class="wrap">
-    <a class="brand" href="#top"><img src="assets/fermionwallet-icon.svg" alt="">FermionWallet</a>
+    <a class="brand" href="#top"><img src="assets/fermionguard-icon.svg" alt="">FermionGuard</a>
     <div class="nav-links">
       <a class="hide-sm" href="#how">How it works</a>
       <a class="hide-sm" href="#security">Security</a>
@@ -305,7 +305,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       </div>
     </div>
     <div>
-      <img class="hero-shot" src="assets/ui/ui-queue.svg" alt="The FermionWallet Safe App: a transaction queue where each pending transfer shows its quantum-authorization status">
+      <img class="hero-shot" src="assets/ui/ui-queue.svg" alt="The FermionGuard Safe App: a transaction queue where each pending transfer shows its quantum-authorization status">
     </div>
   </div>
 </header>
@@ -354,7 +354,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
   <div class="wrap center">
     <div class="eyebrow">How it works</div>
     <h2>Two independent signatures.<br>One execution path.</h2>
-    <p class="lead">FermionWallet is a Safe Guard — Safe's official pre-execution hook. Owners keep signing as they do today. The Guard lets the transaction run only if it also carries a matching post-quantum approval.</p>
+    <p class="lead">FermionGuard is a Safe Guard — Safe's official pre-execution hook. Owners keep signing as they do today. The Guard lets the transaction run only if it also carries a matching post-quantum approval.</p>
   </div>
   <div class="wrap">
     <div class="twofactor">
@@ -372,7 +372,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
 
     <div class="flow">
       <div class="step"><h3>Queue</h3><p>An operator queues a transfer in Safe{Wallet}. Owners sign as usual.</p></div>
-      <div class="step"><h3>Flag</h3><p>The FermionWallet Safe App marks it 🟡 quantum authorization required.</p></div>
+      <div class="step"><h3>Flag</h3><p>The FermionGuard Safe App marks it 🟡 quantum authorization required.</p></div>
       <div class="step"><h3>Review</h3><p>The Administrator reviews the payload, decoded from two independent sources.</p></div>
       <div class="step"><h3>Approve</h3><p>The Ledger shows every enforced field. Hold to approve.</p></div>
       <div class="step"><h3>Execute</h3><p>The row turns 🟢. Anyone executes; the Guard checks and consumes the approval.</p></div>
@@ -402,7 +402,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       </div>
       <div>
         <h3>Works inside the tools your team already uses</h3>
-        <p>FermionWallet ships as a Safe App inside Safe{Wallet} and a Ledger app for the Administrator. Risk flags highlight first-time recipients, unusual amounts and transactions the Guard would reject anyway — before anyone signs.</p>
+        <p>FermionGuard ships as a Safe App inside Safe{Wallet} and a Ledger app for the Administrator. Risk flags highlight first-time recipients, unusual amounts and transactions the Guard would reject anyway — before anyone signs.</p>
         <p>Payroll runs? A whole batch of up to 100 transfers needs one approval.</p>
       </div>
     </div>
@@ -418,7 +418,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
   </div>
   <div class="wrap">
     <div class="setup">
-      <div class="card"><h3>Open the Safe App</h3><p>Add FermionWallet in Safe{Wallet}. It checks your Safe version and modules before anything changes.</p></div>
+      <div class="card"><h3>Open the Safe App</h3><p>Add FermionGuard in Safe{Wallet}. It checks your Safe version and modules before anything changes.</p></div>
       <div class="card"><h3>Run the key ceremony</h3><p>The Administrator's key is generated inside the Ledger. Owners confirm it and co-sign its registration.</p></div>
       <div class="card"><h3>Enable the Guard</h3><p>Owners sign one <code>setGuard</code> transaction, like any other Safe transaction.</p></div>
       <div class="card"><h3>Send a test transfer</h3><p>A dust-sized transfer runs the full flow. When it lands, your dashboard shows <strong>Protected ✓</strong>.</p></div>
@@ -527,7 +527,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       <div>
         <h3>Leaf reuse is impossible by construction</h3>
         <p>XMSS is stateful: reusing a one-time leaf would let an attacker forge. The Ledger commits its counter before releasing a signature, and the contract keeps a used-leaf bitmap that reverts on any reuse.</p>
-        <p><a href="https://github.com/skalenetwork/fermionwallet/tree/main/contracts">Browse the contracts →</a> · <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionwallet-guard-module.md">Guard spec →</a> · <a href="https://github.com/skalenetwork/xmss-solidity/blob/main/PROOF.md">Formal proof →</a></p>
+        <p><a href="https://github.com/skalenetwork/fermionwallet/tree/main/contracts">Browse the contracts →</a> · <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionguard-module.md">Guard spec →</a> · <a href="https://github.com/skalenetwork/xmss-solidity/blob/main/PROOF.md">Formal proof →</a></p>
       </div>
       <div>
         <div class="code-title">contracts/src/QuantumKeyRegistry.sol (simplified)</div>
@@ -643,7 +643,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       </details>
       <details>
         <summary>Which Safes are supported?</summary>
-        <p>Safe v1.3.0 and later. The Safe must have no enabled modules, because modules skip guards — or be on Safe 1.5+ with FermionWallet's module guard installed too. It must also have no fallback handler: ERC-20 tokens and ETH work normally, but signed-message features (Permit, CowSwap orders, sign-in) and receiving NFTs via <code>safeTransferFrom</code> aren't supported yet.</p>
+        <p>Safe v1.3.0 and later. The Safe must have no enabled modules, because modules skip guards — or be on Safe 1.5+ with FermionGuard's module guard installed too. It must also have no fallback handler: ERC-20 tokens and ETH work normally, but signed-message features (Permit, CowSwap orders, sign-in) and receiving NFTs via <code>safeTransferFrom</code> aren't supported yet.</p>
       </details>
       <details>
         <summary>Why XMSS and not ML-DSA or Falcon?</summary>
@@ -681,18 +681,18 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
   <div class="wrap">
     <div class="foot">
       <div class="first">
-        <a class="brand" href="#top"><img src="assets/fermionwallet-icon.svg" alt="">FermionWallet</a>
+        <a class="brand" href="#top"><img src="assets/fermionguard-icon.svg" alt="">FermionGuard</a>
         <p class="blurb">A quantum-safe second signature for Gnosis Safe, enforced on-chain by a Safe Guard.</p>
       </div>
       <div>
         <h2>Learn</h2>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/readme.md">Overview</a>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/ui-help.md">User guide</a>
-        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionwalletspec.md">Specification</a>
+        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionguardspec.md">Specification</a>
       </div>
       <div>
         <h2>Reference</h2>
-        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionwallet-guard-module.md">Guard</a>
+        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionguard-module.md">Guard</a>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/quantum-key-registry.md">Key registry</a>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/pre-approval-engine.md">Pre-approval engine</a>
         <a href="https://github.com/skalenetwork/fermionwallet/blob/main/ledger-xmss-app.md">Ledger app</a>

@@ -2,7 +2,7 @@
   <rect width="860" height="420" fill="#1a0c10"/>
   <rect width="860" height="56" fill="#2a1218"/>
   <circle cx="34" cy="28" r="14" fill="#e05555"/>
-  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONWALLET</text>
+  <text x="58" y="34" fill="#e8eef7" font-size="17" font-weight="700">FERMIONGUARD</text>
   <text x="640" y="34" fill="#e05555" font-size="13" font-weight="700">SIGNING DISABLED</text>
   <!-- tamper card -->
   <rect x="30" y="80" width="800" height="120" rx="10" fill="#33202a" stroke="#e05555" stroke-width="2"/>

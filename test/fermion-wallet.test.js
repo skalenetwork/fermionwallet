@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ERC20Token, FermionWallet, MIN_WINDOW_MS } from '../src/index.js';
+import { ERC20Token, FermionGuard, MIN_WINDOW_MS } from '../src/index.js';
 
 test('standard ERC-20 approve flow works', () => {
   const token = new ERC20Token('Fermion', 'FERM');
-  const wallet = new FermionWallet('0xOwner');
+  const wallet = new FermionGuard('0xOwner');
   token.mint('0xOwner', 1000n);
 
   const approval = wallet.approve(token, '0xSpender', 250n);
@@ -15,7 +15,7 @@ test('standard ERC-20 approve flow works', () => {
 });
 
 test('quantum key generation and status are tracked', () => {
-  const wallet = new FermionWallet('0xOwner');
+  const wallet = new FermionGuard('0xOwner');
   const key = wallet.generateQuantumKeyPair();
 
   assert.equal(key.status, 'active');
@@ -24,7 +24,7 @@ test('quantum key generation and status are tracked', () => {
 
 test('pre-approval validates and executes a token transfer', () => {
   const token = new ERC20Token('Fermion', 'FERM');
-  const wallet = new FermionWallet('0xOwner');
+  const wallet = new FermionGuard('0xOwner');
 
   token.mint('0xOwner', 1000n);
   const quantumKey = wallet.generateQuantumKeyPair();
@@ -53,7 +53,7 @@ test('pre-approval validates and executes a token transfer', () => {
 test('revoked and expired pre-approvals are rejected', () => {
   const token = new ERC20Token('Fermion', 'FERM');
   let now = Date.now();
-  const wallet = new FermionWallet('0xOwner', { now: () => now });
+  const wallet = new FermionGuard('0xOwner', { now: () => now });
   token.mint('0xOwner', 1000n);
 
   const quantumKey = wallet.generateQuantumKeyPair();
@@ -92,7 +92,7 @@ test('revoked and expired pre-approvals are rejected', () => {
 });
 
 test('quantum key rotation updates status and preserves new active key', () => {
-  const wallet = new FermionWallet('0xOwner');
+  const wallet = new FermionGuard('0xOwner');
   const key = wallet.generateQuantumKeyPair();
   const rotated = wallet.rotateQuantumKey(key.quantumKeyId);
 
