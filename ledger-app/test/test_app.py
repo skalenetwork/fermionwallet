@@ -32,6 +32,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 ELF = os.path.join(REPO, "ledger-app", "build", "nanos2", "bin", "app.elf")
 SEED = "test test test test test test test test test test test junk"
+# Ports and name are this suite's own: test_wallet.py uses its own, so both
+# suites can run at the same time.
+PREFIX = "fg-app-test"
+API_PORT, APDU_PORT = 15001, 19998
 
 sys.path.insert(0, os.path.join(REPO, "demo"))
 sys.path.insert(0, os.path.join(REPO, "contracts", "lib", "xmss-solidity", "py"))
@@ -101,18 +105,22 @@ class Speculos:
             return
         if not os.path.exists(ELF):
             sys.exit(f"no app at {ELF} — run ledger-app/build.sh first")
-        # A fixed name, force-removed first: a container left by an interrupted run
-        # would otherwise hold the ports and the next run would die confusingly.
-        self.container = "fg-app-test"
-        subprocess.run(["docker", "rm", "-f", self.container], capture_output=True)
+        # A unique name so this suite can run beside another one, but stale
+        # containers from interrupted runs are cleared first: they would hold the
+        # ports and the next run would die on a bare "exit status 125".
+        self.container = f"{PREFIX}-{os.getpid()}"
+        stale = subprocess.run(["docker", "ps", "-aq", "--filter", f"name={PREFIX}-"],
+                               capture_output=True, text=True).stdout.split()
+        if stale:
+            subprocess.run(["docker", "rm", "-f", *stale], capture_output=True)
         subprocess.run(
             ["docker", "run", "-d", "--name", self.container,
-             "-v", os.path.dirname(ELF) + ":/app", "-p", "15001:5000", "-p", "19998:9999",
+             "-v", os.path.dirname(ELF) + ":/app", "-p", f"{API_PORT}:5000", "-p", f"{APDU_PORT}:9999",
              "ghcr.io/ledgerhq/speculos:latest", "--model", "nanosp", "--display", "headless",
              "--api-port", "5000", "--apdu-port", "9999", "--seed", SEED, "/app/app.elf"],
             check=True, capture_output=True)
-        os.environ["SPECULOS_APDU_URL"] = "tcp://127.0.0.1:19998"
-        os.environ["SPECULOS_API_URL"] = "http://127.0.0.1:15001"
+        os.environ["SPECULOS_APDU_URL"] = f"tcp://127.0.0.1:{APDU_PORT}"
+        os.environ["SPECULOS_API_URL"] = f"http://127.0.0.1:{API_PORT}"
 
     def stop(self, keep_logs=False):
         if self.container and not keep_logs:
