@@ -58,6 +58,10 @@ NIST SP 800-208), written from the specification — no code taken from poqeth
   whenever the specification changes
   (`python3 script/describe_spec.py --check test/registry-proof/DESCRIPTION.md`
   fails when it is stale).
+- `test/guard-proof/` — the Guard and the pre-approval engine as an executable
+  specification (`GuardSpec.sol`) plus `GuardEquivalence.t.sol`, which proves
+  eighteen properties of them with Halmos. Its `README.md` names which are proven
+  with every argument symbolic and which over a narrowed input space, and why.
 - `test/ffi/sign_batch.py`, and `lib/xmss-solidity/py/sign_digest.py` — test-only
   helpers that the Foundry tests call through FFI to sign digests with the
   deterministic test XMSS key.
@@ -104,7 +108,20 @@ Within the 0.4–1M target set in `../fermionguard-module.md`
   Foundry tests. The proof is run offline — `halmos --match-contract
   RegistryEquivalence --loop 32 --solver-timeout-assertion 0` — and is not a CI
   gate yet: Halmos drives the `check_*` functions, so `forge test` does not
-  exercise it. Beyond that, the Guard, registry and engine are fuzz and
+  exercise it.
+- Eighteen properties of the Guard and the pre-approval engine are proven the same
+  way, in `test/guard-proof/`. With every argument symbolic: the escape-hatch
+  decision, the selector deny-list and permit-list, pause and its cooldown, the
+  emergency de-guard and both Guard time locks, the pre-approval validity and
+  revocation lifecycle, and `_consumeMatching` — exact field matching, the window
+  boundaries, at-most-once consumption, the Tier-1 pin and the Tier-2 FIFO order.
+  Narrowed, each narrowing named in the lemma that makes it: `checkTransaction`'s
+  refusing direction covers plain calls only, its succeeding direction fixes the
+  target and payload, the Safe's `getTransactionHash` is a constant, and
+  authorization and both signature schemes are permissive mocks. `_checkBatchLegs`
+  is not proven at all — it is the largest gap, and the batch path is where the
+  Guard does its most intricate parsing.
+- Beyond those three proofs, the Guard, registry and engine are fuzz and
   invariant tested, not formally verified.
 - Not audited yet; audit is an acceptance criterion before mainnet.
 
