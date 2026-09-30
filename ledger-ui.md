@@ -10,10 +10,10 @@ Every flow is one of the Ledger SDK's standard NBGL reviews: an intent page whos
 
 | Flow | Intent title | Confirmation | Warning page before the intent? |
 |---|---|---|---|
-| Sign approval | `Review approval` | `Sign approval?` | only when the approval is not pinned to a Safe tx |
+| Sign approval | `Review approval` | `Sign approval?` | only when the approval is not pinned to a Safe tx, the class is `ADMIN`, or the key is past its warning threshold |
 | Deny | `Review denial` | `Sign denial?` | no — the `Leaf: None consumed` field is the tell |
 | Rotate key | `Review key rotation` | `Sign key rotation?` | yes, always |
-| Key generation | `Review new quantum key` | `Generate key?` | yes — the no-backup warning |
+| Key generation | `Review new quantum key` | `Generate key?` on the warning page | yes — the no-backup warning |
 | Retire key | `Review key retirement` | `Retire key?` | yes, always |
 
 ## Signing flow (`SIGN_PREAPPROVAL`)
