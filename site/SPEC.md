@@ -58,6 +58,7 @@ Each claim on the page and its source. Update this table when a claim is added o
 | 745,003 gas per verification at h = 20 | [contracts/README.md](../contracts/README.md#measured-gas) |
 | About 1M approvals per key (2^20 leaves) | [fermionguard-module.md](../fermionguard-module.md) |
 | Tested at h = 4, 10, 20 against an independent reference | [contracts/README.md](../contracts/README.md) |
+| The verifier's primitives and input-validation rejections are machine-checked against RFC 8391; the root comparison that decides a well-formed signature is a hand argument plus vectors ("Proven in part") | [readme.md](../readme.md), and `PROOF.md` in [xmss-solidity](https://github.com/skalenetwork/xmss-solidity) |
 | 48-hour admin timelock; the owners (threshold) can revoke it; any single owner can revoke transfer/payload approvals | [ui-help.md](../ui-help.md#administrative-approvals-and-the-timelock) |
 | 14-day owners-only emergency removal; owners can cancel with a Safe transaction | [ui-help.md](../ui-help.md#emergency-guard-removal-owners-only) |
 | One approval per batch of up to 100 transfers | [ui-help.md](../ui-help.md#approving-a-batch-multisend) |
@@ -103,8 +104,10 @@ Sections appear in this order. Each has one job.
 
 - The recording is a real run of the demo stack, produced by `demo/wallet/e2e/record.js` and
   `demo/wallet/e2e/make_gif.py`. Nothing on this section may be drawn, staged or re-enacted.
-- It is shown at its recorded width (900px) or narrower, never scaled up: the narration is
-  rendered into the frames and stops being readable above that.
+- It is shown at its recorded width (900px) or narrower, never scaled up — upscaling a GIF
+  only blurs it. Narrower is a real cost, though, not a free fallback: the narration is
+  rendered into the frames, so on a phone (~358px) it is too small to read. The caption
+  below the recording therefore has to carry the story on its own.
 - The caption says the Ledger is simulated, for as long as the hardware app is unbuilt, and
   must not contradict the status section, which lists the Ledger app as in development.
 
