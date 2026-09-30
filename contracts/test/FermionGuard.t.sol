@@ -395,6 +395,10 @@ contract FermionGuardTest is Test {
         );
     }
 
+    /// The registry verifies with the height stored for the key (the four-argument
+    /// `XMSS.verify`), so a signature with a different auth-path length is rejected
+    /// instead of being verified at a height the signer chose.
+    /// Covers: [QKR-034]
     function test_registryRejectsWrongHeightSignature() public {
         PreApprovalEngine.PreApprovalRequest memory req = _baseRequest(bytes32(0));
         req.token = address(token);

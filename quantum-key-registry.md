@@ -43,7 +43,7 @@ Rules:
 - [QKR-011] new pre-approvals can only be created with the Safe's `Active` key; approvals already created under a key that was later `Rotated` stay executable, while a `Revoked` key's approvals do not
 - [QKR-012] rotation follows the same one-shot path, additionally requiring the old-key XMSS signature proof per the Guard's `rotateQuantumKey` rules
 
-Neither side can act alone: the Administrator cannot activate a key without an owner-threshold set of signatures over the root, and the Safe owners cannot activate a root that was not generated and attested by the Administrator's hardware. [QKR-013]
+The Administrator cannot act alone: activating a key always needs an owner-threshold set of signatures over the root. The owners, however, *can* act alone, and the contract does not stop them. `registerQuantumKey` checks the attestation against the `quantumAdmin` address the owner signatures themselves name, so an owner threshold that names an address it controls supplies both proofs — no incumbent Administrator device is involved. This is a deliberate accepted risk, not an oversight: it is what lets honest owners recover after the Administrator's device is lost, and it is why registration after an emergency revocation is classically protected only. See [threat-model.md §2.1](./threat-model.md#21-quantum-capable-attacker-the-headline-adversary) and `test_TM_ResidualRisk_PostRevocationRegistrationIsClassicalOnly`. [QKR-013]
 
 ### Owner-signature compatibility
 
@@ -126,7 +126,7 @@ The backend may keep a **read-only cache/index** of registry state for UI and no
 - safe
 - quantumAdmin (the Ledger EOA that the ECDSA half is verified against)
 - xmssRoot and xmssSeed (the XMSS public key)
-- treeHeight (1..20) and parameterSet [QKR-033]
+- treeHeight (1..20) and parameterSet [QKR-033]. The registry always verifies with the **four-argument** `XMSS.verify(digest, sig, PublicKey, treeHeight)`, passing the height stored for the key, so a signature carrying any other number of authentication nodes is rejected rather than verified at a height the signer chose. The three-argument form, which takes the height from the signature itself, must never be used here. `.github/workflows/contracts.yml` greps `QuantumKeyRegistry.sol` for that call on every push, because switching to the three-argument form would still compile and still pass every positive test. [QKR-034]
 - status
 - createdAt, rotatedAt
 - useCounter
@@ -159,7 +159,7 @@ Every normative requirement in this document carries a stable `[QKR-nnn]` tag.
 | QKR-010 | Owner signatures are bound to the Guard contract, chain, Safe, `registryNonce` and `validUntil`. |
 | QKR-011 | Only the Active key creates new pre-approvals; a Rotated key's approvals stay executable, a Revoked key's do not. |
 | QKR-012 | Rotation is the registration path plus an old-key XMSS possession proof. |
-| QKR-013 | Neither the Administrator nor the owners can activate a key alone. |
+| QKR-013 | The Administrator cannot activate a key alone; the owner threshold can, because it names the attesting `quantumAdmin` (accepted risk, threat-model.md §2.1). |
 | QKR-014 | Owner signatures use Safe's legacy `checkSignatures(bytes32,bytes,bytes)`; the v1.5-only overload must not be used. |
 | QKR-015 | Owner signatures are checked with the EIP-712 message preimage as `data` and the digest as `dataHash`. |
 | QKR-016 | The rotation proof is an XMSS signature by the old key over `RotateQuantumKey`, consuming one final old-key leaf. |
@@ -180,3 +180,4 @@ Every normative requirement in this document carries a stable `[QKR-nnn]` tag.
 | QKR-031 | The registry must be a smart contract; no backend registry is acceptable. |
 | QKR-032 | On divergence the chain wins; the service resyncs from chain before releasing any signature. |
 | QKR-033 | A registered key's `treeHeight` is within 1..20. |
+| QKR-034 | Verification uses the four-argument `XMSS.verify` with the key's registered `treeHeight`; the three-argument form is never used. |
