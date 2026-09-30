@@ -556,10 +556,10 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
     <span class="t">bytes</span> <span class="k">calldata</span> xmssSignature
 ) <span class="k">internal</span> {
     <span class="t">XMSS.Signature</span> <span class="k">memory</span> sig = abi.decode(xmssSignature, (<span class="t">XMSS.Signature</span>));
-    <span class="t">BitMaps.BitMap</span> <span class="k">storage</span> used = _usedLeaves[keyId];
+    <span class="t">BitMaps.BitMap</span> <span class="k">storage</span> used = _usedLeaves[xmssRoot(keyId)];  <span class="c">// per KEY, not per registration</span>
     <span class="k">if</span> (used.get(sig.leafIdx)) <span class="k">revert</span> LeafAlreadyUsed(keyId, sig.leafIdx);
 
-    <span class="k">if</span> (!XMSS.verify(digest, sig, publicKey(keyId)))
+    <span class="k">if</span> (!XMSS.verify(digest, sig, publicKey(keyId), treeHeight(keyId)))
         <span class="k">revert</span> InvalidXmssSignature();  <span class="c">// whole tx rolls back</span>
 
     used.set(sig.leafIdx);                <span class="c">// burn the one-time leaf</span>
