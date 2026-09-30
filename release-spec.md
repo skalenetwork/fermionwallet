@@ -125,7 +125,7 @@ A release may not advance to the next stage until every gate for that stage pass
 
 ### G2 — Ledger app (testnet beta and later)
 
-- [ ] `speculos`/`ragger` CI passes: signing flow, counter monotonicity across power cycles, exhaustion refusal, chunked payloads, and UI snapshots for every screen on NBGL and BAGL ([Ledger XMSS app: Deliverables](./ledger-xmss-app.md#deliverables-and-validation)).
+- [ ] `speculos`/`ragger` CI passes: signing flow, counter monotonicity across power cycles, exhaustion refusal, chunked payloads, and UI snapshots for every screen on all four supported devices — Stax, Flex, Nano X and Nano S Plus, all of which render NBGL ([Ledger XMSS app: Deliverables](./ledger-xmss-app.md#deliverables-and-validation)).
 - [ ] All device UI acceptance criteria pass ([Ledger XMSS app: Device UI acceptance criteria](./ledger-xmss-app.md#device-ui-acceptance-criteria)).
 - [ ] Cross-verification: 10,000 device signatures verify in the Solidity verifier.
 - [ ] Parameter set reported by `GET_APP_CONFIG` equals the parameter set of the verifier being released.

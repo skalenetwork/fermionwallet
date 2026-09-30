@@ -1,57 +1,69 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="860" height="400" viewBox="0 0 860 400" font-family="Segoe UI, Helvetica, Arial, sans-serif">
-  <rect width="860" height="400" fill="#0c1626"/>
-  <text x="30" y="44" fill="#e8eef7" font-size="18" font-weight="700">Key generation — ceremony Stage B on the device (screens 1, 2, 4, 5 of 5; screen 3 is a progress bar)</text>
-  <!-- screen 1: intent -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1065" height="400" viewBox="0 0 1065 400" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect width="1065" height="400" fill="#0c1626"/>
+  <text x="30" y="44" fill="#e8eef7" font-size="18" font-weight="700">Key generation — ceremony Stage B, on-device and unbackupable</text>
   <g>
     <rect x="30" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#22354f" stroke-width="2"/>
     <rect x="48" y="94" width="149" height="190" rx="6" fill="#060d18"/>
-    <text x="60" y="122" fill="#57d6c0" font-size="11" font-weight="700">REGISTER KEY</text>
-    <text x="60" y="150" fill="#e8eef7" font-size="11">Generate quantum</text>
-    <text x="60" y="166" fill="#e8eef7" font-size="11">key?</text>
-    <text x="60" y="196" fill="#8fa3bf" font-size="9.5">XMSS-SHA2_20_256</text>
-    <text x="60" y="210" fill="#8fa3bf" font-size="9.5">~1,048,576 approvals</text>
-    <text x="60" y="262" fill="#5b7292" font-size="9.5">Keygen 1 · intent</text>
+    <text x="60" y="122" fill="#57d6c0" font-size="11" font-weight="700">REVIEW NEW</text>
+    <text x="60" y="150" fill="#57d6c0" font-size="11" font-weight="700">QUANTUM KEY</text>
+    <text x="60" y="167" fill="#e8eef7" font-size="11.5">Key 3 of 4</text>
+    <text x="60" y="184" fill="#8fa3bf" font-size="10">keys 1–2 are kept</text>
+    <text x="60" y="201" fill="#8fa3bf" font-size="9.5">XMSS-SHA2_20_256</text>
+    <text x="60" y="218" fill="#8fa3bf" font-size="9.5">1,048,576 approvals</text>
+    <text x="60" y="262" fill="#5b7292" font-size="9.5">Page 1 · intent</text>
     <circle cx="122" cy="312" r="12" fill="#22354f"/>
   </g>
-  <!-- screen 2: entropy notice -->
   <g>
-    <rect x="235" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#f2b84b" stroke-width="2"/>
+    <rect x="235" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#e0a955" stroke-width="2"/>
     <rect x="253" y="94" width="149" height="190" rx="6" fill="#060d18"/>
-    <text x="265" y="122" fill="#f2b84b" font-size="11" font-weight="700">NO BACKUP</text>
-    <text x="265" y="148" fill="#e8eef7" font-size="10.5">Key is generated in</text>
-    <text x="265" y="163" fill="#e8eef7" font-size="10.5">this device. It CANNOT</text>
-    <text x="265" y="178" fill="#e8eef7" font-size="10.5">be exported or restored</text>
-    <text x="265" y="193" fill="#e8eef7" font-size="10.5">from your recovery</text>
-    <text x="265" y="208" fill="#e8eef7" font-size="10.5">phrase.</text>
-    <text x="265" y="234" fill="#f2b84b" font-size="9.5">Hold to acknowledge</text>
-    <text x="265" y="262" fill="#5b7292" font-size="9.5">Keygen 2 · entropy notice</text>
-    <circle cx="327" cy="312" r="12" fill="#f2b84b"/>
+    <text x="265" y="122" fill="#e0a955" font-size="11" font-weight="700">⚠ NO BACKUP</text>
+    <text x="265" y="150" fill="#e8eef7" font-size="11" font-weight="700">This key cannot</text>
+    <text x="265" y="162.5" fill="#e8eef7" font-size="11" font-weight="700">be backed up</text>
+    <text x="265" y="187.5" fill="#8fa3bf" font-size="9.5">Generated inside this</text>
+    <text x="265" y="200" fill="#8fa3bf" font-size="9.5">device. It cannot be</text>
+    <text x="265" y="212.5" fill="#8fa3bf" font-size="9.5">exported, and your</text>
+    <text x="265" y="225" fill="#8fa3bf" font-size="9.5">recovery phrase will</text>
+    <text x="265" y="237.5" fill="#8fa3bf" font-size="9.5">not restore it.</text>
+    <text x="265" y="262" fill="#5b7292" font-size="9.5">Page 2 · SDK warning</text>
+    <circle cx="327" cy="312" r="12" fill="#22354f"/>
   </g>
-  <!-- screen 4: root + ceremony words -->
   <g>
     <rect x="440" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#22354f" stroke-width="2"/>
     <rect x="458" y="94" width="149" height="190" rx="6" fill="#060d18"/>
     <text x="470" y="122" fill="#57d6c0" font-size="11" font-weight="700">ROOT 1/4</text>
-    <text x="470" y="148" fill="#e8eef7" font-size="10.5">0x8c41 22b7</text>
-    <text x="470" y="164" fill="#e8eef7" font-size="10.5">90aa 41c8 …</text>
-    <text x="470" y="192" fill="#8fa3bf" font-size="9.5">ceremony code:</text>
-    <text x="470" y="208" fill="#57d6c0" font-size="10" font-weight="700">orbit velvet canyon</text>
-    <text x="470" y="222" fill="#57d6c0" font-size="10" font-weight="700">lemon tiger frost</text>
-    <text x="470" y="262" fill="#5b7292" font-size="9.5">Keygen 4 · root + code</text>
+    <text x="470" y="150" fill="#e8eef7" font-size="9.5">0x3f8c21ad7e5b09</text>
+    <text x="470" y="162.5" fill="#e8eef7" font-size="9.5">44c2e1f0a9738d6b</text>
+    <text x="470" y="187.5" fill="#e8eef7" font-size="10">orbit velvet cadence</text>
+    <text x="470" y="200" fill="#e8eef7" font-size="10">harbor quartz mesa</text>
+    <text x="470" y="225" fill="#8fa3bf" font-size="9.5">six words, rendered by</text>
+    <text x="470" y="237.5" fill="#8fa3bf" font-size="9.5">the secure element</text>
+    <text x="470" y="262" fill="#5b7292" font-size="9.5">Page 4 · root review</text>
     <circle cx="532" cy="312" r="12" fill="#22354f"/>
   </g>
-  <!-- screen 5: confirm export -->
   <g>
     <rect x="645" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#22354f" stroke-width="2"/>
     <rect x="663" y="94" width="149" height="190" rx="6" fill="#060d18"/>
-    <text x="675" y="122" fill="#57d6c0" font-size="11" font-weight="700">SHARE ROOT?</text>
-    <text x="675" y="150" fill="#e8eef7" font-size="11">Send public root</text>
-    <text x="675" y="166" fill="#e8eef7" font-size="11">to host?</text>
-    <text x="675" y="196" fill="#8fa3bf" font-size="9.5">only root, height and</text>
-    <text x="675" y="210" fill="#8fa3bf" font-size="9.5">parameter set cross</text>
-    <text x="675" y="224" fill="#8fa3bf" font-size="9.5">the wire</text>
-    <text x="675" y="262" fill="#5b7292" font-size="9.5">Keygen 5 · confirm export</text>
+    <text x="675" y="122" fill="#57d6c0" font-size="11" font-weight="700">SHARE PUBLIC</text>
+    <text x="675" y="150" fill="#57d6c0" font-size="11" font-weight="700">KEY WITH HOST?</text>
+    <text x="675" y="166.667" fill="#e8eef7" font-size="10">root · public SEED</text>
+    <text x="675" y="183.333" fill="#e8eef7" font-size="10">height · parameters</text>
+    <text x="675" y="216.667" fill="#8fa3bf" font-size="9.5">nothing else crosses</text>
+    <text x="675" y="233.333" fill="#8fa3bf" font-size="9.5">the wire, ever</text>
+    <text x="675" y="262" fill="#5b7292" font-size="9.5">Page 5 · export</text>
     <circle cx="737" cy="312" r="12" fill="#57d6c0"/>
   </g>
-  <text x="30" y="374" fill="#5b7292" font-size="11.5">The 6-word ceremony code is derived and rendered by the secure element itself — the words owners verify out-of-band cannot be forged by a compromised host.</text>
+  <g>
+    <rect x="850" y="70" width="185" height="270" rx="16" fill="#16263f" stroke="#22354f" stroke-width="2"/>
+    <rect x="868" y="94" width="149" height="190" rx="6" fill="#060d18"/>
+    <text x="880" y="122" fill="#57d6c0" font-size="11" font-weight="700">SIGN</text>
+    <text x="880" y="150" fill="#57d6c0" font-size="11" font-weight="700">ATTESTATION?</text>
+    <text x="880" y="164.286" fill="#e8eef7" font-size="10">Safe · Network</text>
+    <text x="880" y="178.571" fill="#e8eef7" font-size="10">Key · Registry nonce</text>
+    <text x="880" y="207.143" fill="#8fa3bf" font-size="9.5">the device fills root,</text>
+    <text x="880" y="221.429" fill="#8fa3bf" font-size="9.5">SEED, height and</text>
+    <text x="880" y="235.714" fill="#8fa3bf" font-size="9.5">parameters itself</text>
+    <text x="880" y="262" fill="#5b7292" font-size="9.5">Page 6 · attestation</text>
+    <circle cx="942" cy="312" r="12" fill="#57d6c0"/>
+  </g>
+  <text x="30" y="362" fill="#5b7292" font-size="11.5">Page 3, tree construction, is a progress bar and is cancellable until it completes. Generation always fills a free slot and never touches an existing key.</text>
 </svg>
