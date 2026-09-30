@@ -114,14 +114,24 @@ one-key-one-contract binding, and `test/test_fmt_utc.py` checks that no screen s
 less than the payload: the calendar arithmetic against Python's own, on the host, and
 on the device the two places a value is refused rather than drawn short.
 
+`test/test_payload_class.py` covers the other half of the zero-field rule. Everything
+above sends `approvalClass: 0`, and so does every host in the tree, so the `PAYLOAD`
+and `ADMIN` arm of `unused_fields_are_zero` — the one that requires `token`,
+`recipient` and `amount` to be zero — had no check of any kind: deleting it left
+`test_app.py` at 45/45. It checks that arm in both directions, that a class-1 review
+draws `Target`, `Value` and `Data hash` rather than the transfer triple, and that an
+`ADMIN` approval says so on its heading, which is the only place the class appears on
+the screen.
+
 ```sh
 ./build.sh && python3 test/test_app.py      # needs docker and Foundry's cast
 python3 test/test_wallet.py                 # its own ports and container
 python3 test/test_fmt_utc.py                # --host for the parts needing no device
+python3 test/test_payload_class.py          # the PAYLOAD and ADMIN classes
 ```
 
 Each suite owns its Speculos ports so they can run together; `APP_TEST_PORTS`,
-`WALLET_TEST_PORTS` and `FMT_UTC_PORTS` move them.
+`WALLET_TEST_PORTS`, `FMT_UTC_PORTS` and `PAYLOAD_TEST_PORTS` move them.
 
 ### The one invariant no test here can reach
 
@@ -228,5 +238,6 @@ the spec assuming `GET_XMSS_ROOT`'s display flag, which this build does not have
 | `test/test_app.py` | the Safe pre-approval path end to end, in Speculos |
 | `test/test_wallet.py` | the FermionWallet path and the one-key-one-contract binding |
 | `test/test_fmt_utc.py` | that no screen says less than the payload: host and device |
+| `test/test_payload_class.py` | the `PAYLOAD` and `ADMIN` classes, and their half of the zero-field rule |
 | `build.sh` | build in Ledger's container, ELF where Speculos and the demo expect it |
 | `ledger_app.toml` | manifest for Ledger's tooling and CI |
