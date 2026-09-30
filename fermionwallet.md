@@ -1,6 +1,8 @@
 # FermionWallet — the smallest possible post-quantum ERC-20 wallet
 
-**Status: specification only. No contract is implemented yet.**
+**Status: implemented.** [`contracts/src/FermionWallet.sol`](./contracts/src/FermionWallet.sol)
+and its test suite. Not audited, not deployed on any network, and the device support it needs
+is only partly built — see [FWL-033](#requirements).
 
 FermionWallet is a *second* product in this repository, separate from [FermionGuard](./fermionguard-module.md). Where FermionGuard adds a post-quantum second authorization to an existing Gnosis Safe — owners, threshold, policies, timelocks, recovery paths — FermionWallet throws all of that away and keeps one thing: **an address that holds ERC-20 tokens and releases them only against a signature from the Fermion Ledger app.**
 
@@ -83,7 +85,7 @@ leaf than the one it actually used would simply fail the ECDSA check. This is th
 ### What `transfer` checks, in order
 
 1. `block.timestamp <= validUntil`, else revert. A signed transfer that was never relayed stops being valid. [FWL-015]
-2. `leafIdx` is decoded from `xmssSignature` (the `leafIdx` field of `XMSS.Signature`, at a fixed offset once the signature is decoded — no cryptography involved) and `isLeafUsed(leafIdx)` must be false, else revert. So this check still comes **before** the ~700k-gas verification, and a replay costs the relayer almost nothing. [FWL-016]
+2. `leafIdx` is decoded from `xmssSignature` (the `leafIdx` field of `XMSS.Signature`, at a fixed offset once the signature is decoded — no cryptography involved) and `isLeafUsed(leafIdx)` must be false, else revert. This comes **before** the ~700k-gas verification, so a replay is refused for about 122k rather than 800k. It is not free, and saying so matters: nearly all of that 122k is what EIP-7623 charges for carrying a 2.4 KB signature in calldata at all, which no contract-side check can avoid. Checking early saves the verification, not the transaction. [FWL-016]
 3. The ECDSA half recovers to `quantumAdmin` over the digest built with that `leafIdx` (via OpenZeppelin `SignatureChecker`, so an ERC-1271 signer also works). [FWL-017]
 4. The XMSS half verifies against `(xmssRoot, xmssSeed)` at `treeHeight`, using [`xmss-solidity`](https://github.com/skalenetwork/xmss-solidity)'s four-argument `XMSS.verify`, the form that binds the tree height to the key. [FWL-018]
 5. The leaf is marked spent **before** the token call. [FWL-019]
@@ -135,13 +137,16 @@ A single immutable, permissionless `LeafRegistry` per chain, keyed by XMSS root,
 
 | | Gas |
 |---|---|
-| XMSS verification, h = 10 (measured) | ~712k |
-| XMSS verification, h = 16 (interpolated — no h = 16 vector or benchmark exists yet) | ~731k |
-| XMSS verification, h = 20 (measured) | ~745k |
-| ECDSA check, leaf bookkeeping, token transfer, base cost | ~90k |
-| **Total per transfer** | **~0.8M** |
+| **A transfer, whole transaction, h = 4** | **802k, measured** |
+| **A transfer, whole transaction, h = 10** | **845k, measured** |
+| A replay, refused before verification | 122k — almost all of it the calldata floor |
+| of which XMSS verification, h = 10 (measured) | ~712k |
+| of which XMSS verification, h = 16 (interpolated — no h = 16 vector or benchmark exists yet) | ~731k |
+| of which XMSS verification, h = 20 (measured) | ~745k |
+| of which ECDSA check, leaf bookkeeping, token transfer, base cost | ~90k |
 
-Post-quantum verification on-chain is not cheap, and this is the honest number. The supported tree heights are the RFC 8391 parameter sets 10, 16 and 20: h = 10 gives 1,024 transfers per key and is the sensible default for a personal wallet; h = 20 gives ~1.05M and costs ~33k more gas per transfer. [FWL-027] Receiving tokens costs the sender nothing extra — it is an ordinary ERC-20 transfer to an address. [FWL-028]
+Post-quantum verification on-chain is not cheap, and these are measured numbers rather than
+a target: 802k and 845k come from the test suite, not from adding up the parts. The supported tree heights are the RFC 8391 parameter sets 10, 16 and 20: h = 10 gives 1,024 transfers per key and is the sensible default for a personal wallet; h = 20 gives ~1.05M and costs ~33k more gas per transfer. [FWL-027] Receiving tokens costs the sender nothing extra — it is an ordinary ERC-20 transfer to an address. [FWL-028]
 
 When the leaves run out, the wallet still works for exactly as long as it takes to move the balance to a new wallet: the last leaf signs the last transfer. Plan the move before the counter reaches the end; the device shows leaves remaining (`GET_LEAF_INDEX`). [FWL-029]
 
