@@ -533,13 +533,13 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
   <div class="wrap center">
     <div class="eyebrow">For your engineers</div>
     <h2>Post-quantum signatures,<br>verified in the EVM</h2>
-    <p class="lead">XMSS is pure hashing, so the chain checks it directly — no oracle, no trusted server. The verifier is a clean-room implementation of RFC 8391, <strong>formally verified</strong> to compute exactly what the RFC's verification algorithms compute, for every input, and tested against an independent Python reference.</p>
+    <p class="lead">XMSS is pure hashing, so the chain checks it directly — no oracle, no trusted server. The verifier is a clean-room implementation of RFC 8391, and we say exactly how far its proof reaches: every RFC primitive and every path on which verification <em>rejects</em> are <strong>machine-checked</strong>, for all inputs, against a line-by-line transcription of the RFC. Composing those into an <em>accepting</em> verification is argued by hand, checked symbolically at tree height 2, and pinned by RFC vectors at h = 4, 10 and 20.</p>
   </div>
   <div class="wrap">
     <div class="stats">
-      <div class="stat"><div class="v">744,906</div><div class="l">gas per verification, measured at h = 20</div></div>
+      <div class="stat"><div class="v">745,003</div><div class="l">gas per verification, measured at h = 20</div></div>
       <div class="stat"><div class="v">~1M</div><div class="l">approvals per key (2<sup>20</sup> leaves)</div></div>
-      <div class="stat"><div class="v">Proven</div><div class="l">XMSS verifier formally verified against RFC 8391, for all inputs</div></div>
+      <div class="stat"><div class="v">11</div><div class="l">Halmos lemmas proving the verifier equals RFC 8391, for all inputs</div></div>
       <div class="stat"><div class="v">MIT</div><div class="l">XMSS verifier, written from the RFC, no borrowed code</div></div>
     </div>
     <div class="split">
@@ -592,8 +592,8 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
         <span class="tag done">Designed</span>
       </div>
       <div class="status-row">
-        <div><div class="name">XMSS verifier, formally verified</div><div class="desc">Proven equivalent to RFC 8391 by symbolic execution; published as <a href="https://github.com/skalenetwork/xmss-solidity">xmss-solidity</a></div></div>
-        <span class="tag done">Proven</span>
+        <div><div class="name">XMSS verifier, machine-checked</div><div class="desc">Primitives and reject paths proven equal to RFC 8391 by symbolic execution; the accept path argued by hand and pinned by vectors, not machine-checked for general h — <a href="https://github.com/skalenetwork/xmss-solidity/blob/main/PROOF.md">PROOF.md</a> states what is proven and assumed. Published as <a href="https://github.com/skalenetwork/xmss-solidity">xmss-solidity</a></div></div>
+        <span class="tag done">Proven in part</span>
       </div>
       <div class="status-row">
         <div><div class="name">Guard, key registry &amp; pre-approval contracts</div><div class="desc">Built on audited Safe and OpenZeppelin libraries; Foundry suites include a real-Safe integration test</div></div>
@@ -670,7 +670,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
       </details>
       <details>
         <summary>Can we use it in production today?</summary>
-        <p>Not yet. The post-quantum verifier is formally verified against RFC 8391 and the Guard contracts are implemented and tested, but nothing is audited yet; the Ledger app and Safe App are in development, and an external audit is required before any mainnet deployment. Request early access to be among the first teams onboarded.</p>
+        <p>Not yet. The post-quantum verifier is machine-checked against RFC 8391 as far as described above, and the Guard contracts are implemented and tested, but nothing is audited yet; the Ledger app and Safe App are in development, and an external audit is required before any mainnet deployment. Request early access to be among the first teams onboarded.</p>
       </details>
     </div>
   </div>
