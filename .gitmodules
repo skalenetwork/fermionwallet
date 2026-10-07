@@ -7,3 +7,6 @@
 [submodule "contracts/lib/xmss-solidity"]
 	path = contracts/lib/xmss-solidity
 	url = https://github.com/skalenetwork/xmss-solidity.git
+[submodule "contracts/lib/mldsa-solidity"]
+	path = contracts/lib/mldsa-solidity
+	url = https://github.com/skalenetwork/mldsa-solidity.git

@@ -2,3 +2,4 @@
 @safe-global/safe-contracts/contracts/=lib/safe-smart-account/contracts/
 forge-std/=lib/forge-std/src/
 xmss-solidity/=lib/xmss-solidity/src/
+mldsa-solidity/=lib/mldsa-solidity/src/
