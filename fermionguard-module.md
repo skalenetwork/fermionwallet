@@ -143,7 +143,7 @@ Why XMSS over the alternatives:
 ## Required inheritance (this is the contract)
 
 ```solidity
-// SPDX-License-Identifier: LGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity ^0.8.24;
 
 // contracts/src/FermionGuard.sol (abridged)

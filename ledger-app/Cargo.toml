@@ -3,7 +3,7 @@ name = "fermionguard"
 version = "0.1.0"
 edition = "2021"
 description = "FermionGuard — the Quantum Administrator's hybrid ECDSA + XMSS Ledger app"
-license = "LGPL-3.0-only"
+license = "AGPL-3.0-or-later"
 
 [dependencies]
 ledger_device_sdk = "1.37.1"

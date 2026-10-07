@@ -234,3 +234,11 @@ If you are allocating to the infrastructure that will still be standing when cla
 ---
 
 **Keep the vault. Add the future.**
+
+## License
+
+Fermion is licensed under the [GNU Affero General Public License v3.0 or later](LICENSE)
+(`AGPL-3.0-or-later`). Libraries it uses keep their own licences: the ML-DSA verifier
+([`mldsa-solidity`](https://github.com/skalenetwork/mldsa-solidity)) and the XMSS library
+([`xmss-solidity`](https://github.com/skalenetwork/xmss-solidity)) are MIT, and the vendored
+dependencies under `contracts/lib/` are under their own terms.

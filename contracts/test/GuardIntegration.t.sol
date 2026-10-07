@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
