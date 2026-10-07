@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import {BitMaps} from "@openzeppelin/contracts/utils/structs/BitMaps.sol";
@@ -75,6 +76,29 @@ contract FermionWallet is EIP712 {
     uint256 public immutable treeHeight;
     /// @notice The device's ECDSA address — the classical half of the hybrid.
     address public immutable quantumAdmin;
+    /// @notice Whether `quantumAdmin` had code at the moment this wallet was built, and
+    ///         therefore which scheme the classical half is checked under for the rest of
+    ///         the wallet's life: `false` means secp256k1 recovery, `true` means ERC-1271.
+    /// @dev    Snapshotted, not read live, and that is the whole point. OpenZeppelin's
+    ///         `SignatureChecker.isValidSignatureNow` branches on
+    ///         `signer.code.length == 0` *at call time*, so an address that is an EOA at
+    ///         deployment and gains code later — most realistically because its own key
+    ///         signed an EIP-7702 authorization, which is routine and has nothing to do
+    ///         with this wallet — would silently stop being checked by recovery and start
+    ///         being asked for an ERC-1271 opinion instead. A delegate without
+    ///         `isValidSignature` refuses every genuine device signature from then on, and
+    ///         with no owner, pause, recovery or rotation-that-is-not-a-transfer
+    ///         ([FWL-006], [FWL-007], [FWL-011]) the balance would be unreachable forever;
+    ///         a permissive delegate is worse, handing the classical half to whoever that
+    ///         delegate trusts. Freezing the branch at construction makes the delegation
+    ///         irrelevant: the device's key still signs, recovery still returns
+    ///         `quantumAdmin`, and a deliberate ERC-1271 admin still works because it was
+    ///         already a contract when the wallet was built. [FWL-017a]
+    ///
+    ///         It is public because it is the one fact that distinguishes, on-chain, a
+    ///         wallet whose classical half is a device key from one whose classical half is
+    ///         whatever a contract chooses to bless ([FWL-022a]).
+    bool public immutable adminIsContract;
 
     // ── The only mutable state ──────────────────────────────────────────────
 
@@ -122,6 +146,8 @@ contract FermionWallet is EIP712 {
         xmssSeed = xmssSeed_;
         treeHeight = treeHeight_;
         quantumAdmin = quantumAdmin_;
+        // The branch, taken once, here. See `adminIsContract` for why it is not read live.
+        adminIsContract = quantumAdmin_.code.length != 0;
     }
 
     /// @notice Whether this wallet has already spent XMSS leaf `leafIndex`.
@@ -194,9 +220,20 @@ contract FermionWallet is EIP712 {
             keccak256(abi.encode(TRANSFER_TYPEHASH, address(this), token, to, amount, leafIndex, validUntil))
         );
 
-        // 3. The classical half, through OpenZeppelin's checker so an ERC-1271 contract
-        //    signer works too — never raw `ecrecover` [FWL-017].
-        if (!quantumAdmin.isValidSignatureNow(digest, ecdsaSignature)) revert InvalidEcdsaSignature();
+        // 3. The classical half, under the scheme fixed at construction. An ERC-1271
+        //    contract signer works [FWL-017]; never raw `ecrecover`, and never a branch
+        //    that a later EIP-7702 delegation of `quantumAdmin` could move [FWL-017a].
+        //    `tryRecover` rather than `recover`, so a malformed, short or absent
+        //    classical half reverts with this contract's own error rather than one of
+        //    OpenZeppelin's.
+        bool classicalHalfOk;
+        if (adminIsContract) {
+            classicalHalfOk = quantumAdmin.isValidERC1271SignatureNow(digest, ecdsaSignature);
+        } else {
+            (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(digest, ecdsaSignature);
+            classicalHalfOk = err == ECDSA.RecoverError.NoError && recovered == quantumAdmin;
+        }
+        if (!classicalHalfOk) revert InvalidEcdsaSignature();
 
         // 4. The post-quantum half, with the four-argument `XMSS.verify` — the form that
         //    binds the registered tree height to the key instead of letting whoever

@@ -74,7 +74,7 @@ contract FalseReturningToken {
 }
 
 /// An ERC-1271 contract signer standing in for a `quantumAdmin` that is not an EOA —
-/// the case `SignatureChecker` exists for [FWL-017].
+/// the case the ERC-1271 branch exists for [FWL-017].
 contract Erc1271Signer {
     mapping(bytes32 => bool) public approved;
 
@@ -420,8 +420,8 @@ contract FermionWalletTest is Test {
         assertEq(token.balanceOf(recipient), 1 ether);
     }
 
-    /// The classical half goes through `SignatureChecker`, never raw `ecrecover`, so a
-    /// `quantumAdmin` that is a contract authorizes through ERC-1271 instead.
+    /// The classical half is never raw `ecrecover`: a `quantumAdmin` that is a contract
+    /// at construction authorizes through ERC-1271 instead.
     ///
     /// Covers: [FWL-017]
     function test_anErc1271SignerCanBeTheQuantumAdmin() public {

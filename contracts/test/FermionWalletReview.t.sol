@@ -26,6 +26,9 @@ import {XMSS} from "xmss-solidity/XMSS.sol";
 //                     are what the existing suite should have contained.
 //   [NO FINDING]    — an attack that was tried and does not work. Recorded with
 //                     the line that stops it, so nobody has to try it again.
+//   [FIXED]         — was an [OPEN FINDING]; the contract has since been fixed and
+//                     the test rewritten to assert the fixed behaviour. These ARE
+//                     regression tests: if one goes red, the finding is back.
 //
 // Mutation testing was done in a scratch copy of `contracts/` (src + this one
 // test file, `lib` symlinked), never in the repo. Survivors of the existing
@@ -269,8 +272,10 @@ contract FermionWalletReviewTest is Test {
     /// through ERC-1271. An admin that returns the magic value unconditionally
     /// makes step 3 vacuous: `ecdsaSignature = ""` is accepted, and the wallet is
     /// XMSS-only. Nothing in the constructor or in `transfer` can tell this apart
-    /// from a Ledger's ECDSA address, and nothing in the deployed state exposes it
-    /// — `quantumAdmin` reads back as a perfectly ordinary address.
+    /// from a Ledger's ECDSA address. Since FWL-017a the deployed state does say
+    /// *that* the admin is a contract (`adminIsContract`, FWL-022a), but not what
+    /// that contract accepts — a blanket answerer and a careful multisig read back
+    /// identically.
     ///
     /// The second half of the finding is the reverse of FWL-036 ("A signed
     /// transfer stays relayable by anyone until `validUntil`, with no cancel
@@ -289,7 +294,8 @@ contract FermionWalletReviewTest is Test {
         BlanketErc1271Signer admin = new BlanketErc1271Signer();
         FermionWallet w = new FermionWallet(root, seed, H, address(admin));
         token.mint(address(w), 100 ether);
-        assertEq(w.quantumAdmin(), address(admin)); // indistinguishable from an EOA here
+        assertEq(w.quantumAdmin(), address(admin));
+        assertTrue(w.adminIsContract()); // visibly a contract — but not visibly a blanket one
 
         bytes32 d0 = _digest(w, address(token), recipient, 1 ether, 0, validUntil);
         (,, bytes memory x0) = _xmss(H, 0, d0);
@@ -317,59 +323,107 @@ contract FermionWalletReviewTest is Test {
         assertFalse(w.isLeafUsed(2));
     }
 
-    /// [OPEN FINDING 2 — code appearing at `quantumAdmin` bricks the wallet]
+    /// [FIXED — was OPEN FINDING 2; this is now a regression test, FWL-017a]
     ///
-    /// Severity: medium. Capability: the holder of the device's own ECDSA key, by
-    /// doing something that is unrelated to this wallet and is becoming routine —
-    /// signing an EIP-7702 authorization so that address can be sponsored, batched
-    /// or used as a smart account. No third party can trigger it: code cannot be
-    /// put at an address without that address's key. Loss: total and permanent,
-    /// by FWL-007.
+    /// The finding: `SignatureChecker.isValidSignatureNow` branches on
+    /// `signer.code.length == 0` *at call time*. `quantumAdmin` is immutable, but
+    /// that branch was not. The moment any code existed at the admin address, the
+    /// wallet stopped recovering ECDSA and started asking the address for an
+    /// ERC-1271 opinion instead — so a delegate with no `isValidSignature` refused
+    /// every genuine Ledger signature, and with no owner, pause, recovery or
+    /// rotation-that-is-not-a-transfer the balance was unreachable forever.
+    /// Capability: the holder of the device's own ECDSA key, signing an EIP-7702
+    /// authorization for it — routine, unrelated to this wallet, and with nothing
+    /// to warn them off. No third party can trigger it, because code cannot appear
+    /// at an address without that address's key. Loss: total and permanent, by
+    /// FWL-007. The mirror case was worse than a brick: a delegate that DOES
+    /// answer ERC-1271 permissively hands the classical half to whoever that
+    /// delegate trusts — Finding 1 below, arrived at after deployment instead of
+    /// chosen at it.
     ///
-    /// `SignatureChecker.isValidSignatureNow` branches on
-    /// `signer.code.length == 0`. `quantumAdmin` is immutable, but that branch is
-    /// not: the moment *any* code exists at the admin address — a 7702 delegation
-    /// indicator, or a contract deployed there — the wallet stops recovering
-    /// ECDSA and starts asking the address for an ERC-1271 opinion instead. A
-    /// delegate that has no `isValidSignature` answers nothing, and every genuine
-    /// Ledger signature is refused from then on. There is no owner, no pause, no
-    /// recovery and no key rotation that does not itself require a transfer, so
-    /// the balance is unreachable forever.
+    /// The fix: `adminIsContract` is snapshotted in the constructor and the branch
+    /// is taken on the snapshot, so the delegation is irrelevant — the device's
+    /// key still signs and `ECDSA.tryRecover` still returns `quantumAdmin`.
     ///
-    /// The mirror image is worse than a brick: a delegate that DOES implement
-    /// ERC-1271 permissively (a session-key account, a multisig the holder does
-    /// not control alone) hands the classical half to whoever that delegate
-    /// trusts — Finding 1, arrived at after deployment rather than at it.
-    ///
-    /// `vm.etch` is used rather than a 7702 cheatcode because the branch under
-    /// test is `code.length`, and plain code trips it identically; the real-world
-    /// trigger is the delegation.
-    function test_FINDING_codeAppearingAtTheAdminAddressBricksTheWalletForever() public {
+    /// `vm.etch` rather than a 7702 cheatcode: the branch under test is
+    /// `code.length`, and plain code trips it identically. Revert the routing in
+    /// `transfer` to `quantumAdmin.isValidSignatureNow(...)` and this test goes
+    /// red at the first transfer after the etch.
+    function test_REGRESSION_codeAppearingAtTheAdminAddressDoesNotBrickTheWallet() public {
+        assertFalse(wallet.adminIsContract(), "an EOA admin must be snapshotted as an EOA");
+
         // A genuine device signature, made and verified before anything changes.
         (bytes memory ecdsa, bytes memory xmss) = _sign(wallet, address(token), recipient, 1 ether, validUntil, 0);
-        (bytes memory ecdsa2, bytes memory xmss2) = _sign(wallet, address(token), recipient, 1 ether, validUntil, 1);
         wallet.transfer(address(token), recipient, 1 ether, validUntil, ecdsa, xmss);
         assertEq(token.balanceOf(recipient), 1 ether);
 
         // The holder delegates their device address (7702) or otherwise puts code
-        // there. Nothing about this wallet was touched; `quantumAdmin` is unchanged.
+        // there. Nothing about this wallet was touched.
         vm.etch(device, address(new MuteCode()).code);
         assertEq(wallet.quantumAdmin(), device);
+        assertFalse(wallet.adminIsContract(), "the snapshot is immutable, unlike the code");
 
-        // The same device, the same key, the same digest — now refused.
-        vm.expectRevert(FermionWallet.InvalidEcdsaSignature.selector);
-        wallet.transfer(address(token), recipient, 1 ether, validUntil, ecdsa2, xmss2);
-        assertFalse(wallet.isLeafUsed(1));
-
-        // Nor is there any way out. The balance is 999,999 tokens and no caller,
-        // including the device itself, can move it.
-        assertEq(token.balanceOf(address(wallet)), 999_999 ether);
-        for (uint32 leaf = 2; leaf < 6; ++leaf) {
+        // The same device, the same key: still spends, exactly as the holder expects.
+        for (uint32 leaf = 1; leaf < 5; ++leaf) {
             (bytes memory e, bytes memory x) = _sign(wallet, address(token), recipient, 1 ether, validUntil, leaf);
-            vm.prank(device);
-            vm.expectRevert(FermionWallet.InvalidEcdsaSignature.selector);
             wallet.transfer(address(token), recipient, 1 ether, validUntil, e, x);
+            assertTrue(wallet.isLeafUsed(leaf));
         }
+        assertEq(token.balanceOf(recipient), 5 ether);
+
+        // And the delegate's opinion is never asked for, so a permissive one cannot
+        // authorize anything either: a blanket ERC-1271 answerer sitting at the
+        // admin address does not make a junk classical half acceptable.
+        vm.etch(device, address(new BlanketErc1271Signer()).code);
+        (bytes memory e5, bytes memory x5) = _sign(wallet, address(token), recipient, 1 ether, validUntil, 5);
+        vm.expectRevert(FermionWallet.InvalidEcdsaSignature.selector);
+        wallet.transfer(address(token), recipient, 1 ether, validUntil, bytes("not a signature"), x5);
+        assertFalse(wallet.isLeafUsed(5));
+        // …while the device's own signature still works over the same delegate.
+        wallet.transfer(address(token), recipient, 1 ether, validUntil, e5, x5);
+        assertTrue(wallet.isLeafUsed(5));
+    }
+
+    /// [FIXED — the other direction of FWL-017a: a deliberate ERC-1271 admin]
+    ///
+    /// The snapshot must not break the case `SignatureChecker` exists for. An
+    /// admin that was a contract at construction is routed through ERC-1271
+    /// forever, including after it is emptied — which is the honest outcome, since
+    /// recovery could never return a contract's address anyway.
+    function test_REGRESSION_anAdminThatWasAContractStaysOnTheErc1271Path() public {
+        BlanketErc1271Signer admin = new BlanketErc1271Signer();
+        FermionWallet w = new FermionWallet(root, seed, H, address(admin));
+        assertTrue(w.adminIsContract(), "a contract admin must be snapshotted as a contract");
+        token.mint(address(w), 10 ether);
+
+        // FWL-017's ERC-1271 support, intact: an empty classical half is accepted
+        // because the admin blesses the digest.
+        bytes32 d0 = _digest(w, address(token), recipient, 1 ether, 0, validUntil);
+        (,, bytes memory x0) = _xmss(H, 0, d0);
+        w.transfer(address(token), recipient, 1 ether, validUntil, hex"", x0);
+        assertEq(token.balanceOf(recipient), 1 ether);
+
+        // The admin's answer is still what decides, call by call.
+        admin.setLive(false);
+        bytes32 d1 = _digest(w, address(token), recipient, 1 ether, 1, validUntil);
+        (,, bytes memory x1) = _xmss(H, 1, d1);
+        vm.expectRevert(FermionWallet.InvalidEcdsaSignature.selector);
+        w.transfer(address(token), recipient, 1 ether, validUntil, hex"", x1);
+        admin.setLive(true);
+        w.transfer(address(token), recipient, 1 ether, validUntil, hex"", x1);
+        assertEq(token.balanceOf(recipient), 2 ether);
+
+        // And if that contract is later emptied, the wallet does NOT quietly fall
+        // back to secp256k1 recovery against a contract address — which could never
+        // succeed — it stays on the branch it was built with and says so.
+        vm.etch(address(admin), hex"");
+        assertTrue(w.adminIsContract());
+        bytes32 d2 = _digest(w, address(token), recipient, 1 ether, 2, validUntil);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(DEVICE_PK, d2);
+        (,, bytes memory x2) = _xmss(H, 2, d2);
+        vm.expectRevert(FermionWallet.InvalidEcdsaSignature.selector);
+        w.transfer(address(token), recipient, 1 ether, validUntil, abi.encodePacked(r, s, v), x2);
+        assertFalse(w.isLeafUsed(2));
     }
 
     /// [OPEN FINDING 3 — a mistyped constructor argument is an undetectable brick]
@@ -557,7 +611,7 @@ contract FermionWalletReviewTest is Test {
 
     /// [NO FINDING] Neither signature half is malleable into a second acceptance.
     ///
-    /// ECDSA: `SignatureChecker` -> `ECDSA.tryRecover`, which accepts only a
+    /// ECDSA: `ECDSA.tryRecover` (the EOA branch, FWL-017a), which accepts only a
     /// 65-byte `r‖s‖v` with `s <= n/2` and `v` in {27,28}, so the flipped-`s`
     /// twin, a 64-byte EIP-2098 compact form and a `v` of 0/1 are all refused
     /// (the device already normalizes to low `s` —

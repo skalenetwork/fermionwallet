@@ -46,6 +46,7 @@ contract FermionWallet {
     bytes32 public immutable xmssSeed;
     uint256 public immutable treeHeight;   // 10, 16 or 20 (RFC 8391 parameter sets)
     address public immutable quantumAdmin; // the device's ECDSA address
+    bool    public immutable adminIsContract; // quantumAdmin had code at construction
 
     BitMaps.BitMap private _usedLeaves;    // the only mutable state
     function isLeafUsed(uint32 leafIndex) external view returns (bool);
@@ -86,7 +87,7 @@ leaf than the one it actually used would simply fail the ECDSA check. This is th
 
 1. `block.timestamp <= validUntil`, else revert. A signed transfer that was never relayed stops being valid. [FWL-015]
 2. `leafIdx` is decoded from `xmssSignature` (the `leafIdx` field of `XMSS.Signature`, at a fixed offset once the signature is decoded — no cryptography involved) and `isLeafUsed(leafIdx)` must be false, else revert. This comes **before** the ~700k-gas verification, so a replay is refused for about 122k rather than 800k. It is not free, and saying so matters: nearly all of that 122k is what EIP-7623 charges for carrying a 2.4 KB signature in calldata at all, which no contract-side check can avoid. Checking early saves the verification, not the transaction. [FWL-016]
-3. The ECDSA half recovers to `quantumAdmin` over the digest built with that `leafIdx` (via OpenZeppelin `SignatureChecker`, so an ERC-1271 signer also works). [FWL-017]
+3. The ECDSA half recovers to `quantumAdmin` over the digest built with that `leafIdx`, or, if `quantumAdmin` was a contract when the wallet was built, that contract accepts it under ERC-1271. [FWL-017] Which of the two applies is decided once, in the constructor, and stored as `adminIsContract`; it is never re-read from `quantumAdmin.code`. OpenZeppelin's `SignatureChecker.isValidSignatureNow` makes that choice at call time, so an EOA admin that later gains code — most realistically because its own key signed an EIP-7702 delegation, which is routine and has nothing to do with this wallet — would be switched to ERC-1271 mid-life: a delegate without `isValidSignature` would refuse every genuine device signature, with no recovery path (FWL-007) to undo it, and a permissive one would hand the classical half to whatever it trusts. With the branch fixed, the delegation is irrelevant. [FWL-017a] `adminIsContract` is public because it is the one on-chain fact that says whether the classical half is a device key or whatever a contract chooses to accept. [FWL-022a]
 4. The XMSS half verifies against `(xmssRoot, xmssSeed)` at `treeHeight`, using [`xmss-solidity`](https://github.com/skalenetwork/xmss-solidity)'s four-argument `XMSS.verify`, the form that binds the tree height to the key. [FWL-018] No test can demonstrate this: swapping it for the three-argument form leaves the whole suite green, because the byte-length check does not bind the height — ABI decoding bounds offsets, not the decoded array's length, so a blob of exactly `2304 + 32·treeHeight` bytes can still decode to an authentication path of any length that fits, and only `verify`'s own comparison rejects it. It is enforced by a grep over `FermionWallet.sol` in `.github/workflows/contracts.yml`, exactly as [QKR-034a] is for the registry. [FWL-018a]
 5. The leaf is marked spent **before** the token call. [FWL-019]
 6. `SafeERC20.safeTransfer(token, to, amount)`. [FWL-020]
@@ -166,6 +167,7 @@ Optionally, a CREATE2 factory lets the address be computed before deployment, so
 | Relayer censors or front-runs | Anyone else can relay the same signature; the signature binds every field, so a front-runner can only submit the transfer the holder already authorized |
 | Replayed transaction | The leaf is already spent on-chain; the transfer reverts before the expensive verification |
 | Device lost or destroyed | **Funds are unrecoverable.** This is the accepted cost of the design (FWL-007) |
+| The device's address is later given code (an EIP-7702 delegation, say) | Nothing changes: the wallet still recovers ECDSA against it, as fixed at construction, and never asks the delegate (FWL-017a) |
 | Device rolled back or cloned | Leaf reuse becomes possible, and nothing on-chain stops it; see FWL-025 |
 | Leaves exhausted | No further transfers; move the balance before that point (FWL-029) |
 | Token with transfer fees or rebasing | Supported only as far as `safeTransfer` is: the signed `amount` is what is sent, not necessarily what is received |
@@ -193,12 +195,14 @@ Optionally, a CREATE2 factory lets the address be computed before deployment, so
 | FWL-015 | A transfer past `validUntil` reverts. |
 | FWL-016 | The leaf-reuse check reads the index from the signature and precedes verification. |
 | FWL-017 | The ECDSA half must recover to `quantumAdmin`. |
+| FWL-017a | Whether the classical half is checked by recovery or by ERC-1271 is fixed at construction from `quantumAdmin.code.length`; code appearing or disappearing at `quantumAdmin` later changes nothing. |
 | FWL-018 | The XMSS half is verified with the height-bound `XMSS.verify`. |
 | FWL-018a | That the four-argument form is the one called is not testable — the suite is green either way — and is enforced by a CI grep. |
 | FWL-019 | The leaf is marked spent before the token call. |
 | FWL-020 | Transfers use `SafeERC20.safeTransfer`. |
 | FWL-021 | `msg.sender` carries no authority. |
 | FWL-022 | Both signature halves are required over the same digest. |
+| FWL-022a | `adminIsContract` is public, so anyone can tell a wallet whose classical half is a device key from one whose classical half is a contract's ERC-1271 answer. |
 | FWL-023 | A device key slot signs for exactly one verifying contract — one wallet, or Safes, never both. |
 | FWL-024 | Multiple wallets require multiple keys. |
 | FWL-025 | FWL-023 is device-enforced only; a rolled-back or cloned device defeats leaf accounting with no on-chain backstop. Documented residual risk. |
