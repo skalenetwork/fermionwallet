@@ -87,7 +87,7 @@ code.
   [`ledger-xmss-app.md`](../../ledger-xmss-app.md), which still describes the XMSS build.
 - **The cryptography.** Whether a released signature is a correct ML-DSA-65 signature is
   the verifier's problem, tested against NIST's ACVP vectors and an independent reference
-  implementation in [`contracts/test/MLDSA65.t.sol`](../../contracts/test/MLDSA65.t.sol).
+  implementation in [`contracts/test/MLDSA.t.sol`](../../contracts/test/MLDSA.t.sol).
 - **What a screen shows.** The model knows that a screen of each name is traversed, not
   that it renders the right bytes; ERC-7730 rendering of contract calls in particular is
   a property of the descriptors and the app.
