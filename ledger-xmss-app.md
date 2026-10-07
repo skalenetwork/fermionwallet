@@ -357,6 +357,252 @@ Beyond the five **[new]** mechanisms, which have no counterpart to deviate from:
 
 The on-chain used-leaf bitmap in the Guard/registry stays in place even after this app ships. Device counter and on-chain bitmap independently prevent leaf reuse; either alone is sufficient, both together tolerate a failure of the other.
 
+## Formal properties of the core code
+
+This section states, and proves by hand, the properties the security requirements above
+rest on, for the code that decides whether a one-time leaf is spent and what it signs:
+`ledger-app/src/session.rs`, `ledger-app/src/xmss.rs`, the binding half of
+`ledger-app/src/wallet.rs`, and `sign_pre_approval` in `ledger-app/src/main.rs`. It is
+about the build as it stands — one key slot, `HEIGHT = 4` — not the full design above.
+The proofs are written, not machine-checked. Each one names what mechanically backs it,
+and the [proof obligations](#proof-obligations) list the code facts a change must not
+break, so a reviewer can re-check them instead of trusting this text.
+
+### Model and assumptions
+
+The app is single-threaded. An execution is a sequence of APDU handlings, each of which
+runs to completion, panics, or is cut by a power loss at any point. The state that
+matters is:
+
+| | Where | Survives power loss |
+|---|---|---|
+| `c`, the leaf counter | `session.rs`, `LEAF_COUNTER` | yes (NVM) |
+| `β`, the slot binding | `wallet.rs`, `BINDING` | yes (NVM) |
+| `ready`, `blob`, `cursor` | `session.rs`, `BLOB_READY`, `BLOB`, `BLOB_CURSOR` | no (RAM, initialised to `false`/zero at app start) |
+
+**Released.** *A signature for leaf L is released* means that `ready` becomes `true`
+with `blob` filled by a closure that was handed `Signing(L)`. That is the only way a
+host can obtain any byte of an XMSS signature, because `read_chunk` refuses while
+`ready` is false.
+
+| | Assumption |
+|---|---|
+| **A1** | NVM atomicity: after a power loss, `AtomicStorage::update` has left either the old value or the new one, and once it returns the new value is durable. This is the SDK's contract and is not checked here. |
+| **A2** | Rust's privacy and move semantics hold. `unsafe` code touches each `static mut` only inside the module that declares it, and nothing writes into those statics through a raw pointer. |
+| **A3** | One device, no rollback: NVM is never restored from an older image, and no other device holds the same key. |
+| **A4** | `Sha2_256` computes SHA-256. Only T6 needs this. |
+
+A3 is **false by construction across devices** for this build. `xmss::derive` computes
+the key from the BIP-32 node, so restoring the recovery phrase onto a second device
+gives the same key with a counter of 0, which is exactly leaf reuse. T3 is therefore a
+statement about one device. `ledger-app/README.md` records the same gap.
+
+### T1 — A signature is released only after its leaf is committed
+
+*In every execution, if a signature for leaf L is released, then `c := L + 1` has
+already returned in the same APDU handling.*
+
+**Proof.**
+1. `ready` is set to `true` in exactly one place, `publish`. It is private to
+   `session.rs` (A2).
+2. `publish` takes a `Committed` by value. `Committed` has only private fields, and the
+   only expression in the program that produces one is `Ok(Committed { leaf })` at the
+   end of `commit`.
+3. In program order, that expression comes after `LEAF_COUNTER.update(leaf + 1)`.
+4. So whatever `Committed` reaches `publish` was produced by a call to `commit` whose
+   `update` had already returned, and is durable by A1.
+5. `publish` hands the closure `Signing(committed.leaf)`, so the leaf released is the
+   leaf committed. ∎
+
+The interruptions:
+- **A power loss between `commit` and `publish`** releases nothing and burns the leaf,
+  which the security requirements accept.
+- **A power loss or panic while the blob is being filled** leaves `ready` false, since
+  it is set after the fill. The panic hook (`wiping_panic`) also runs `discard`.
+
+*Backed by:* the compile-fail probes in `ledger-app/README.md`. Moving `publish` above
+`commit` gives `E0425`; publishing twice with one token gives `E0382`.
+
+### T2 — The same leaf is committed, signed, digested and reported
+
+*For every release, four numbers are equal:*
+- *the counter value `commit` consumed;*
+- *the index `xmss::sign` signs under;*
+- *the `leafIndex` field inside the EIP-712 digest that both halves sign;*
+- *the leaf index returned to the host.*
+
+**Proof.** `sign_pre_approval` calls `session::reserve` exactly once and keeps
+`leaf = reserved.leaf()`. Then:
+- **Digest.** `review_and_digest(leaf)` passes that value to `eip712::digest` or
+  `wallet::digest`. Both take a `Leaf`, and `reserve` is the only constructor of `Leaf`.
+- **Counter.** `commit(reserved, …)` refuses unless `reserved.leaf == next_leaf()`. It
+  writes `leaf + 1` and returns `Committed { leaf: reserved.leaf }`.
+- **Signing index.** `publish` mints `Signing(committed.leaf)`. `Signing`'s field is
+  private and it is neither `Copy` nor `Clone`, so the token the closure holds is the
+  only `Signing` in existence. `xmss::sign` takes a `Signing`, so its index is `leaf`.
+- **Host reply.** The host is answered with `leaf.index()`. ∎
+
+*Backed by:* the type probes in `ledger-app/README.md`. `xmss::sign(&key, 0, …)`, a
+closure that reads the outer `leaf`, `commit(0, …)`, and signing under a fresh
+reservation all fail with `E0308`. Separately, `test_app.py` verifies every leaf's
+signature under the index the device reported.
+
+### T3 — Each leaf signs at most one digest (on one device)
+
+*Under A1–A3, for every L, at most one blob fill is ever run with `Signing(L)`, so leaf
+L's WOTS+ chains are revealed for at most one message.*
+
+**Lemma 3a (the counter only steps up by one).**
+- The only write to `c` is in `commit`, guarded by `leaf == next_leaf()`, and it writes
+  `leaf + 1`. So every write is `c := c + 1`, and it is atomic by A1.
+- With no rollback (A3), `c` never decreases. So the transition from L to L + 1
+  happens at most once in the device's lifetime.
+
+**Proof of T3.**
+1. Each `Signing(L)` is minted by one `publish` call, from one `Committed { L }`.
+2. `Committed` is neither `Copy` nor `Clone`, and `publish` consumes it, so there is at
+   most one `publish` per `commit`.
+3. Each `Committed { L }` comes from a `commit` that performed the transition from L to
+   L + 1, which by Lemma 3a happens at most once.
+4. A fill computes the chains of exactly one value, `digest`.
+
+So fills with `Signing(L)` ≤ commits performing L → L + 1 ≤ 1. ∎
+
+Re-reading the blob with `P1 = 0x00` serves the same bytes again. That is not a second
+signature.
+
+### T4 — An exhausted key releases nothing
+
+*Always `c ≤ 2^HEIGHT`, and no signature is released for any L ≥ 2^HEIGHT.*
+
+**Proof.**
+- `c` starts at 0.
+- `reserve` returns `None` when `next_leaf() ≥ 2^HEIGHT`, and `commit` accepts only a
+  `Reserved`. So every commit has `leaf < 2^HEIGHT` and writes `leaf + 1 ≤ 2^HEIGHT`.
+- `u32` overflow is impossible, since the counter never exceeds 16.
+- No release is possible without a commit (T1). ∎
+
+### T5 — The binding is written once, and every release matches it
+
+*(i) Once `β` is bound, it never changes. (ii) After every release, `β` equals
+`(kind, chainId, contract)` of the payload whose digest was signed.*
+
+**Proof of (i).** `BINDING` is private to `wallet.rs` (A2). Its only writer is
+`commit_binding`, which returns without writing when the slot is already bound, and
+whose only caller is `session::commit`.
+
+**Proof of (ii).** `review_and_digest` calls `check_binding(kind, chainId, contract)`
+before it returns the digest. That check passes only if the slot is unbound or already
+bound to exactly that triple. `sign_pre_approval` passes the same triple to `commit`,
+which calls `commit_binding`:
+- **If the slot was unbound,** the triple is written and is durable before `commit`
+  returns (A1).
+- **If it was bound,** it already equals the triple.
+
+Nothing writes `β` between the check and the commit: the app is single-threaded and
+`commit` is the only writer. ∎
+
+`commit` makes two NVM writes, the counter and then the binding, and they are not
+jointly atomic. A power loss between them leaves the counter advanced and the slot
+unbound. By T1 no signature exists for that leaf, so there is nothing for the binding to
+account for.
+
+### T6 — Every signature the device produces verifies
+
+*For every key K, leaf L < 2^HEIGHT and digest m, the bytes `xmss::sign` writes are
+accepted by RFC 8391 verification (as in `contracts/lib/xmss-solidity/py/xmss_ref.py`'s
+`verify`) under root `public_root(K)`, SEED `K.seed` and height `HEIGHT`.*
+
+Write `chain(x, s, t)` for `t` applications of the chain step starting at step index `s`,
+for a fixed OTS index L and chain index i.
+
+1. **Chains compose.** `chain(chain(x, 0, a), a, b) = chain(x, 0, a + b)`. The proof is
+   by induction on `b`: step `j` derives its key and mask from the absolute index `j`
+   (the loop over `start..start + steps` in `chain`), never from the iteration count.
+2. **The checksum fits.** `Σ (15 − vᵢ) ≤ 64 · 15 = 960 < 2¹²`, so `csum << 4 < 2¹⁶`
+   and the cast to `u16` loses nothing. The 67 digits are RFC 8391's Algorithm 5, with
+   `len₂ = 3`.
+3. **The verifier recovers the WOTS+ public key.**
+   - The signer reveals `σᵢ = chain(skᵢ, 0, vᵢ)`.
+   - The verifier computes `chain(σᵢ, vᵢ, 15 − vᵢ)`, which by step 1 equals
+     `chain(skᵢ, 0, 15)`.
+   - `leaf_node` puts the same value into the public key, because both sides derive
+     `skᵢ` with the same `wots_sk(sk_seed, L, i)`.
+   - Both sides then run the same L-tree (Algorithm 8), so both arrive at the same leaf
+     node `ℓ_L`.
+4. **Folding the tree in place is safe.**
+   - At each level, `tree` writes `nodes[i]` from `nodes[2i]` and `nodes[2i+1]`. For
+     i ≥ 1 we have i < 2i, so no slot is overwritten before it is read; at i = 0 both
+     reads happen before the write.
+   - So after the fold the buffer holds the parent level.
+   - The root does not depend on the `leaf` argument, because extracting the
+     authentication path only reads.
+5. **The authentication path is correct.**
+   - At level k, `tree` stores node `(L >> k) ^ 1`, read before that level is folded:
+     the sibling of L's ancestor.
+   - By induction on k, the verifier's running node equals that ancestor. The signer
+     hashes with address `(2, 0, k, i)` where `i = L >> (k+1)`, the verifier uses
+     `adrs(2, 0, k, ti)` with `ti = L >> (k+1)`, and bit k of L decides left or right.
+   - After `HEIGHT` levels the running node is the root.
+6. **The message hash matches.**
+   - The signer computes `m′ = H_msg(r, root, L, m)` with `root = public_root(K)`, the
+     same value by step 4.
+   - The verifier computes `m′` from the `r` in the signature, its stored root and L.
+   - So both use the same digits `vᵢ`. ∎
+
+This is completeness only: an honest signature verifies. That a signature cannot be
+forged follows from XMSS's security argument together with T3, and is not proven here.
+Byte-level agreement of the address and domain encodings is established by tests, not by
+this argument:
+- `test_app.py` verifies every leaf of the tree with `xmss_ref.verify`;
+- `xmss_ref.py` agrees with the RFC authors' C implementation on 40/40
+  differential-fuzzing cases (see the header of `xmss.rs`).
+
+### T7 — Both halves sign one digest, and the ECDSA half comes out last
+
+*The ECDSA and XMSS halves of a release are over the same digest, and no host receives
+any byte of the ECDSA half before every byte of the XMSS half.*
+
+**Proof.**
+- **One digest.** `sign_ecdsa` has one caller, in `sign_pre_approval`. It and
+  `xmss::sign` are both handed the same `digest` binding, and both results go into the
+  blob in one fill: XMSS in `[0, SIG_LEN)`, ECDSA in `[SIG_LEN, BLOB_LEN)`.
+- **The ECDSA half comes out last.** `read_chunk` serves `[start, start + 255)` and sets
+  `cursor := end`, and `start` is either 0 (on `first`) or the current cursor. So
+  delivery is always a contiguous prefix of the blob, and a host can hold byte
+  `SIG_LEN + k` only after it has been sent every byte below `SIG_LEN`. ∎
+
+### What this does not cover
+
+- **What the screens show.** Whether every page renders the bytes that were signed is
+  modelled for the simulator in [`demo/ledger-proof/`](./demo/ledger-proof/README.md),
+  not proven for this code.
+- **The digest formulas** in `eip712.rs` and `wallet.rs` (EIP-712 encoding and
+  `keccak`). Those are checked by tests that compare with `cast`.
+- **The SDK, the compiler and Ledger OS**, including the truth of A1.
+- **Side channels, fault injection and NVM rollback.** A3 assumes away the last of
+  these, and cross-device restore breaks it.
+- **The parts of the design this build doesn't implement:** several slots, key
+  generation, rotation, retirement and attestation.
+
+### Proof obligations
+
+Every proof above rests on these facts about the source. Each can be re-checked by
+reading or with `grep`. A change that breaks one invalidates the theorems listed beside
+it.
+
+| Fact | Used by |
+|---|---|
+| `LEAF_COUNTER`, `BLOB`, `BLOB_READY` and `BLOB_CURSOR` are private to `session.rs`; `BINDING` is private to `wallet.rs` | T1–T5 |
+| `BLOB_READY = true` appears only in `publish`, after the fill | T1, T7 |
+| The only write to `LEAF_COUNTER` is `update(leaf + 1)` in `commit`, after the `leaf == next_leaf()` check | T1, T3, T4 |
+| `Committed`, `Reserved` and `Signing` have private fields and derive neither `Copy` nor `Clone`; `Leaf` has a private field and `reserve` is its only constructor | T1–T3 |
+| `xmss::sign` takes `Signing`; `eip712::digest` and `wallet::digest` take `Leaf` | T2 |
+| `commit_binding` writes only while unbound, and its only caller is `session::commit` | T5 |
+| `check_binding` runs inside `review_and_digest`, before the digest is returned | T5 |
+| `sign_ecdsa` has exactly one caller | T7 |
+| No raw-pointer write (`as *mut`, `ptr::`, `addr_of`, `transmute`) exists in `ledger-app/src/` | A2 |
+
 ## Deliverables and validation
 
 - [ ] Rust app implementing the APDU interface above
