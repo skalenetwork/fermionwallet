@@ -1,47 +1,61 @@
 # The device's signing flow, model-checked
 
-The Ledger app decides, on its own, whether a one-time XMSS leaf is spent. Nothing
-on-chain can undo that decision, and the on-chain bitmap only catches a leaf spent
-*twice* — it cannot catch a leaf spent for something the human never saw. So the flow
-itself is worth proving, separately from the cryptography.
+With the hybrid ECDSA + ML-DSA-65 design the device keeps no per-signature state: there
+is no leaf counter to commit, exhaust or roll back. What the device still decides on its
+own, and what nothing on-chain can check for it, is *what it agrees to sign*. A device
+that signs a hash the host made up, signs a field nobody saw, or signs a Safe
+transaction whose gas refund pays the host, has given the host a valid signature, and
+the verifier will accept it. So the flow is worth proving, separately from the
+cryptography.
 
-- **[`device_spec.py`](./device_spec.py)** — the flow of [`ledger-xmss-app.md`](../../ledger-xmss-app.md)
-  ("Flow 2 — Sign pre-approval", "Device UI acceptance criteria") written as a state
-  machine. It talks to no host, no file and no clock; the leaf counter is the only state
-  that outlives a session.
-- **[`prove_device.py`](./prove_device.py)** — checks that machine, and checks the
-  simulator against it.
+- **[`device_spec.py`](./device_spec.py)** — the signing flow as a state machine: one
+  session, six payload kinds (FermionWallet transfer, Safe transaction, plain-text
+  message, contract call, ERC-20 approval, enabling a Safe module), each with its own
+  screens, and the rules for which payloads the device refuses before showing anything.
+  It talks to no host, no file and no clock.
+- **[`prove_device.py`](./prove_device.py)** — checks that machine exhaustively, plants
+  bugs in it to show the checks have teeth, and compares the simulator's screen flow
+  with it.
 
 ```
-python3 demo/ledger-proof/prove_device.py           # everything (needs Foundry's `cast`)
-python3 demo/ledger-proof/prove_device.py --no-sim  # the model check alone, no dependencies
+python3 demo/ledger-proof/prove_device.py --no-sim  # the model check and its teeth, no dependencies (CI)
+python3 demo/ledger-proof/prove_device.py           # + the simulator comparison (needs Foundry's `cast`)
 ```
 
 ## What is actually proven
 
-**Every reachable state, not a sample.** The state space is small enough to enumerate
-completely, so a pass covers every sequence of events of any length — 114, 375 and 1,341
-states at tree heights 1, 2 and 3, with 798, 2,625 and 9,387 transitions between them.
-Fourteen invariants are checked, six about states and eight about steps. The ones worth
-naming:
+**Every reachable state, not a sample.** The host chooses every payload, so the model
+offers all 192 of them — six kinds, each with every combination of the five flags a host
+controls (well-formed, displayable, refund-free, Call-not-DelegateCall, unlimited) —
+together with a hash of the host's own. The state space is small enough to enumerate
+completely: 1,581 reachable states and 311,457 transitions, so a pass covers every
+sequence of events of any length. The claims:
 
 | | Claim |
 |---|---|
-| I1 / T4 | A signature is never released before the counter commit has landed in NVM. |
-| T1 / T2 / T6 | The counter moves on an approval, by exactly one, and on nothing else — a rejection or a timeout consumes no leaf. |
-| T5 | Approve is only ever taken from the decision screen, reached by walking every field screen. |
-| T8 | A key with no leaves left cannot open a signing session at all. |
+| R1 / I7 | A payload the device must refuse never reaches the screen: malformed fields, a contract call it cannot display, an unlimited approval, and a Safe transaction with a non-zero gas refund (`gasPrice`, `gasToken`, `refundReceiver`) or with `operation = DelegateCall`. The policy is restated in the checker, independently of the machine's own refusal function. |
+| S3 / S4 | What is signed is the digest of the payload that was displayed, and never the hash the host sent with it (FWL-014). |
+| S1 / S2 / S5 | Something is signed exactly when an approval happens, and the session closes with it. A rejection or a timeout signs nothing. |
+| T5 / I6 | Approve is only ever taken from the decision screen, reached by walking every screen of that payload's flow. |
 | T7 | A second session cannot start over one in flight. |
+| F1 / F2 | Every flow ends on exactly one decision screen, and enabling a Safe module has a dedicated warning screen before it. |
 
-**The simulator follows it.** `demo/ledger_sim.py` is driven through 133 sessions — every
-button sequence up to length 3, the paths that actually reach a signature written out by
-hand, and 40 random weighted ones — and its screen, its Approve availability and its leaf
-counter are compared with the model's after every single event. It matched at every step.
-The comparison allows stuttering: the simulator takes a few internal steps where the
-model takes one (a press sets an event, a thread closes the session, an approval computes
-two signatures), so it is given bounded time to converge rather than being required to
-move atomically. It is never *assumed* to converge — if it does not, the run fails and
-prints the sequence that separated them.
+**Why the Safe-transaction rule is in the model.** A `SafeTx` has ten fields and the host
+chooses all of them. A host that shows an innocent `to`, `value` and `data` but sets a
+gas price with itself as `refundReceiver` is paid by the Safe when the transaction runs;
+one that sets `operation = DelegateCall` hands the transaction the Safe's own storage. A
+Safe running FermionGuard also refuses both on-chain, but a Safe that merely has a
+FermionWallet as one of its owners has only the device between those fields and the
+signature. The refusal is the device's half of the zero-field rule the Guard already
+enforces for its own approvals (`NonZeroClassFields`).
+
+**The simulator follows the transfer flow.** `demo/ledger_sim.py` still implements the
+XMSS transfer approval, so only its screen flow is compared: the screen on display and
+whether Approve is offered, after every event, for the eight-screen transfer flow. The
+comparison allows stuttering — the simulator takes a few internal steps where the model
+takes one — so it is given bounded time to converge rather than being required to move
+atomically. It is never *assumed* to converge: if it does not, the run fails and prints
+the sequence that separated them.
 
 ## Why you should believe the checks
 
@@ -49,31 +63,35 @@ Because they were tried against machines that are wrong. A model checker nobody 
 fooled proves nothing, so `prove_device.py` plants bugs in its own subject and requires
 each one to be caught:
 
-| Planted in | Bug | Caught |
+| Planted in | Bug | Caught by |
 |---|---|---|
-| the specification | approve from any screen, skipping the fields | 350 violations |
-| the specification | release the signature, commit the counter afterwards | 12 violations |
-| the specification | consume a leaf on rejection | 720 violations |
-| the specification | sign with an exhausted key | 10 violations |
-| the specification | start a second session over the first | 535 violations |
+| the specification | approve from any screen, skipping the fields | T5 (1,444 violations) |
+| the specification | sign the host's hash instead of the displayed fields | S3, S4 (136) |
+| the specification | release a signature on rejection | S1 (1,512) |
+| the specification | start a second session over the first | T7 (102,748) |
+| the specification | accept a Safe transaction that pays a gas refund | I7, R1 (560) |
+| the specification | accept a delegatecall Safe transaction | I7, R1 (280) |
+| the specification | accept a contract call the device cannot display | I7, R1 (560) |
+| the specification | accept an unlimited approval | I7, R1 (560) |
+| the specification | accept a malformed payload | I7, R1 (6,720) |
+| the specification | enable a module without the dedicated warning screen | F2 (1) |
 | the simulator | approve without traversing the fields | refinement mismatch |
-| the simulator | release a signature without advancing the counter | refinement mismatch |
 
 A planted bug that survives is reported as a **failure**, of the check rather than of the
-code. Two of the original mutations did survive, and both turned out to be no-ops —
-`index == DECISION` already implies every field was seen, and a commit reordered *within*
-one atomic transition is invisible by construction. They were replaced with mutations
-that genuinely differ. That is the part of this directory that took the longest, and it
-is the part that makes the rest mean anything.
+code.
 
 ## What this does not cover
 
-- **The real app.** This proves the *simulator* refines the specification. `ledger-app/`
-  is a different implementation in Rust, with its own tests under `ledger-app/test/`.
-- **The cryptography.** Whether a released signature is a correct XMSS signature is the
-  verifier's problem, proven separately in
-  [`xmss-solidity`](https://github.com/skalenetwork/xmss-solidity)'s `PROOF.md`.
-- **Anything outside one signing session on one key slot**: key generation, rotation,
-  denial, attestation, and several slots interacting are all out of scope here.
-- **Real time.** The 60-second decision timeout is modelled as an event that may arrive,
-  not as a duration; the refinement run scales it down so it can be reached at all.
+- **The real app.** `ledger-app/` is a separate implementation in Rust, with its own
+  tests under `ledger-app/test/`. The properties of its core code are argued in
+  [`ledger-xmss-app.md`](../../ledger-xmss-app.md), which still describes the XMSS build.
+- **The cryptography.** Whether a released signature is a correct ML-DSA-65 signature is
+  the verifier's problem, tested against NIST's ACVP vectors and an independent reference
+  implementation in [`contracts/test/MLDSA65.t.sol`](../../contracts/test/MLDSA65.t.sol).
+- **What a screen shows.** The model knows that a screen of each name is traversed, not
+  that it renders the right bytes; ERC-7730 rendering of contract calls in particular is
+  a property of the descriptors and the app.
+- **Anything outside one signing session**: key derivation from the recovery phrase,
+  several sessions interacting, and the APDU wire format.
+- **Real time.** The decision timeout is modelled as an event that may arrive, not as a
+  duration; the simulator comparison scales it down so it can be reached at all.

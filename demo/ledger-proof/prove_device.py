@@ -1,30 +1,28 @@
 #!/usr/bin/env python3
-"""Model-check the device state machine, and prove the simulator refines it.
+"""Model-check the device state machine, and compare the simulator with it.
 
-`device_spec.py` is the Ledger app's signing flow written as a state machine,
-straight from ledger-xmss-app.md. This script does two things with it:
+`device_spec.py` is the signing device's flow written as a state machine, for the
+hybrid ECDSA + ML-DSA-65 design. This script does two things with it:
 
   1. **Exhaustive model check.** Every reachable state is enumerated — not sampled,
-     not fuzzed — and six invariants are checked at each state and on each
-     transition. The state space is small enough to explore completely, so a pass
-     means the property holds for every sequence of events of any length.
+     not fuzzed — over every payload a host can send, and the invariants are checked
+     at each state and on each transition. The state space is small enough to explore
+     completely, so a pass means the property holds for every sequence of events of
+     any length.
 
-  2. **Refinement.** `demo/ledger_sim.py` is driven through event sequences and its
-     observable state is compared with the model's after every event. If the
-     simulator ever disagrees with the specification, the run fails and prints the
-     sequence that separated them.
+  2. **Refinement.** `demo/ledger_sim.py` is driven through event sequences and what
+     its screen shows is compared with the model's after every event.
 
 Both parts are then checked for teeth: the invariants are re-run against deliberately
 broken copies of the machine, and a check that survives its planted bug is reported as
 a failure of the check, not a success of the code. A model checker nobody has tried to
 fool proves nothing.
 
-    python3 demo/ledger-proof/prove_device.py            # model check + teeth + refinement
-    python3 demo/ledger-proof/prove_device.py --depth 5  # longer refinement sequences
-    python3 demo/ledger-proof/prove_device.py --no-sim   # model check only, no Foundry needed
+    python3 demo/ledger-proof/prove_device.py --no-sim   # model check + teeth (what CI runs)
+    python3 demo/ledger-proof/prove_device.py            # + refinement against the simulator
 
-The simulator part needs `cast` (Foundry) on PATH and the xmss-solidity submodule
-checked out; the model check needs neither.
+The refinement part drives `demo/ledger_sim.py`, which still implements the XMSS
+transfer approval; only its screen flow is compared. The model check needs nothing.
 """
 import argparse
 import itertools
@@ -34,7 +32,6 @@ import sys
 import threading
 import time
 from collections import deque
-from dataclasses import replace
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -44,188 +41,196 @@ import device_spec as spec  # noqa: E402
 
 EVENTS = spec.EVENTS
 
-
 # ── part 1: exhaustive model check ───────────────────────────────────────────
 
 
 def successors(d):
-    """Every event the environment can deliver, and where it leads.
-
-    `start` is offered with both a well-formed and a malformed payload, because the
-    host chooses: the specification must hold whichever it sends.
-    """
-    for ok in (True, False):
-        yield (f"start(payload_ok={ok})", *spec.start(d, ok))
+    """Every event the environment can deliver, and where it leads. The host chooses
+    the payload, so `start` is offered with every one, refusable or not."""
+    for p in spec.PAYLOADS:
+        yield (f"start({p})", *spec.start(d, p))
     for button in EVENTS:
         yield (f"press({button})", *spec.press(d, button))
     yield ("timeout()", *spec.timeout(d))
 
 
-def explore(height):
-    """Breadth-first over every reachable state from every starting leaf count.
-
-    A state that already violates an invariant is recorded but not expanded: the
-    violation is the answer, and continuing from it only produces more of the same. The
-    same goes for a counter past the last leaf. On the correct machine neither happens,
-    so the search is exhaustive; on a broken one this is what keeps it finite instead of
-    letting a device that signs past exhaustion — or that releases signatures without
-    ever committing — run away for ever.
-    """
-    limit = 1 << height
-    seen, edges, queue = set(), [], deque()
-
-    def expandable(d):
-        return d.leaf <= limit and d.committed <= limit and d.released <= limit \
-            and not check_state_invariants(d, height)
-
-    for leaf in range(0, limit + 1):
-        d = spec.Device(leaf=leaf, height=height)
-        if d not in seen:
-            seen.add(d)
-            queue.append(d)
+def explore():
+    """Breadth-first from the idle device. A state that already violates an invariant
+    is recorded but not expanded: on the correct machine that never happens."""
+    seen, edges, queue = {spec.IDLE}, [], deque([spec.IDLE])
     while queue:
         d = queue.popleft()
         for label, nxt, result in successors(d):
             edges.append((d, label, nxt, result))
             if nxt not in seen:
                 seen.add(nxt)
-                if expandable(nxt):
+                if not check_state_invariants(nxt):
                     queue.append(nxt)
     return seen, edges
 
 
-# Each invariant is a claim from ledger-xmss-app.md, named by the sentence it encodes.
-def check_state_invariants(d, height):
+# The device policy, restated here independently of `spec.refusal`, so a machine whose
+# `start` stops consulting the policy is caught rather than trusted.
+def must_refuse(p):
+    return (not p.well_formed
+            or (p.kind == "call" and not p.displayable)
+            or (p.kind == "safetx" and not (p.refund_free and p.call_operation))
+            or (p.kind == "approve" and p.unlimited))
+
+
+def check_flows():
+    """Facts about the screen flows themselves."""
     fails = []
-    if d.released > d.committed:
-        fails.append("I1 counter-before-signature: a signature was released without a committed counter")
-    if d.leaf > (1 << height):
-        fails.append("I2 the counter passed the last leaf")
-    if d.active and not (0 <= d.index <= spec.DECISION):
-        fails.append("I3 a screen index outside the flow")
-    if d.active and d.seen < d.index:
-        fails.append("I4 a screen is on display that was never reached")
-    if not d.active and (d.index, d.seen) != (-1, -1):
-        fails.append("I5 no session, but session state left behind")
-    if d.can_approve and not (d.index == spec.DECISION and d.seen == spec.DECISION):
-        fails.append("I6 approval offered before every field screen was seen")
+    for kind, flow in spec.FLOWS.items():
+        if not flow or flow[-1] != "decision" or "decision" in flow[:-1]:
+            fails.append(f"F1 the {kind} flow does not end on exactly one decision screen")
+    if spec.MODULE_WARNING not in spec.FLOWS["enable_module"][:-1]:
+        fails.append("F2 enabling a module has no dedicated warning screen before the decision")
     return fails
 
 
-def check_transition_invariants(d, label, nxt, result, height):
-    """The properties that are about the *step*, not the state — the ones that matter."""
+def check_state_invariants(d):
+    fails = []
+    if d.active:
+        if not 0 <= d.index <= d.decision:
+            fails.append("I3 a screen index outside the flow")
+        if d.seen < d.index:
+            fails.append("I4 a screen is on display that was never reached")
+        if must_refuse(d.payload):
+            fails.append(f"I7 a payload the device must refuse is on display ({d.payload})")
+        if d.out is not None:
+            fails.append("I8 a signature was released while a session is still on screen")
+    elif (d.index, d.seen, d.host_hash) != (-1, -1, None):
+        fails.append("I5 no session, but session state left behind")
+    if d.can_approve and not (d.index == d.decision and d.seen == d.decision):
+        fails.append("I6 approval offered before every screen was seen")
+    return fails
+
+
+def check_transition_invariants(d, label, nxt, result):
     fails = []
     approved = result == "approved"
-
-    if nxt.leaf != d.leaf and not approved:
-        fails.append(f"T1 the leaf counter moved on a non-approval ({label} → {result})")
-    if approved and nxt.leaf != d.leaf + 1:
-        fails.append("T2 an approval did not consume exactly one leaf")
-    if nxt.leaf < d.leaf:
-        fails.append("T3 the leaf counter went backwards")
-    if nxt.released > d.released and nxt.committed <= d.committed:
-        fails.append("T4 a signature was released without the counter reaching NVM first")
     if approved and not d.can_approve:
         fails.append("T5 an approval from a state that does not offer Approve")
-    if result in ("rejected", "timeout") and nxt.leaf != d.leaf:
-        fails.append("T6 a rejection or timeout consumed a leaf")
-    if label.startswith("start") and d.active and nxt != d:
+    if label.startswith("start") and d.active and (nxt.payload, nxt.index, nxt.seen) != (d.payload, d.index, d.seen):
         fails.append("T7 a second session started while one was in flight")
-    if label.startswith("start") and d.exhausted and nxt.active and not d.active:
-        fails.append("T8 an exhausted key started a signing session")
+    if label.startswith("start") and not d.active and nxt.active and must_refuse(nxt.payload):
+        fails.append("R1 a refused payload was put on screen")
+    if nxt.out is not None and not approved:
+        fails.append(f"S1 something was signed without an approval ({label} → {result})")
+    if approved:
+        if nxt.out is None:
+            fails.append("S2 an approval released nothing")
+        elif nxt.out != spec.digest(d.payload):
+            fails.append("S3 the device signed something other than the digest of the displayed fields")
+        if nxt.out is not None and nxt.out == d.host_hash:
+            fails.append("S4 the device signed the host's hash")
+        if nxt.active:
+            fails.append("S5 the session stayed open after an approval")
     return fails
 
 
-def model_check(height, quiet=False):
-    states, edges = explore(height)
-    fails = []
+def model_check(quiet=False):
+    states, edges = explore()
+    fails = [(None, None, f) for f in check_flows()]
     for d in states:
-        fails += [(d, None, f) for f in check_state_invariants(d, height)]
+        fails += [(d, None, f) for f in check_state_invariants(d)]
     for d, label, nxt, result in edges:
-        fails += [(d, label, f) for f in check_transition_invariants(d, label, nxt, result, height)]
+        fails += [(d, label, f) for f in check_transition_invariants(d, label, nxt, result)]
     if not quiet:
-        print(f"  h={height}: {len(states)} reachable states, {len(edges)} transitions, "
+        print(f"  {len(spec.PAYLOADS)} payloads: {len(states)} reachable states, {len(edges)} transitions, "
               f"{'no violations' if not fails else str(len(fails)) + ' VIOLATIONS'}")
         for d, label, f in fails[:10]:
-            print(f"    {f}\n      at {d}" + (f" via {label}" if label else ""))
+            print(f"    {f}" + (f"\n      at {d}" if d else "") + (f" via {label}" if label else ""))
     return fails
 
 
 # ── part 2: teeth — the check must fail on a broken machine ──────────────────
 
-
-def _bug_approve_from_any_screen(d, button):
-    """Accept Approve wherever the flow happens to be — a "sign now" shortcut that
-    skips the fields the human is supposed to read. (Approving only on the decision
-    screen is not enough on its own: the screen can only be reached with `next`, which
-    marks each field seen, so a mutation that merely drops the `seen` test changes
-    nothing. This one lets the host sign from screen 0.)"""
-    if button == "approve" and d.active:
-        d2 = replace(d, leaf=d.leaf + 1, committed=d.committed + 1)
-        return replace(d2, index=-1, seen=-1, released=d2.released + 1), "approved"
-    return _ORIGINAL_PRESS(d, button)
-
-
-def _bug_release_before_commit(d, button):
-    """Send the signature out and leave the counter commit for afterwards — the classic
-    stateful-signature bug. A power cut in the gap loses the increment, and the next
-    session signs a different digest with the same one-time leaf."""
-    if button == "approve" and d.can_approve:
-        return replace(d, index=-1, seen=-1, released=d.released + 1), "approved"
-    return _ORIGINAL_PRESS(d, button)
-
-
-def _bug_reject_consumes_leaf(d, button):
-    """Burn a leaf on rejection."""
-    if button == "reject" and d.active:
-        return replace(d, index=-1, seen=-1, leaf=d.leaf + 1), "rejected"
-    return _ORIGINAL_PRESS(d, button)
-
-
-def _bug_sign_when_exhausted(d, ok):
-    """Start a session on a key with no leaves left."""
-    if d.active or not ok:
-        return _ORIGINAL_START(d, ok)
-    return replace(d, index=0, seen=0), "ok"
-
-
-def _bug_second_session(d, ok):
-    """Let the host open a second signing session over the first."""
-    if not ok:
-        return _ORIGINAL_START(d, ok)
-    return replace(d, index=0, seen=0), "ok"
-
-
 _ORIGINAL_PRESS = spec.press
 _ORIGINAL_START = spec.start
+_ORIGINAL_REFUSAL = spec.refusal
+
+
+def _bug_approve_from_any_screen(d, button):
+    """Accept Approve wherever the flow is: the host signs from screen 0, skipping the
+    fields the human is supposed to read."""
+    if button == "approve" and d.active:
+        return spec.Device(out=spec.digest(d.payload)), "approved"
+    return _ORIGINAL_PRESS(d, button)
+
+
+def _bug_sign_host_hash(d, button):
+    """Sign the hash the host sent instead of the digest of the displayed fields."""
+    if button == "approve" and d.can_approve:
+        return spec.Device(out=d.host_hash), "approved"
+    return _ORIGINAL_PRESS(d, button)
+
+
+def _bug_reject_signs(d, button):
+    """Release a signature on rejection."""
+    if button == "reject" and d.active:
+        return spec.Device(out=spec.digest(d.payload)), "rejected"
+    return _ORIGINAL_PRESS(d, button)
+
+
+def _bug_second_session(d, p, host_hash=spec.HOST_HASH):
+    """Let the host open a second signing session over the first."""
+    if d.active and not spec.refusal(p):
+        return spec.Device(payload=p, index=0, seen=0, host_hash=host_hash), "ok"
+    return _ORIGINAL_START(d, p, host_hash)
+
+
+def _refusal_without(rule):
+    def refusal(p):
+        r = _ORIGINAL_REFUSAL(p)
+        return None if r == rule else r
+    return refusal
+
+
+def _flows_without_module_warning():
+    flows = dict(spec.FLOWS)
+    flows["enable_module"] = tuple(s for s in flows["enable_module"] if s != spec.MODULE_WARNING)
+    return flows
+
 
 PLANTED = [
     ("approve from any screen, skipping the fields", "press", _bug_approve_from_any_screen),
-    ("release the signature before committing the counter", "press", _bug_release_before_commit),
-    ("consume a leaf on rejection", "press", _bug_reject_consumes_leaf),
-    ("sign with an exhausted key", "start", _bug_sign_when_exhausted),
+    ("sign the host's hash instead of the displayed fields", "press", _bug_sign_host_hash),
+    ("release a signature on rejection", "press", _bug_reject_signs),
     ("start a second session over the first", "start", _bug_second_session),
+    ("accept a SafeTx that pays a gas refund", "refusal", _refusal_without("Gas refunds are refused")),
+    ("accept a delegatecall SafeTx", "refusal", _refusal_without("Delegatecall is refused")),
+    ("accept a call the device cannot display", "refusal", _refusal_without("Cannot display this call")),
+    ("accept an unlimited approval", "refusal", _refusal_without("Unlimited approvals are refused")),
+    ("accept a malformed payload", "refusal", _refusal_without("Payload rejected")),
+    ("enable a module without the dedicated warning screen", "FLOWS", _flows_without_module_warning()),
 ]
 
 
-def teeth(height):
+def teeth():
     """Every planted bug must be caught. One that survives means the check is vacuous."""
     survived = []
     for name, target, fn in PLANTED:
         original = getattr(spec, target)
         setattr(spec, target, fn)
         try:
-            fails = model_check(height, quiet=True)
+            fails = model_check(quiet=True)
         finally:
             setattr(spec, target, original)
+        kinds = sorted({f.split(" ", 1)[0] for _, _, f in fails})
         mark = "caught" if fails else "SURVIVED"
-        print(f"  {mark:9} {name}" + (f" ({len(fails)} violations)" if fails else ""))
+        print(f"  {mark:9} {name}" + (f" ({len(fails)} violations: {', '.join(kinds)})" if fails else ""))
         if not fails:
             survived.append(name)
     return survived
 
 
 # ── part 3: refinement — the simulator must follow the specification ─────────
+
+# The simulator implements one flow, the eight-screen transfer approval.
+SIM_PAYLOAD = spec.Payload("transfer")
+DECISION = len(spec.FLOWS["transfer"]) - 1
 
 
 def _payload():
@@ -290,7 +295,7 @@ class SimSession:
     def observe(self):
         v = self.sim.screen_view()
         if not v["active"]:
-            return {"active": False, "nextLeaf": v["nextLeaf"]}
+            return {"active": False}
         return {"active": True, "index": v["index"], "canApprove": v["canApprove"]}
 
     def finish(self, timeout=20.0):
@@ -321,7 +326,7 @@ def settle(session, want, timeout=8.0):
 def model_observe(d):
     """The model's state, projected onto what the device screen actually shows."""
     if not d.active:
-        return {"active": False, "nextLeaf": d.leaf}
+        return {"active": False}
     return {"active": True, "index": d.index, "canApprove": d.can_approve}
 
 
@@ -334,7 +339,7 @@ def sequences(depth, rng):
     actually matter written out by hand, plus random ones weighted towards `next` so the
     fuzzer spends its time in the part of the flow where a signature can happen.
     """
-    walk = ("next",) * spec.DECISION
+    walk = ("next",) * DECISION
     for length in range(1, depth + 1):
         yield from itertools.product(EVENTS, repeat=length)
 
@@ -356,18 +361,16 @@ def sequences(depth, rng):
 def refine(depth, state_dir, rng):
     """Drive both machines through the sequences above and compare after every event."""
     sim = _load_simulator(state_dir)
-    height = sim.HEIGHT
     mismatches, runs, approvals = [], 0, 0
 
     for sequence in sequences(depth, rng):
-        # A fresh key for every sequence: the point is the flow, not exhaustion,
-        # and h = 4 gives only 16 leaves.
+        # A fresh simulator state for every sequence: it still keeps an XMSS counter,
+        # which the flow comparison does not look at.
         if os.path.exists(sim.DEVICE_STATE):
             os.unlink(sim.DEVICE_STATE)
-        model = spec.Device(leaf=0, height=height)
         session = SimSession(sim)
         session.start()
-        model, _ = spec.start(model, True)
+        model, _ = spec.start(spec.IDLE, SIM_PAYLOAD)
         runs += 1
 
         want = model_observe(model)
@@ -397,11 +400,6 @@ def refine(depth, state_dir, rng):
         result, error = session.finish()
         if error is not None and not isinstance(error, ValueError):
             mismatches.append((sequence, "session", "no error", repr(error)))
-        # The counter is the claim that matters: it moved exactly when the model says.
-        expected_leaf = model.leaf
-        actual_leaf = sim.load_state()["slots"][str(sim.SLOT)]["next"]
-        if actual_leaf != expected_leaf:
-            mismatches.append((sequence, "leaf", expected_leaf, actual_leaf))
 
     if depth:
         print(f"  {runs} sessions ({approvals} approved), sequences up to length {depth}: "
@@ -413,28 +411,27 @@ def refine(depth, state_dir, rng):
 
 def refine_timeout(state_dir):
     """The one event the button sequences cannot produce: the idle timeout, which must
-    end the session without consuming a leaf."""
+    end the session without a signature."""
     sim = _load_simulator(state_dir)
     if os.path.exists(sim.DEVICE_STATE):
         os.unlink(sim.DEVICE_STATE)
     session = SimSession(sim)
     session.start()
-    for _ in range(spec.DECISION):  # walk to the decision screen, then simply wait
+    for _ in range(DECISION):  # walk to the decision screen, then simply wait
         sim.press("next")
     result, error = session.finish()
-    leaf = sim.load_state()["slots"][str(sim.SLOT)]["next"]
-    model, _ = spec.start(spec.Device(leaf=0, height=sim.HEIGHT), True)
-    for _ in range(spec.DECISION):
+    model, _ = spec.start(spec.IDLE, SIM_PAYLOAD)
+    for _ in range(DECISION):
         model, _ = spec.press(model, "next")
     model, outcome = spec.timeout(model)
 
     bad = []
     if not (result and result.get("status") == "timeout"):
         bad.append(f"the simulator did not time out: {result!r} {error!r}")
-    if leaf != model.leaf:
-        bad.append(f"the timeout consumed a leaf: specification {model.leaf}, simulator {leaf}")
+    if model.out is not None:
+        bad.append("the specification signed on a timeout")
     print(f"  idle timeout on the decision screen: "
-          f"{'no signature, no leaf consumed' if not bad else '; '.join(bad)}")
+          f"{'no signature' if not bad else '; '.join(bad)}")
     return bad
 
 
@@ -448,7 +445,7 @@ def refine_teeth(state_dir, rng):
     survived = []
 
     def scripted(_depth, _rng):
-        walk = ("next",) * spec.DECISION
+        walk = ("next",) * DECISION
         yield walk + ("approve",)
         yield walk[:2] + ("approve",)
         yield walk + ("reject",)
@@ -465,17 +462,7 @@ def refine_teeth(state_dir, rng):
                 return
         return original_press(button)
 
-    def sign_twice_on_one_leaf(req):
-        """Release the signature without moving the counter: the same leaf signs again."""
-        state = sim.load_state()
-        out = original_sign(req)
-        if out.get("status") == "approved":
-            sim.commit_state(state)  # put the counter back
-        return out
-
-    for name, attr, fn in (("approve without traversing the fields", "press", press_without_traversal),
-                           ("release a signature without advancing the counter", "sign_preapproval",
-                            sign_twice_on_one_leaf)):
+    for name, attr, fn in (("approve without traversing the fields", "press", press_without_traversal),):
         setattr(sim, attr, fn)
         try:
             global sequences
@@ -502,12 +489,10 @@ def main():
     args = ap.parse_args()
 
     print("Model check — every reachable state of the device's signing flow")
-    fails = []
-    for height in (1, 2, 3):
-        fails += model_check(height)
+    fails = model_check()
 
-    print("\nTeeth — each planted bug must be caught (h = 2)")
-    survived = teeth(2)
+    print("\nTeeth — each planted bug must be caught")
+    survived = teeth()
 
     mismatches, timeout_bad = [], []
     if not args.no_sim:
