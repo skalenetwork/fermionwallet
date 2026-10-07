@@ -263,3 +263,13 @@ single-lane Keccak rejected (no gain under EVM gas model).
 - Repo rename fermionwallet → fermion: done TOGETHER WITH the move to the dedicated domain (Pages/Safe App URL change),
   not before. User to run a trademark/name search before the Ledger catalog listing.
 - Pending at that time: repo GitHub description (set 2026-10-07, names FermionGuard/FermionWallet) to be updated.
+33. ECDSA half MUST be an EOA: constructor/enrollment rejects an admin with code; classical half checked only by
+    ECDSA recovery (tryRecover). Deletes adminIsContract / FWL-017a snapshot machinery and ERC-1271 admin support;
+    closes Open Finding 1. A later 7702 delegation of the admin address is irrelevant (recovery only).
+34. Solidity ML-DSA library → its own repo, added as a git submodule under contracts/lib (like xmss-solidity). Rust ML-DSA stays inside ledger-app for now (no separate repo).
+35. Licences: Fermion repo AGPL-3.0-or-later (own code; vendored/submodule code keeps its licence); mldsa-solidity MIT.
+36. Move the whole XMSS stack to skalenetwork/xmss-solidity: QuantumKeyRegistry.sol, PreApprovalEngine.sol, their
+    docs (quantum-key-registry.md, pre-approval-engine.md), registry proof (test/registry-proof), and all three EIP
+    drafts (xmss-verification, hash-based-key-registry, hybrid-pre-approvals) + eips checker/assets/licence.
+37. Moved XMSS stack (registry, pre-approval engine, proofs) relicensed MIT in xmss-solidity; EIP drafts stay CC0.
+38. xmss-solidity: push straight to its main, then tag v1.1.0 (signed; xmss-solidity main is already at v1.0.0, so v0.2.0 would go backwards). Fermion repo keeps its copies until the v2 contract rewrite deletes them (branch stays green).
