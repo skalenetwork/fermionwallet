@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """Cross-reference this repository's English specifications with its checks.
 
-Four specification documents carry stable requirement IDs:
+The v1 (XMSS) specification documents carry stable requirement IDs:
 
     quantum-key-registry.md   [QKR-###]
     fermionguard-module.md    [GRD-###]
     pre-approval-engine.md    [ENG-###]
     fermionwallet.md          [FWL-###]   (the second product, FermionWallet)
+
+and so do the v2 documents under docs/ (fresh IDs, see docs/v2-decisions.md):
+
+    docs/fermion-wallet.md          [FW-###]
+    docs/fermion-guard.md           [FG-###]
+    docs/ledger-app.md              [LA-###]
+    docs/signer-requirements.md     [SR-###]
+
+Both sets are accepted until phase 2 deletes the v1 documents together with the
+old contracts and tests. A v1 document that is missing is an error; a v2
+document that is missing is skipped with a note, because the v2 set is written
+one document at a time.
 
 Each document tags its normative sentences inline and ends with a "Requirement
 index" table, one row per ID:
@@ -50,10 +62,18 @@ DOCS = {
     "ENG": REPO / "pre-approval-engine.md",
     "QKR": REPO / "quantum-key-registry.md",
     "FWL": REPO / "fermionwallet.md",
+    "FW": REPO / "docs" / "fermion-wallet.md",
+    "FG": REPO / "docs" / "fermion-guard.md",
+    "LA": REPO / "docs" / "ledger-app.md",
+    "SR": REPO / "docs" / "signer-requirements.md",
 }
+# v2 documents may not all exist yet (written one at a time); v1 documents must.
+OPTIONAL = {"FW", "FG", "LA", "SR"}
 
 # `[a-z]?` suffix: [QKR-009a] is a real ID (a security fix refining [QKR-009]).
-ID = r"(?:GRD|ENG|QKR|FWL)-[0-9]{3}[a-z]?"
+# FWL before FW is irrelevant to the regex (the hyphen ends the prefix), but every
+# prefix test below matches on `prefix + "-"`, because "FWL-001".startswith("FW").
+ID = r"(?:GRD|ENG|QKR|FWL|FW|FG|LA|SR)-[0-9]{3}[a-z]?"
 ID_RE = re.compile(rf"\[({ID})\]")
 # A definition: one row of a "Requirement index" table.
 ROW_RE = re.compile(rf"^\|\s*({ID})\s*\|\s*(.*?)\s*\|\s*$")
@@ -68,15 +88,30 @@ SOURCE_SUFFIXES = {".sol", ".py", ".md"}
 # ── Parsing ─────────────────────────────────────────────────────────────────
 
 
-def parse_docs() -> tuple[dict[str, str], list[str], list[str]]:
+def has_prefix(rid: str, prefix: str) -> bool:
+    return rid.startswith(prefix + "-")
+
+
+def present_docs() -> dict[str, Path]:
+    """The documents to check; a missing v1 document is fatal, a missing v2 one is not."""
+    out: dict[str, Path] = {}
+    for prefix, path in DOCS.items():
+        if path.exists():
+            out[prefix] = path
+        elif prefix in OPTIONAL:
+            print(f"note: {path.relative_to(REPO)} does not exist yet; [{prefix}-###] skipped")
+        else:
+            sys.exit(f"missing specification document: {path}")
+    return out
+
+
+def parse_docs(docs: dict[str, Path]) -> tuple[dict[str, str], list[str], list[str]]:
     """Return (id -> restatement, duplicate definitions, tagged-but-unindexed)."""
     defined: dict[str, str] = {}
     duplicates: list[str] = []
     unindexed: list[str] = []
 
-    for prefix, path in DOCS.items():
-        if not path.exists():
-            sys.exit(f"missing specification document: {path}")
+    for prefix, path in docs.items():
         text = path.read_text(encoding="utf-8")
 
         seen: dict[str, int] = {}
@@ -95,7 +130,7 @@ def parse_docs() -> tuple[dict[str, str], list[str], list[str]]:
             defined[rid] = restatement
 
         # An inline tag with no index row means the table drifted from the prose.
-        inline = {m for m in ID_RE.findall(text) if m.startswith(prefix)}
+        inline = {m for m in ID_RE.findall(text) if has_prefix(m, prefix)}
         for rid in sorted(inline - set(seen)):
             unindexed.append(f"{path.name}: [{rid}] is tagged in the prose but has no index row")
 
@@ -134,7 +169,8 @@ def parse_tests() -> dict[str, list[str]]:
 
 
 def main() -> int:
-    defined, duplicates, unindexed = parse_docs()
+    docs = present_docs()
+    defined, duplicates, unindexed = parse_docs(docs)
     refs = parse_tests()
 
     errors = list(duplicates)
@@ -154,14 +190,14 @@ def main() -> int:
 
     total_defined = 0
     total_covered = 0
-    for prefix, path in DOCS.items():
-        ids = sorted(r for r in defined if r.startswith(prefix))
+    for prefix, path in docs.items():
+        ids = sorted(r for r in defined if has_prefix(r, prefix))
         covered = [r for r in ids if r in refs]
         total_defined += len(ids)
         total_covered += len(covered)
         pct = 100.0 * len(covered) / len(ids) if ids else 0.0
         print(
-            f"  {path.name:<28} {prefix}  {len(covered):>3}/{len(ids):<3} "
+            f"  {path.relative_to(REPO).as_posix():<28} {prefix:<3} {len(covered):>3}/{len(ids):<3} "
             f"requirements checked ({pct:5.1f}%)"
         )
 
@@ -171,9 +207,9 @@ def main() -> int:
     citations = sum(len(w) for w in refs.values())
     print(f"  {citations} Covers citations across {len(refs)} requirements")
 
-    for prefix, path in DOCS.items():
+    for prefix, path in docs.items():
         uncovered = sorted(
-            r for r in defined if r.startswith(prefix) and r not in refs
+            r for r in defined if has_prefix(r, prefix) and r not in refs
         )
         if not uncovered:
             continue
