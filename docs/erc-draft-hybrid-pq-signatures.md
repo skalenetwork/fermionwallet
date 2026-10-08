@@ -16,7 +16,8 @@ requires: 191, 712, 1271, 7702, 7825
 This ERC specifies a hybrid signature for smart contracts: an ECDSA (secp256k1) signature and
 an ML-DSA (FIPS 204) signature, both over the same 32-byte [EIP-712](./eip-712.md) digest, both
 required. It fixes what each half signs, the ML-DSA signing mode and context, the byte encoding
-of the pair, how the ML-DSA parameter set is identified, and how a contract holding a hybrid key
+of the pair, the validity window of at most 24 hours that every signature carries, how the
+ML-DSA parameter set is identified, and how a contract holding a hybrid key
 answers [ERC-1271](./eip-1271.md) `isValidSignature` for a hash it did not produce. The on-chain
 ML-DSA verifier interface and the algorithm identifiers are not specified here; they are taken by
 reference from `pq-verifier-interface`.
@@ -88,39 +89,64 @@ The contract MUST evaluate both checks and MUST NOT accept on either alone.
 an `admin` that has code at the time it is set, and MUST check the classical half only by ECDSA
 recovery, never by calling ERC-1271 on `admin`.
 
-### Encoding
+### Validity window
 
-Where a single `bytes` value is needed (ERC-1271, or a signature appended to another protocol's
-signature list), the hybrid signature MUST be encoded as
-
-```
-hybrid = r ‖ s ‖ v ‖ σ_mldsa
-```
-
-`r` and `s` are 32 bytes each, big-endian; `v` is one byte (27 or 28); `σ_mldsa` is the ML-DSA
-signature in FIPS 204 encoding. There is no length prefix and no algorithm tag: the length of
-`σ_mldsa` is fixed by `algorithm`, which the verifying contract already holds. A verifier MUST
-reject an encoding whose length is not 65 plus the ML-DSA signature length of `algorithm`. For
-ML-DSA-44, -65 and -87 the total is 2,485, 3,374 and 4,692 bytes.
-
-Contracts MAY instead take the two halves as separate arguments where the ABI allows it.
+Every message a hybrid key signs MUST carry a validity window `(validFrom, validUntil)`, both
+`uint64` Unix timestamps in seconds, inside the signed EIP-712 struct. A verifier MUST reject the
+signature unless `validFrom <= block.timestamp <= validUntil` and
+`validUntil - validFrom <= 86400` (24 hours). This applies to every path, including ERC-1271.
 
 ### ERC-1271 wrapping
 
 A hybrid-key contract that answers ERC-1271 for a hash `h` produced by another protocol (for
 example a Safe transaction hash) MUST NOT have the hybrid key sign `h` directly. It MUST instead
-compute `d` as the EIP-712 digest, under the hybrid-key contract's own domain (rule 2 above), of a
-struct with exactly one member, of type `bytes32`, holding `h`, and verify the hybrid signature
-over that `d`.
+compute `d` as the EIP-712 digest, under the hybrid-key contract's own domain (rule 2 above), of
 
-The reference instantiation uses the struct type `SafeHash(bytes32 hash)`.
+```
+SignedHash(bytes32 hash,uint64 validFrom,uint64 validUntil)
+
+hashStruct = keccak256(abi.encode(
+    keccak256("SignedHash(bytes32 hash,uint64 validFrom,uint64 validUntil)"),
+    h, validFrom, validUntil))
+```
+
+with `hash = h`, and verify the hybrid signature over that `d`.
 
 - `isValidSignature(bytes32 h, bytes signature)` returns `0x1626ba7e` when `signature` is a valid
-  hybrid encoding over the wrapped digest of `h`.
+  signed-hash encoding (below) for `h`.
 - A contract that also implements the legacy form `isValidSignature(bytes data, bytes signature)`
   MUST take `h = keccak256(data)`, wrap it the same way, and return `0x20c13b0b` when valid.
-- On any failure, both forms MUST return a value other than their magic value and SHOULD return
-  `0xffffffff`.
+- On any failure, including a malformed `signature`, both forms MUST return a value other than
+  their magic value, SHOULD return `0xffffffff`, and SHOULD NOT revert.
+
+### Encoding
+
+Where a single `bytes` value carries a hybrid signature over a `SignedHash` (the ERC-1271
+`signature` argument, or a signature appended to another protocol's signature list), it MUST be
+encoded as
+
+```
+signature = validFrom ‖ validUntil ‖ r ‖ s ‖ v ‖ σ_mldsa
+```
+
+| Field | Size | Encoding |
+|---|---|---|
+| `validFrom` | 8 bytes | `uint64`, big-endian |
+| `validUntil` | 8 bytes | `uint64`, big-endian |
+| `r`, `s` | 32 bytes each | big-endian |
+| `v` | 1 byte | 27 or 28 |
+| `σ_mldsa` | fixed by `algorithm` | FIPS 204 signature encoding |
+
+There is no length prefix and no algorithm tag: the length of `σ_mldsa` is fixed by `algorithm`,
+which the verifying contract already holds. The total length is 81 plus the ML-DSA signature
+length of `algorithm`: **2,501 bytes for ML-DSA-44, 3,390 for ML-DSA-65 and 4,708 for
+ML-DSA-87**. A verifier MUST reject a `signature` of any other length.
+
+The verifier reads `validFrom` and `validUntil` from the encoding, builds the `SignedHash` from
+them and `h`, checks the window, and then verifies both halves over the resulting `d`.
+
+Where a contract's own signed struct already contains the window (for example a transfer), it MAY
+take the two halves as separate arguments.
 
 ### Signers
 
@@ -150,8 +176,20 @@ which identifiers apply (ML-DSA) and that they are fixed per key.
 signature length is known. A tag in the signature would be a second, possibly conflicting,
 statement of something the contract already knows.
 
-**ECDSA first.** The fixed-length half goes first so the split point is constant (65 bytes) for every
-parameter set.
+**Fixed-size fields first.** The window and the ECDSA half have fixed sizes, so every field
+starts at a constant offset (0, 8, 16, 81) for every parameter set; only the ML-DSA signature's
+length varies.
+
+**A validity window on ERC-1271 signatures.** ML-DSA is stateless and `isValidSignature` is a view,
+so without a window a hybrid ERC-1271 signature would be valid forever. Protocols that consume
+ERC-1271 signatures do not all carry their own expiry or nonce (a sign-in message, an off-chain
+order), and a signature leaked or stockpiled by a compromised host could be used years later,
+possibly after the key holder believed the key retired. The window bounds every signature's life
+to at most 24 hours, the same rule the reference implementation applies to its own messages. It
+travels in the signature, not in `h`, because `h` belongs to the other protocol and cannot be
+changed; it is signed because it is inside the `SignedHash` struct. Signers have no trusted
+clock, so the bound is enforced by the verifier on `block.timestamp`; a signer only refuses to
+sign a window longer than 24 hours.
 
 **EOA-only classical half.** Checking the classical half through ERC-1271 would make its validity
 depend on arbitrary code, which can change, and would put a second contract's logic inside the
@@ -173,7 +211,8 @@ or assume 65-byte signatures will not accept a hybrid signature.
 ## Test Cases
 
 To be added: digests, keys and signatures for ML-DSA-44 and ML-DSA-65, valid and invalid (each half
-tampered, wrong length, wrong algorithm, high-`s`), and ERC-1271 wrapped digests for both forms.
+tampered, wrong length, wrong algorithm, high-`s`, window not yet started, expired, longer than
+24 hours), and ERC-1271 `SignedHash` digests and encodings for both forms.
 
 ## Reference Implementation
 

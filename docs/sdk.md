@@ -133,7 +133,7 @@ interface Payload<T> {
 type PayloadKind =
   | "wallet.transfer" | "wallet.nftTransfer" | "wallet.batch"
   | "wallet.safeOwner" | "wallet.message"
-  | "guard.approval" | "guard.moduleApproval"
+  | "guard.approval" | "guard.moduleApproval" | "guard.safeMessage"
   | "guard.revoke" | "guard.rotate";
 ```
 
@@ -171,22 +171,27 @@ function buildTransfer(w: WalletRef, f: TransferFields): Payload<TransferFields>
 function buildNftTransfer(w: WalletRef, f: NftTransferFields): Payload<NftTransferFields>;
 function buildBatch(w: WalletRef, f: BatchFields): Payload<BatchFields>;   // throws BatchTooLarge above 8
 
-/** The wallet as a Safe owner: the SafeTx is wrapped in the wallet's own EIP-712 domain
- *  (SafeHash(bytes32 hash)), so the signature is bound to this wallet. */
+/** The wallet as a Safe owner: the Safe's safeTxHash is wrapped in the wallet's own EIP-712
+ *  domain as SignedHash(bytes32 hash,uint64 validFrom,uint64 validUntil), so the signature is
+ *  bound to this wallet and expires at validUntil. */
 function buildSafeOwnerSignature(
-  w: WalletRef, safe: Address, safeTx: SafeTx
-): Payload<{ hash: Bytes32; safeTx: SafeTx; safe: Address }>;
+  w: WalletRef, safe: Address, safeTx: SafeTx, window: ValidityWindow
+): Payload<{ hash: Bytes32; validFrom: bigint; validUntil: bigint; safeTx: SafeTx; safe: Address }>;
 
 /** Plain-text message (SIWE, ownership proofs), shown in full on the device and wrapped in the
  *  wallet's domain. No arbitrary EIP-712, no permits. */
-function buildMessage(w: WalletRef, text: string): Payload<{ text: string }>;
+function buildMessage(
+  w: WalletRef, text: string, window: ValidityWindow
+): Payload<{ hash: Bytes32; validFrom: bigint; validUntil: bigint; text: string }>;   // hash = EIP-191 hash of text
 
 interface WalletRef { address: Address; chainId: bigint; key: KeyRef; paramSet: ParamSet }
 ```
 
-Fields that both a wallet and a Safe-owner signature carry (`validFrom`, `validUntil`) follow the
-owner document; a Safe-owner signature relies on the Safe's own nonce inside the SafeTx hash
-([Safe owner](./fermion-wallet.md#safe-owner-erc-1271)).
+Every signing call takes a validity window, including the two ERC-1271 ones: an owner signature
+or a signed message stops being accepted at `validUntil`, and the window can be at most 24 hours.
+A Safe-owner signature also relies on the Safe's own nonce inside the SafeTx hash
+([Safe owner](./fermion-wallet.md#safe-owner-erc-1271)). For a Safe transaction that will be
+executed later, sign close to execution or sign again after the window ends.
 
 ### Fermion Guard
 
@@ -213,6 +218,15 @@ function buildModuleApproval(
   g: GuardRef,
   call: { module: Address; to: Address; value: bigint; data: Hex },
   nonce: bigint, w: ValidityWindow
+): Payload<unknown>;
+
+/** Safe-message approval (gated fallback handler): the Safe's own ERC-1271 answers only for
+ *  messages the Quantum Administrator approved. The SDK sends the message itself, never its hash;
+ *  typed data needs a Ledger-signed ERC-7730 descriptor, plain text is shown in full. */
+function buildSafeMessageApproval(
+  g: GuardRef,
+  message: { kind: "text"; text: string } | { kind: "typed"; typedData: Eip712TypedData },
+  w: ValidityWindow
 ): Payload<unknown>;
 
 function buildRevoke(g: GuardRef, safeTxHash: Bytes32, w: ValidityWindow): Payload<unknown>;
@@ -286,27 +300,35 @@ interface HybridSignature {
   ecdsa: Hex;                     // 65 bytes, r ‖ s ‖ v
   mldsa: Hex;                     // 2420 / 3309 / 4627 bytes by parameter set
   algorithm: bigint;
+  window: ValidityWindow;         // copied from the payload that was signed
 }
 
-/** Single-bytes form for ERC-1271 and for appending to Safe signatures: ecdsa ‖ mldsa.
- *  Length 65 + ML-DSA length = 2485 (44), 3374 (65), 4692 (87) bytes (derived). */
-function encodeHybrid(sig: HybridSignature): Hex;
-function decodeHybrid(bytes: Hex, algorithm: bigint): HybridSignature;
+/** Single-bytes form for ERC-1271 and for inline guard approvals:
+ *    validFrom (uint64, 8 B big-endian) ‖ validUntil (uint64, 8 B big-endian) ‖ r ‖ s ‖ v (65 B) ‖ mldsa
+ *  Length 81 + ML-DSA length = 2501 (44), 3390 (65), 4708 (87) bytes. */
+function encodeSignature(sig: HybridSignature): Hex;
+
+/** Inverse of encodeSignature; throws SignatureLengthInvalid for any other length. */
+function decodeSignature(bytes: Hex, algorithm: bigint): HybridSignature;
+
+const SIGNATURE_LENGTH = { 44: 2501, 65: 3390, 87: 4708 } as const;
 ```
 
-The encoding is specified in the [ERC draft](./erc-draft-hybrid-pq-signatures.md) and in
-[hybrid signature](./fermion-wallet.md#hybrid-signature). Wallet transfers pass the two halves as
-separate arguments; ERC-1271 and Safe signatures carry the concatenation.
+The layout is canonical in [Safe owner](./fermion-wallet.md#safe-owner-erc-1271) and specified as a
+standard in the [ERC draft](./erc-draft-hybrid-pq-signatures.md). The window comes first because the
+contract needs it to rebuild the signed `SignedHash`; it is inside the signed struct, so it cannot be
+changed without invalidating both halves. Wallet transfers pass `ecdsa` and `mldsa` as separate
+arguments, since the `Transfer` struct already carries the window.
 
 ### Inline Safe signatures
 
 ```ts
 /** Owner signatures for execTransaction, with the quantum approval appended in the layout the
  *  guard defines (see inline-and-stored-approvals). */
-function appendQuantumApproval(ownerSignatures: Hex, approval: HybridSignature): Hex;
+function appendQuantumApproval(ownerSignatures: Hex, approval: HybridSignature): Hex;   // encodeSignature layout
 
 /** A Fermion Wallet's owner signature in Safe's contract-signature form (v = 0, r = wallet
- *  address, dynamic part = encodeHybrid(sig)), merged into the sorted owner signatures. */
+ *  address, dynamic part = encodeSignature(sig), window included), merged into the sorted owner signatures. */
 function encodeWalletOwnerSignature(wallet: Address, sig: HybridSignature): SafeSignaturePart;
 function mergeOwnerSignatures(parts: SafeSignaturePart[]): Hex;
 ```
@@ -422,6 +444,7 @@ All errors extend `FermionError` with a stable `code`.
 | `GasRefundRefused` | non-zero `gasPrice`, `gasToken` or `refundReceiver` | SDK pre-check and device |
 | `UnlimitedApprovalRefused` | an approve or permit for an unlimited amount | SDK pre-check and device |
 | `WindowTooLong` | `validUntil - validFrom` over 24 hours | SDK pre-check and device |
+| `SignatureLengthInvalid` | an encoded signature is not 2501 / 3390 / 4708 bytes for its parameter set | SDK |
 | `WindowNotCurrent` | the window has not started or has ended (by chain time) | SDK, before submit |
 | `BatchTooLarge` | more than 8 legs | SDK pre-check |
 | `AdminHasCode` | the ECDSA admin address has code | SDK pre-check (the contract also refuses) |

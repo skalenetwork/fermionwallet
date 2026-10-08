@@ -48,7 +48,10 @@ signature counter to protect and no state to roll back.
 
 Replay is stopped by a sequential nonce and a validity window in every signed struct:
 `validFrom <= block.timestamp <= validUntil` and `validUntil - validFrom <= 24h`, checked on
-chain ([replay and validity window](./fermion-wallet.md#replay-and-validity-window)).
+chain ([replay and validity window](./fermion-wallet.md#replay-and-validity-window)). The window
+applies on every path: wallet transfers, ERC-1271 answers (Safe-owner signatures and signed
+messages), inline and stored guard approvals, and Safe-message approvals. No Fermion signature is
+accepted after its `validUntil`.
 
 ## Assumptions
 
@@ -129,6 +132,8 @@ validity window, or a bare hash.
   has no trusted clock, so it cannot check that the window is current; the contract does.
 - Keys never leave the device. A compromised host cannot sign without a human pressing the
   buttons.
+- Every signature expires within 24 hours of its `validFrom`, ERC-1271 signatures included, so a
+  host cannot collect signatures and use them later.
 
 **Left over:** the human must read the screens. A call the device cannot decode (no
 Ledger-signed ERC-7730 descriptor) is **allowed after a strong warning** showing the target,

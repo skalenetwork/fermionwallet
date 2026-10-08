@@ -125,11 +125,14 @@ A Fermion Wallet can be an owner of a Safe. When the Safe wants your signature:
 2. Your Ledger shows **Sign as Safe OWNER**, the Safe's address, the chain, the Safe's nonce and
    what the transaction does: a token transfer, an ETH send, a named Safe setting change, or a
    contract call it can describe.
-3. Approve on the Ledger.
+3. Check the validity times. Your owner signature works only between them, and they can be at
+   most 24 hours apart. If the Safe transaction is not executed in time, sign again.
+4. Approve on the Ledger.
 
 Your Ledger will refuse some Safe transactions outright, whatever you press
 ([warnings](#warnings-and-what-they-mean)). Your wallet can also sign plain-text messages, such as
-"Sign in with Ethereum" or a proof that you own the address; the Ledger shows the whole text.
+"Sign in with Ethereum" or a proof that you own the address; the Ledger shows the whole text and
+the validity times. A signed message, too, stops working after its end time.
 
 ## Protecting a Safe with Fermion Guard
 
