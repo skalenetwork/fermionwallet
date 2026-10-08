@@ -44,7 +44,7 @@ later entries supersede earlier ones, and several were reversed (monorepo 42→4
   after a strong warning; delegatecall, non-zero gas-refund fields, unlimited approvals always refused) and
   plain-text messages (SIWE / ownership proofs). Gas paid by the user's EOA or any relayer; no reimbursement.
 - Fermion Guard: one Quantum Administrator per Safe; EVERY Safe transaction needs a quantum approval
-  (only exceptions: emergency-removal calls). Approvals INLINE (appended to Safe signatures) or STORED
+  (only exceptions: emergency-removal calls, and the Safe revoking a stored approval — user item 10). Approvals INLINE (appended to Safe signatures) or STORED
   (preApprove, consumed once; revocable by the Admin (hybrid-signed) or by the Safe itself; key-epoch counter
   kills old-key approvals). No on-chain spending policy, no pause. Modules only on Safe >=1.5.0 with the guard
   as module guard, every module tx gated, enableModule has its own device screen. Supports Safe 1.3.0/1.4.1/1.5.0.
