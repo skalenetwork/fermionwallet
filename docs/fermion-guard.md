@@ -20,6 +20,7 @@ product, [Fermion Wallet](./fermion-wallet.md), is a standalone vault instead.
 - [Quantum approval](#quantum-approval)
 - [Inline and stored approvals](#inline-and-stored-approvals)
 - [Transaction rules](#transaction-rules)
+- [Safe message approval](#safe-message-approval)
 - [Modules](#modules)
 - [Key rotation](#key-rotation)
 - [Emergency removal](#emergency-removal)
@@ -36,7 +37,8 @@ product, [Fermion Wallet](./fermion-wallet.md), is a standalone vault instead.
    transaction guard (and, on Safe 1.5.0, as its module guard). [FG-001]
 2. From then on **every** Safe transaction — owner-executed or module-executed — needs a quantum approval
    of that exact transaction, on top of the owners' threshold. The only exceptions are the emergency-removal
-   calls and the Safe revoking a stored approval. [FG-002]
+   calls and the Safe revoking a stored approval. Off-chain messages the Safe signs through ERC-1271
+   (Permit2, CoW orders, SIWE) need one too, through the Guard's gated fallback handler. [FG-002]
 3. An approval travels **inline** (appended to the Safe transaction's `signatures`) or is **stored** ahead
    of time (`preApprove`) and consumed once. [FG-003]
 4. If the Quantum Administrator's key is lost, the owners remove the Guard through a 14-day emergency
@@ -137,7 +139,7 @@ interface IFermionGuard is ITransactionGuard, IModuleGuard /* IERC165 */ {
         address publicKeyPointer;   // the public key, stored as code
         uint64  epoch;              // bumped on every rotation and on enrollment end
         uint64  removalExecutableAt;// 0 = no emergency removal pending
-        uint256 nonce;              // sequential, for ModuleTxApproval and Revocation
+        uint256 nonce;              // sequential, for ModuleTxApproval, Revocation and KeyRotation
     }
 
     struct StoredApproval {
@@ -149,15 +151,17 @@ interface IFermionGuard is ITransactionGuard, IModuleGuard /* IERC165 */ {
     // Immutables and constants
     function VERIFIER() external view returns (address);            // IPQVerifier
     function KEY_FACTORY() external view returns (address);         // MLDSAKeyFactory
+    function FALLBACK_HANDLER() external view returns (address);    // gated fallback handler, created by the Guard
     function isMultiSendCallOnly(address target) external view returns (bool);
     function REMOVAL_DELAY() external pure returns (uint64);        // 14 days
     function MAX_WINDOW() external pure returns (uint64);           // 24 hours
     function MAX_BATCH_LEGS() external pure returns (uint256);      // 100
 
-    // Enrollment and rotation: called by the Safe itself (msg.sender == safe)
-    function enroll(uint256 algorithm, address admin, bytes calldata publicKey,
-        uint64 validFrom, uint64 validUntil, bytes calldata ecdsaSignature, bytes calldata pqSignature) external;
-    function rotateKey(uint256 algorithm, address admin, bytes calldata publicKey,
+    // Enrollment: called by the Safe itself (msg.sender == safe)
+    function enroll(uint256 algorithm, address admin, bytes calldata publicKey) external;
+
+    // Rotation: anyone may submit; the CURRENT key's hybrid signature over KeyRotation is the authority
+    function rotateKey(address safe, uint256 algorithm, address admin, bytes calldata publicKey, uint256 nonce,
         uint64 validFrom, uint64 validUntil, bytes calldata ecdsaSignature, bytes calldata pqSignature) external;
 
     // Stored approvals: anyone may submit (relayer); the hybrid signature is the authority
@@ -165,6 +169,8 @@ interface IFermionGuard is ITransactionGuard, IModuleGuard /* IERC165 */ {
         bytes calldata ecdsaSignature, bytes calldata pqSignature) external;
     function preApproveModuleTx(address safe, address module, address to, uint256 value, bytes32 dataHash,
         uint256 nonce, uint64 validFrom, uint64 validUntil,
+        bytes calldata ecdsaSignature, bytes calldata pqSignature) external;
+    function preApproveMessage(address safe, bytes32 safeMessageHash, uint64 validFrom, uint64 validUntil,
         bytes calldata ecdsaSignature, bytes calldata pqSignature) external;
 
     // Revocation: by the Safe itself, or hybrid-signed by the Quantum Administrator
@@ -179,7 +185,10 @@ interface IFermionGuard is ITransactionGuard, IModuleGuard /* IERC165 */ {
     // Views
     function enrollment(address safe) external view returns (Enrollment memory);
     function storedApproval(address safe, bytes32 approvalId) external view returns (StoredApproval memory);
-    function isRevoked(address safe, bytes32 safeTxHash) external view returns (bool);
+    function isRevoked(address safe, bytes32 approvalId) external view returns (bool);
+    // Gated fallback handler query: a stored approval, else the inline approval at the end of `signature`
+    function isMessageApproved(address safe, bytes32 safeMessageHash, bytes calldata signature)
+        external view returns (bool);
     function publicKey(address safe) external view returns (bytes memory);
     function eip712Domain() external view returns (
         bytes1 fields, string memory name, string memory version, uint256 chainId,
@@ -221,8 +230,10 @@ reverts unless: [FG-024]
 5. the key's precomputation is fully registered in the key factory (A and `tr ‖ NTT(t1·2^d)` both stored),
    so every later approval takes the fast verification path; registration is done beforehand, permissionlessly,
    through the key factory;
-6. a hybrid signature by the new key over `KeyEnrollment` (see [Quantum approval](#quantum-approval))
-   verifies: the key proves it can sign for this Safe before the Safe depends on it.
+6. the Safe's fallback handler slot holds `address(0)` or this Guard's `FALLBACK_HANDLER`.
+
+Enrollment needs public keys, not a signature: the holder confirms the admin address and the key hash on the
+device before the Safe enrolls them ([the Ledger app](./ledger-app.md#signing-flows)).
 
 On success the Guard stores the public key as contract code (CREATE2 from the Guard, salt `publicKeyHash`),
 records the enrollment with a fresh epoch, and emits `Enrolled`. [FG-025]
@@ -233,7 +244,8 @@ ML-DSA-87 is accepted by the contract but has no v2 signer. Derivation is specif
 [the Ledger app](./ledger-app.md#key-derivation). [FG-026]
 
 **Recommended setup transaction.** One Safe transaction, a `MultiSendCallOnly` batch executed while the Safe
-has no guard yet: on 1.5.0, `setModuleGuard(guard)`; then `guard.enroll(...)`; then `setGuard(guard)`.
+has no guard yet: `setFallbackHandler(guard.FALLBACK_HANDLER())`; on 1.5.0, `setModuleGuard(guard)`; then
+`guard.enroll(...)`; then `setGuard(guard)`.
 Because the Safe has no guard when the batch runs, nothing checks it; the batch rules in
 [Transaction rules](#transaction-rules) apply only once the Guard is set. [FG-027]
 
@@ -274,13 +286,14 @@ displays, never from a host-supplied hash. [FG-034]
 
 ### Signed types
 
-The Guard defines exactly four signed types. Every one carries `validFrom` and `validUntil`. [FG-035]
+The Guard defines exactly five signed types. Every one carries `validFrom` and `validUntil`. [FG-035]
 
 ```
 SafeTxApproval(address safe,bytes32 safeTxHash,uint64 validFrom,uint64 validUntil)
 ModuleTxApproval(address safe,address module,address to,uint256 value,bytes32 dataHash,uint256 nonce,uint64 validFrom,uint64 validUntil)
+SafeMessageApproval(address safe,bytes32 safeMessageHash,uint64 validFrom,uint64 validUntil)
 Revocation(address safe,bytes32 approvalId,uint256 nonce,uint64 validFrom,uint64 validUntil)
-KeyEnrollment(address safe,uint256 algorithm,bytes32 publicKeyHash,address admin,uint64 validFrom,uint64 validUntil)
+KeyRotation(address safe,uint256 algorithm,bytes32 publicKeyHash,address admin,uint256 nonce,uint64 validFrom,uint64 validUntil)
 ```
 
 Each typehash is `keccak256` of its string above, and each `hashStruct` is
@@ -290,8 +303,9 @@ Each typehash is `keccak256` of its string above, and each `hashStruct` is
 |---|---|---|
 | `SafeTxApproval` | one Safe transaction, identified by the Safe's own `safeTxHash` | `safeTxHash` |
 | `ModuleTxApproval` | one module call: `module` calls `to` with `value` and calldata whose keccak256 is `dataHash` (operation is always `CALL`) | `keccak256(abi.encode(module, to, value, dataHash))` |
+| `SafeMessageApproval` | one off-chain message the Safe may answer ERC-1271 for, identified by the Safe's message hash ([Safe message approval](#safe-message-approval)) | `safeMessageHash` |
 | `Revocation` | killing the approval `approvalId` of `safe` | — |
-| `KeyEnrollment` | the key itself, for `enroll` and `rotateKey` (possession proof) | — |
+| `KeyRotation` | replacing the Safe's key by the key `publicKeyHash` of set `algorithm` with its `admin`; signed by the **current** key ([Key rotation](#key-rotation)) | — |
 
 **What `safeTxHash` binds.** It is the Safe's EIP-712 digest of the SafeTx struct under the Safe's own
 domain (chain id and Safe address): `to`, `value`, `keccak256(data)`, `operation`, `safeTxGas`, `baseGas`,
@@ -302,10 +316,11 @@ transaction and the Safe nonce; the signer rebuilds `safeTxHash` from the fields
 - A `SafeTxApproval` is single-use because its `safeTxHash` contains the Safe nonce, which the Safe
   increments on execution. It carries no Guard nonce, so any number of stored approvals for different
   pending transactions can coexist. [FG-038]
-- `ModuleTxApproval` and `Revocation` carry the Safe's sequential Guard `nonce` (`Enrollment.nonce`). Each is
-  valid only at the current value, which it increments when accepted. [FG-039]
-- `KeyEnrollment` is accepted only inside an `enroll` or `rotateKey` call that the Safe itself makes, so it
-  cannot be replayed without the owners. [FG-040]
+- `ModuleTxApproval`, `Revocation` and `KeyRotation` carry the Safe's sequential Guard `nonce`
+  (`Enrollment.nonce`). Each is valid only at the current value, which it increments when accepted. [FG-039]
+- A `SafeMessageApproval` is **not** single-use: ERC-1271 is a view and records nothing, so an approved
+  message stays approved until its window closes, it is revoked, or the epoch moves. Replay protection for
+  the message itself is the consuming protocol's (a Permit2 nonce, a CoW order uid, a SIWE nonce). [FG-040]
 
 ### Validity window
 
@@ -389,7 +404,7 @@ An approval can be revoked before it is used, by either side: [FG-054]
   pqSignature)`, a hybrid-signed `Revocation`, submitted by anyone.
 
 Revoking `approvalId` deletes the stored approval under it, if any, **and** marks `(safe, approvalId)` as
-revoked for Safe transactions: no approval for that `safeTxHash`, inline or stored, is ever accepted again.
+revoked: no approval for that `safeTxHash` or `safeMessageHash`, inline or stored, is ever accepted again.
 Without the mark, the revoked signature — which is public once submitted — could simply be stored again or
 appended inline. To do the same payment afterwards, the owners build a new Safe transaction (at a later
 nonce, or with any field changed). [FG-055]
@@ -429,14 +444,22 @@ destroys the escape hatch or lets an escape call drain the Safe. [FG-058]
 5. **Operation.** `DELEGATECALL` reverts `DelegateCallForbidden` unless `to` is one of the pinned
    `MultiSendCallOnly` deployments, in which case the batch is decoded and checked leg by leg (below).
    `MultiSend` (which allows inner delegatecalls) is never accepted. [FG-064]
-6. **Self-administration.** For a `CALL` to the Safe itself: [FG-065]
+6. **Self-administration.** A `CALL` to the Safe itself must be one of the nine named admin functions —
+   `addOwnerWithThreshold`, `removeOwner`, `swapOwner`, `changeThreshold`, `setGuard`, `setFallbackHandler`,
+   `enableModule`, `disableModule`, `setModuleGuard` — recognised by selector; any other self-call, decodable
+   or not, reverts `SelfCallForbidden` (decision record C9: a self-call is the Safe-takeover vector). Of the
+   nine: [FG-065]
    - `enableModule` reverts `ModuleGuardNotWired` unless the module guard is wired ([FG-020]);
    - `setModuleGuard(x)` with `x` other than this Guard reverts while any module is enabled;
-   - every other self-call (owners, threshold, `setGuard`, `setFallbackHandler`, `disableModule`, …) is
-     allowed to proceed to step 8, where it needs an approval like any transaction.
-7. **Module posture.** If any module is enabled (`getModulesPaginated`) and the module guard is not wired,
-   every transaction reverts `ModulesUnguarded`, except `disableModule` to the Safe itself, which proceeds to
-   step 8. [FG-066]
+   - `setFallbackHandler(x)` reverts `FallbackHandlerForbidden` unless `x` is `address(0)` or
+     `FALLBACK_HANDLER`;
+   - the others proceed to step 8, where they need an approval like any transaction.
+7. **Posture.** If any module is enabled (`getModulesPaginated`) and the module guard is not wired, every
+   transaction reverts `ModulesUnguarded`, except `disableModule` to the Safe itself. If the fallback handler
+   slot holds anything but `address(0)` or `FALLBACK_HANDLER`, every transaction reverts
+   `FallbackHandlerForbidden`, except `setFallbackHandler(address(0))` and
+   `setFallbackHandler(FALLBACK_HANDLER)`. Each exempted remediation is exempt from both checks and proceeds
+   to step 8. [FG-066]
 8. **Quantum approval.** Recompute `safeTxHash` ([FG-014]); refuse it if revoked; consume a live stored
    approval, else verify an inline one ([FG-051]); else revert `NoQuantumApproval`. Emit `ApprovalUsed`.
    [FG-067]
@@ -455,14 +478,15 @@ uint256 value, uint256 dataLength`); `dataLength` overruns the payload; or any b
 leg. It reverts `BatchTooLarge` the moment the leg count exceeds `MAX_BATCH_LEGS` = 100 (the v1 guard's
 batch-leg limit), before decoding further. Every check is O(1) per leg. [FG-070]
 
-Every leg is checked under the same rules as a single transaction: its `operation` must be `CALL` (no
-nested delegatecall); while a removal is pending it must be a rescue-transfer shape ([FG-090]); and
-because the self-administration rules of step 6, the module posture of step 7 and the escape calls of
-step 3 apply only to a whole transaction, a leg whose `to` is the Safe, `address(0)` (which
-`MultiSendCallOnly` rewrites to the Safe), the Guard or a `MultiSendCallOnly` reverts
-`ForbiddenBatchLegTarget`. Self-administration, Guard calls and escape calls are therefore never batched
-and cannot be sidestepped inside a batch. The signer shows every leg before approving a batch; see
-[the signer requirements](./signer-requirements.md#display-and-refusal-rules). [FG-071]
+Every leg is checked under the same rules as a single transaction (decision record C7): its `operation`
+must be `CALL` (no nested delegatecall); a leg whose `to` is a `MultiSendCallOnly` reverts
+`ForbiddenBatchLegTarget`; a leg whose `to` is the Safe or `address(0)` (which `MultiSendCallOnly`
+rewrites to the Safe) is a self-call and obeys step 6, so an unnamed self-call reverts `SelfCallForbidden`;
+and while a removal is pending every leg must be a rescue-transfer shape ([FG-090]). Escape calls are never
+recognised inside a batch: as legs they need the batch's approval like any other call. Step 6 reads the
+Safe's state when `checkTransaction` runs, so a leg cannot rely on an earlier leg of the same batch (for
+example, `setModuleGuard` followed by `enableModule` fails closed). The signer shows every leg before
+approving a batch ([the signer requirements](./signer-requirements.md#safe-batches)). [FG-071]
 
 Module transactions get no batch exception: a module `DELEGATECALL` is refused even to a
 `MultiSendCallOnly` ([FG-076]).
@@ -473,13 +497,67 @@ A Safe transaction may execute another transaction of the same Safe. Each nested
 the Guard again with its own `safeTxHash` and needs its own approval; the Guard keeps no depth counter.
 `checkAfterExecution` does only the enrollment-end check ([FG-029]). [FG-072]
 
-### Signature-only side doors
+### Allowances granted before enrollment
 
-The Guard sees transactions, not signatures. Two ways for owners to act without a Safe transaction remain
-and are outside the Guard's reach: allowances granted before enrollment, and off-chain messages the Safe
-signs through its fallback handler's ERC-1271 (`CompatibilityFallbackHandler` answers with the owners'
-signatures alone — Permit2, CoW orders, SIWE). See [Residual risks](#residual-risks). Installing or
-changing a fallback handler is itself a Safe transaction and needs an approval. [FG-073]
+The Guard sees transactions. A token or Permit2 allowance the Safe granted before enrollment can still be
+spent by its spender with no Safe transaction. Operators revoke such allowances before enrolling. [FG-073]
+
+## Safe message approval
+
+The Safe's ERC-1271 answers are the other way owners could act without a Safe transaction: Safe's
+`CompatibilityFallbackHandler` answers `isValidSignature` for the Safe with the owners' signatures alone, so
+a Permit2 permit, a CoW order or a SIWE login signed by the owners would bypass the Guard. Fermion Guard
+therefore keeps a **gated fallback handler** (decision record C8): the Safe answers ERC-1271 only for messages
+the Quantum Administrator approved. [FG-106]
+
+**The handler.** The Guard creates its fallback handler in its own constructor (with CREATE, so the
+handler's address is a function of the Guard's) and exposes it as `FALLBACK_HANDLER`. It is Safe's
+`CompatibilityFallbackHandler` from the pinned Safe package — token callbacks, `simulate` and
+`getMessageHash` unchanged — with both `isValidSignature` forms replaced. A guarded Safe's fallback handler
+is `address(0)` or `FALLBACK_HANDLER`, nothing else ([FG-024], [FG-065], [FG-066]). [FG-107]
+
+**The Safe message hash** is computed exactly as Safe's own handler computes it, for the calling Safe (the
+`msg.sender` of the forwarded call): [FG-108]
+
+```
+SafeMessage(bytes message)                         // Safe's own type, under the Safe's own domain
+safeMessageHash = keccak256(0x19 ‖ 0x01 ‖ safe.domainSeparator() ‖
+                            keccak256(abi.encode(SAFE_MSG_TYPEHASH, keccak256(message))))
+message = abi.encode(hash)  for isValidSignature(bytes32 hash, bytes signature)  → magic 0x1626ba7e
+message = data              for isValidSignature(bytes data, bytes signature)    → magic 0x20c13b0b
+```
+
+For a Permit2 permit or a CoW order, `hash` is the order's EIP-712 hash; for SIWE text, its EIP-191 hash.
+The signer receives the message itself, computes `hash`, then `safeMessageHash`, then the approval digest,
+and shows the message ([the signer requirements](./signer-requirements.md#safe-messages)). [FG-109]
+
+**The approval** is `SafeMessageApproval(address safe,bytes32 safeMessageHash,uint64 validFrom,uint64
+validUntil)` under the Guard's domain ([Quantum approval](#quantum-approval)), accepted in either form, like
+a Safe-transaction approval: [FG-110]
+
+- **stored:** `preApproveMessage(safe, safeMessageHash, validFrom, validUntil, ecdsa, pqSignature)`,
+  permissionless, which verifies the hybrid signature with the current key and stores
+  `StoredApproval{validFrom, validUntil, epoch}` under `safeMessageHash`;
+- **inline:** the last `L` bytes of the ERC-1271 `signature`, after the owners' signatures, in the layout of
+  [FG-045].
+
+**The answer.** The handler returns the form's magic value only if both of these hold, and `0xffffffff`
+otherwise, never reverting on malformed input: [FG-111]
+
+1. the owners' signatures over `safeMessageHash` are valid, checked through the Safe exactly as Safe's own
+   handler checks them; the on-chain `signedMessages` path (empty `signature`) is **not** accepted, because
+   its entries could have been written before enrollment;
+2. `isMessageApproved(safe, safeMessageHash, signature)` on the Guard is true: the Safe is enrolled, no
+   emergency removal is pending, `safeMessageHash` is not revoked, and either a stored approval with the
+   current epoch and a window containing `block.timestamp` exists, or the inline approval verifies (window,
+   ECDSA, ML-DSA).
+
+A message approval is never consumed ([FG-040]). It is revoked like any approval — `revoke(safeMessageHash)`
+by the Safe, or a signed `Revocation` — which bars it for good ([FG-055]). [FG-112]
+
+An inline message approval makes the consuming protocol pay one ML-DSA verification inside its
+`isValidSignature` call (2.68M / 3.66M / 5.53M gas for 44 / 65 / 87, key registered); a protocol with a tight
+ERC-1271 gas budget needs the stored form. Not measured end to end. [FG-113]
 
 ## Modules
 
@@ -506,21 +584,21 @@ changing a fallback handler is itself a Safe transaction and needs an approval. 
 
 ## Key rotation
 
-The old key approves the new key. Rotation is an ordinary Safe transaction to the Guard, `rotateKey(
-algorithm, admin, publicKey, validFrom, validUntil, ecdsaSignature, pqSignature)`, so it needs the owner
-threshold **and** a quantum approval by the **current** key over that transaction. Its calldata contains
-the new public key, so the approved `safeTxHash` binds the new key's hash; the signer shows that hash on its
-rotation screen. [FG-080]
+The current key approves the new key. `rotateKey(safe, algorithm, admin, publicKey, nonce, validFrom,
+validUntil, ecdsaSignature, pqSignature)` is permissionless; its authority is a hybrid signature by the
+Safe's **current** key over `KeyRotation(safe, algorithm, keccak256(publicKey), admin, nonce, validFrom,
+validUntil)`. The signer shows the new key's hash, its parameter set and its admin on a rotation screen
+([the Ledger app](./ledger-app.md#signing-flows)). [FG-080]
 
-`rotateKey` reverts unless the Safe is enrolled, no emergency removal is pending (it is not an escape
-call, so the freeze already stops it), and the new key passes checks 3–6 of [FG-024]: valid algorithm and
-length, admin an EOA, precomputation registered beforehand through the key factory, and a `KeyEnrollment`
-possession proof signed by the **new** key. [FG-081]
+`rotateKey` reverts unless the Safe is enrolled, no emergency removal is pending (the freeze covers
+rotation), the Guard nonce and window are valid, the current key's hybrid signature verifies, and the new key
+passes checks 3–5 of [FG-024]: valid algorithm and length, admin an EOA, precomputation registered beforehand
+through the key factory. [FG-081]
 
 On success the Guard stores the new public key as code, replaces algorithm, admin, key hash and pointer,
-increments the epoch (every approval the old key stored dies) and emits `KeyRotated`. The Guard nonce
-carries on. The new key may use a different parameter set and always has a different admin, since the
-ECDSA key is derived per key slot. [FG-082]
+increments the Guard nonce and the epoch (every approval the old key stored dies) and emits `KeyRotated`.
+The new key may use a different parameter set and always has a different admin, since the ECDSA key is
+derived per key slot. [FG-082]
 
 A lost or compromised key cannot rotate itself; the owners use [emergency removal](#emergency-removal) and
 re-enroll a new key. [FG-083]
@@ -587,12 +665,12 @@ From the measured table in the decision record; re-measure after the Glamsterdam
 
 | | ML-DSA-44 | ML-DSA-65 | ML-DSA-87 |
 |---|---|---|---|
-| ML-DSA verify, key registered (through `IPQVerifier`) — paid once per inline approval, `preApprove`, `preApproveModuleTx`, `revokeSigned`, and the possession proof in `enroll` / `rotateKey` | 2.68M | 3.66M | 5.53M |
+| ML-DSA verify, key registered (through `IPQVerifier`) — paid once per inline approval, `preApprove`, `preApproveModuleTx`, `preApproveMessage`, `revokeSigned`, `rotateKey` | 2.68M | 3.66M | 5.53M |
 | ML-DSA verify, from scratch (never on the Guard's paths: enrollment requires a registered key) | 5.75M | 9.13M | 14.23M |
 | Inline approval appended to `signatures` | 2501 B | 3390 B | 4708 B |
 
 Not measured: a whole guarded Safe transaction (inline or stored), `enroll`, `rotateKey`, consuming a stored
-approval, key-factory registration of a Guard key, and batch decoding. A guarded Safe transaction runs at
+approval, a gated ERC-1271 answer, key-factory registration of a Guard key, and batch decoding. A guarded Safe transaction runs at
 most one Guard verification; with Fermion Wallet owners it also runs one verification per such owner, and
 all of them must fit the 16,777,216-gas per-transaction cap (EIP-7825) together. [FG-096]
 
@@ -616,7 +694,9 @@ all of them must fit the 16,777,216-gas per-transaction cap (EIP-7825) together.
 | Compromised owners request removal (case 1) | Honest owners cancel, or rescue assets with the Quantum Administrator during the freeze |
 | An attacker holds the owner threshold alone (case 2) | Removes the Guard after 14 days. Residual ([FG-092]) |
 | The Guard is set before enrolling | Only `enroll`, `setGuard(0)` and `setModuleGuard(0)` pass ([FG-028]) |
-| Owners sign a Permit2 or CoW order off-chain | The Guard never sees it ([FG-073]) |
+| Owners sign a Permit2 or CoW order off-chain | The Safe answers ERC-1271 only with a message approval ([FG-111]) |
+| Owners try to install `CompatibilityFallbackHandler` | Reverts ([FG-065]); a Safe that already has it cannot enroll ([FG-024]) |
+| An allowance granted before enrollment | Still spendable with no Safe transaction ([FG-073]) |
 
 ## Residual risks
 
@@ -626,9 +706,10 @@ all of them must fit the 16,777,216-gas per-transaction cap (EIP-7825) together.
   [FG-098]
 - **ML-DSA-87 is contract-level only.** The Guard accepts it, but no v2 signer produces it: the Ledger app
   ships ML-DSA-44 and ML-DSA-65 and the nShield signer is a design document. [FG-099]
-- **Fallback-handler signatures and old allowances.** Off-chain messages signed through the Safe's
-  ERC-1271 fallback handler and allowances granted before enrollment bypass the Guard ([FG-073]). Operators
-  revoke token and Permit2 allowances before enrolling. [FG-100]
+- **Old allowances and reusable message approvals.** Allowances granted before enrollment bypass the
+  Guard ([FG-073]); operators revoke token and Permit2 allowances before enrolling. A message approval can
+  be presented any number of times within its window ([FG-040]); the consuming protocol's own nonce is the
+  replay guard. [FG-100]
 - **Unguarded modules on 1.3.0/1.4.1** between enabling and the Guard being set ([FG-079]). [FG-101]
 - **One secret per role.** The Quantum Administrator's key derives from a recovery phrase; phrase
   compromise yields both halves. See [security](./security.md). [FG-102]
@@ -644,7 +725,7 @@ all of them must fit the 16,777,216-gas per-transaction cap (EIP-7825) together.
 | ID | Requirement |
 |---|---|
 | FG-001 | Each Safe has one Quantum Administrator key (ECDSA admin plus ML-DSA), enrolled by the Safe, with the Guard set as transaction guard and, on 1.5.0, module guard. |
-| FG-002 | Every Safe transaction, owner- or module-executed, needs a quantum approval of that exact transaction, except the emergency-removal calls and the Safe's own revoke. |
+| FG-002 | Every Safe transaction, owner- or module-executed, needs a quantum approval of that exact transaction, except the emergency-removal calls and the Safe's own revoke; the Safe's ERC-1271 messages need one too. |
 | FG-003 | An approval is either appended inline to `signatures` or stored ahead and consumed once. |
 | FG-004 | A lost key is handled by a 14-day, owners-only-cancellable emergency removal. |
 | FG-005 | The Guard never moves funds; it only allows or reverts. |
@@ -666,7 +747,7 @@ all of them must fit the 16,777,216-gas per-transaction cap (EIP-7825) together.
 | FG-021 | Safe ignores bytes after the owner signatures, and `signatures` is not part of `safeTxHash`. |
 | FG-022 | The external interface is exactly the one listed plus the four Safe hooks. |
 | FG-023 | An enrolled Safe has exactly one Quantum Administrator. |
-| FG-024 | `enroll` is called by the Safe and checks: not enrolled, supported version, algorithm and key length, admin an EOA, key registered in the factory, and a `KeyEnrollment` possession proof. |
+| FG-024 | `enroll` is called by the Safe and checks: not enrolled, supported version, algorithm and key length, admin an EOA, key registered in the factory, and a fallback handler of `address(0)` or `FALLBACK_HANDLER`. |
 | FG-025 | Enrollment stores the public key as code and records the enrollment with a fresh epoch. |
 | FG-026 | A Guard key is used for one Safe only; ML-DSA-44 default, ML-DSA-65 opt-in, ML-DSA-87 accepted. |
 | FG-027 | The recommended setup is one `MultiSendCallOnly` batch run before the Guard is set: module guard, enroll, guard. |
@@ -677,12 +758,12 @@ all of them must fit the 16,777,216-gas per-transaction cap (EIP-7825) together.
 | FG-032 | The ML-DSA half is pure ML-DSA with empty context over the digest, checked through `IPQVerifier` with the enrolled algorithm and key. |
 | FG-033 | The EIP-712 domain is name "FermionGuard", version "2", the chain id and the Guard's address. |
 | FG-034 | The signer computes the digest from displayed fields, never from a host-supplied hash. |
-| FG-035 | The Guard defines exactly the four signed types listed, each with `validFrom` and `validUntil`. |
+| FG-035 | The Guard defines exactly the five signed types listed, each with `validFrom` and `validUntil`. |
 | FG-036 | Typehashes and struct hashes are exactly as listed. |
 | FG-037 | A `SafeTxApproval` binds every SafeTx field, the Safe, the chain and the Safe nonce through `safeTxHash`. |
 | FG-038 | A `SafeTxApproval` is single-use through the Safe nonce and carries no Guard nonce. |
-| FG-039 | `ModuleTxApproval` and `Revocation` carry the Safe's sequential Guard nonce, valid only at its current value. |
-| FG-040 | `KeyEnrollment` is accepted only inside a call the Safe itself makes. |
+| FG-039 | `ModuleTxApproval`, `Revocation` and `KeyRotation` carry the Safe's sequential Guard nonce, valid only at its current value. |
+| FG-040 | A `SafeMessageApproval` is not consumed; it stays valid for its window unless revoked or the epoch moves. |
 | FG-041 | Every path enforces the validity window of at most 24 hours; stored approvals are checked when stored and when consumed. |
 | FG-042 | Checks run in the order shape, window, Guard nonce, ECDSA, ML-DSA. |
 | FG-043 | The signer signs identical bytes for inline and stored approvals. |
@@ -707,24 +788,24 @@ all of them must fit the 16,777,216-gas per-transaction cap (EIP-7825) together.
 | FG-062 | Escape calls re-check their own authority and are recognised by selector and first argument word. |
 | FG-063 | While a removal is pending, only escape calls and rescue transfers pass. |
 | FG-064 | `DELEGATECALL` is refused unless the target is a pinned `MultiSendCallOnly`; `MultiSend` is never accepted. |
-| FG-065 | `enableModule` needs a wired module guard, and `setModuleGuard` away from the Guard is refused while any module is enabled. |
-| FG-066 | With an enabled module and no wired module guard, every transaction except `disableModule` reverts. |
+| FG-065 | A self-call must be one of the nine named admin functions, else `SelfCallForbidden`; `enableModule` needs a wired module guard; `setModuleGuard` away from the Guard is refused while any module is enabled; `setFallbackHandler` accepts only `address(0)` or `FALLBACK_HANDLER`. |
+| FG-066 | With an unguarded module, or a fallback handler other than `address(0)` or `FALLBACK_HANDLER`, every transaction except the matching remediation reverts. |
 | FG-067 | The last step requires a live, unrevoked stored or inline approval of the recomputed `safeTxHash`. |
 | FG-068 | `checkTransaction` performs at most one ML-DSA verification. |
 | FG-069 | The pinned `MultiSendCallOnly` deployments are those of Safe 1.3.0, 1.4.1 and 1.5.0, fixed at construction. |
 | FG-070 | Batch decoding is strict (`MalformedBatch`) and bounded by `MAX_BATCH_LEGS` = 100 (`BatchTooLarge`). |
-| FG-071 | Each batch leg is a `CALL` checked under the single-transaction rules, never targets the Safe, `address(0)`, the Guard or a `MultiSendCallOnly` (`ForbiddenBatchLegTarget`), and is shown by the signer. |
+| FG-071 | Each batch leg is a `CALL` checked under the single-transaction rules, self-call rules included; no leg targets a `MultiSendCallOnly`; escape calls get no exemption inside a batch; the signer shows every leg. |
 | FG-072 | Nested Safe transactions each need their own approval; there is no depth counter. |
-| FG-073 | Fallback-handler signatures and pre-enrollment allowances are outside the Guard's reach; changing the handler needs an approval. |
+| FG-073 | Allowances granted before enrollment are outside the Guard's reach. |
 | FG-074 | Modules are allowed only on Safe 1.5.0 with the Guard wired as module guard. |
 | FG-075 | On 1.5.0 the module guard is set before any module is enabled. |
 | FG-076 | Every module transaction needs a live stored `ModuleTxApproval`, a `CALL`, a target other than the Guard, and no pending removal. |
 | FG-077 | There are no module exemptions. |
 | FG-078 | The signer shows `enableModule` on its own screen. |
 | FG-079 | Unguarded modules make owner transactions fail closed until `disableModule`; on 1.3.0/1.4.1 they still run unguarded meanwhile. |
-| FG-080 | Rotation is a Safe transaction to `rotateKey`, approved by the current key, whose calldata binds the new key. |
-| FG-081 | `rotateKey` checks the new key like `enroll`, including a possession proof by the new key, and is refused during a pending removal. |
-| FG-082 | Rotation replaces the key and admin and increments the epoch; the Guard nonce carries on. |
+| FG-080 | `rotateKey` is permissionless and authorized by the current key's hybrid signature over `KeyRotation`. |
+| FG-081 | `rotateKey` checks the Guard nonce, window and signature, checks the new key like `enroll`, and is refused during a pending removal. |
+| FG-082 | Rotation replaces the key and admin and increments the Guard nonce and the epoch. |
 | FG-083 | A lost or compromised key is replaced through emergency removal and re-enrollment. |
 | FG-084 | Emergency removal needs no quantum key. |
 | FG-085 | `requestRemoval` is a Safe-only escape call that starts a 14-day delay and is refused if one is pending. |
@@ -742,9 +823,17 @@ all of them must fit the 16,777,216-gas per-transaction cap (EIP-7825) together.
 | FG-097 | The Guard and everything it calls are unaudited, and the documentation says so. |
 | FG-098 | Case 2 is not defended. |
 | FG-099 | ML-DSA-87 is accepted by the contract but has no v2 signer. |
-| FG-100 | Fallback-handler signatures and old allowances bypass the Guard; operators revoke allowances before enrolling. |
+| FG-100 | Old allowances bypass the Guard and message approvals are reusable within their window; operators revoke allowances before enrolling. |
 | FG-101 | Modules on 1.3.0/1.4.1 can run unguarded before the Guard is set. |
 | FG-102 | The Quantum Administrator's phrase is the single secret behind both halves. |
 | FG-103 | The Ledger's ML-DSA is treated as side-channel unhardened. |
 | FG-104 | ML-DSA-87 inline approvals may approach the per-transaction cap; L2 cap behaviour is unverified on live networks. |
 | FG-105 | A verifier bug requires a new Guard and re-enrollment. |
+| FG-106 | The Safe answers ERC-1271 only for messages the Quantum Administrator approved, through a gated fallback handler. |
+| FG-107 | The Guard creates its fallback handler in its constructor: Safe's `CompatibilityFallbackHandler` with both `isValidSignature` forms replaced. |
+| FG-108 | The Safe message hash is computed exactly as Safe's own handler computes it, for both forms. |
+| FG-109 | The signer receives the message itself and computes its hash, the Safe message hash and the approval digest. |
+| FG-110 | A `SafeMessageApproval` is accepted stored (`preApproveMessage`) or inline at the end of the ERC-1271 signature. |
+| FG-111 | The handler returns the magic value only with valid owner signatures (never the `signedMessages` path) and a live, unrevoked message approval, and `0xffffffff` otherwise. |
+| FG-112 | A message approval is never consumed and is revoked like any approval. |
+| FG-113 | An inline message approval costs the consuming protocol one ML-DSA verification; the stored form avoids it. |

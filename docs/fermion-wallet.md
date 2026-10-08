@@ -390,8 +390,9 @@ a delegatecall, a gas-refund drain or an unlimited approval is invisible to it. 
 Guard the signer is therefore the only gate. The signer must refuse, before any screen, a SafeTx that is a
 `DelegateCall` to anything but the canonical `MultiSendCallOnly` deployment of the Safe's version (a batch,
 whose legs must each be a `Call` and are decoded, checked under the same rules as a single transaction and
-shown one by one), whose `gasPrice`, `gasToken` or `refundReceiver` is non-zero, or which grants an
-unlimited approval; must show named Safe admin functions on their own screen; and may allow a call it cannot
+shown one by one), whose `gasPrice`, `gasToken` or `refundReceiver` is non-zero, which grants an
+unlimited approval, or which calls the Safe itself with anything but one of the nine named Safe admin
+functions (at top level or in a batch leg); must show those admin functions on their own screen; and may allow a call it cannot
 decode only after a strong warning showing target, selector, value and the full calldata. Those rules are
 specified in [the signer requirements](./signer-requirements.md#display-and-refusal-rules). [FW-059]
 
