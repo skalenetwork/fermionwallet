@@ -173,7 +173,7 @@ The device decides what it will put on the screen before it draws anything. Thes
 
 | # | Refused | Applies to |
 |---|---|---|
-| 1 | `operation = DelegateCall` | Safe transactions (kinds `0x03`, `0x10`) and module transactions (`0x11`) |
+| 1 | `operation = DelegateCall`, except a Safe batch through `MultiSendCallOnly` ([Safe batches](#safe-batches)) | Safe transactions (kinds `0x03`, `0x10`); module transactions (`0x11`) with no exception |
 | 2 | non-zero `gasPrice`, non-zero `gasToken` or non-zero `refundReceiver` | Safe transactions (`0x03`, `0x10`) |
 | 3 | an unlimited approval: ERC-20 `approve` (`0x095ea7b3`) or `increaseAllowance` (`0x39509351`) with amount `2^256 − 1` | any call the device decodes, top level or inside a descriptor |
 | 4 | `validUntil − validFrom > 86,400` seconds, or `validFrom > validUntil` | every kind |
@@ -182,6 +182,10 @@ The device decides what it will put on the screen before it draws anything. Thes
 [LA-028] There is no setting, no override and no "review anyway" path for any of them. The device decodes the `approve` and `increaseAllowance` selectors itself, without a descriptor, so rule 3 does not depend on the host supplying one [LA-029].
 
 **No trusted clock.** A Ledger has no clock the app can trust, and a host-supplied "now" is the host's word. The device therefore checks the window's length and shape only (rule 4) and shows `Valid from` and `Valid until` as absolute UTC; the contracts enforce `validFrom ≤ block.timestamp ≤ validUntil` on-chain ([`fermion-wallet.md`](./fermion-wallet.md#replay-and-validity-window)) [LA-030].
+
+### Safe batches
+
+Decision record clarification C7, implementing [`signer-requirements.md`](./signer-requirements.md#safe-batches). A Safe transaction (kind `0x03` or `0x10`) with `operation = DelegateCall` is accepted only when `to` is the canonical `MultiSendCallOnly` deployment of Safe 1.3.0, 1.4.1 or 1.5.0. Those addresses are compiled into the app (the exact list is pinned against the Safe deployments in phase 3); the host cannot add one [LA-056]. The calldata must parse exactly as `multiSend(bytes)` with every leg `operation = Call`; any other leg operation, a truncated leg or trailing bytes is refused with reason `01` or `05` [LA-057]. Each leg is decoded as in [Decoded calls](#decoded-calls) and checked against rules 3 and 5 as if it were a single transaction; an undecodable leg gets the warning page and its five fields. The review shows `Batch: N calls`, then every leg in order, headed `Call 2 of N`, with its `To`, `Value` and decoded call [LA-058]. `Operation` reads `Batch (MultiSendCallOnly)`. Module transactions (kind `0x11`) get no such exception. The number of legs is bounded only by the payload buffer (not measured).
 
 ### Decoded calls
 
@@ -199,7 +203,7 @@ The device verifies every descriptor's Ledger signature on receipt. A descriptor
 
 An undecodable call is **not refused** (decision record items 25 and 26). The review opens with the SDK's blind-signing warning page — *This transaction's details are not fully verifiable. If you sign, you could lose all your assets.* — and then shows, as fields: `Contract` (the target, full EIP-55), `Selector` (the 4 bytes), `Value`, `Calldata` (the complete calldata in hex, paged, never truncated) and `Calldata hash` (keccak256 of the calldata, in full). The warning icon then sits on the intent and decision pages [LA-033]. Rules 1–5 are applied first and still refuse.
 
-> **C3 — the device model lags the spec.** The committed model [`demo/ledger-proof/device_spec.py`](../demo/ledger-proof/device_spec.py) (`aa55132` on this branch; `ca48253` in the decision record, before a history rewrite) still **refuses** an undecodable call (`displayable=False` → `Cannot display this call`), and [`demo/ledger-proof/README.md`](../demo/ledger-proof/README.md) lists that as claim R1. This spec follows the decision record and allows it after the warning. Updating the model — the undecodable flow as a warning page plus the five fields above, and R1 narrowed to rules 1–5 — is a phase-3 task. The model also has no revoke, key-rotation or module-transaction flow and no multi-leg batch; those are added in the same phase-3 update.
+> **C3 — the device model lags the spec.** The committed model [`demo/ledger-proof/device_spec.py`](../demo/ledger-proof/device_spec.py) (`aa55132` on this branch; `ca48253` in the decision record, before a history rewrite) still **refuses** an undecodable call (`displayable=False` → `Cannot display this call`), and [`demo/ledger-proof/README.md`](../demo/ledger-proof/README.md) lists that as claim R1. This spec follows the decision record and allows it after the warning. Updating the model — the undecodable flow as a warning page plus the five fields above, and R1 narrowed to rules 1–5 — is a phase-3 task, as is the `MultiSendCallOnly` exception of [Safe batches](#safe-batches) (the model refuses every delegatecall). The model also has no revoke, key-rotation or module-transaction flow and no multi-leg batch; those are added in the same phase-3 update.
 
 ## Signing flows
 
@@ -336,7 +340,7 @@ The Nano X configuration has the thinnest margin; the v2 app carries no XMSS cod
 Product questions the decision record does not answer. They are recorded, not decided.
 
 1. **Blind-signing setting.** Ledger's guidelines require blind signing to be enabled by a setting that defaults off. The record allows undecodable calls after a warning, with no setting. Does Ledger's review require the switch?
-2. **Safe batches.** Safe executes `MultiSend` / `MultiSendCallOnly` by `DelegateCall`, which rule 1 refuses — yet emergency-removal rescue transfers are described as batched via `MultiSendCallOnly`. Is there an exception, or are rescue transfers sent one per transaction?
+2. **Safe batch size.** Whether Safe batches through `MultiSendCallOnly` get a maximum number of legs (the wallet's own batches stop at 8), beyond what the payload buffer allows.
 3. **Safe self-calls to other functions.** A call on the Safe itself that is not one of the nine named admin functions: refused (earlier log rule) or the undecodable-warning path (items 25/26)?
 4. **Unlimited approval, wider.** Does rule 3 also cover `setApprovalForAll(…, true)`, Permit2 approvals, or amounts just below `2^256 − 1`?
 5. **Plain-text message.** Maximum length, and whether non-printable or non-ASCII text is shown escaped, shown as hex, or refused.
@@ -376,7 +380,7 @@ Product questions the decision record does not answer. They are recorded, not de
 | LA-025 | The response buffer is wiped after its last byte, at every SIGN, on Quit and on panic. |
 | LA-026 | One signing session at a time; a second SIGN is refused with 0x6986 and the open review dismissed. |
 | LA-027 | Refusals return 0x6A80 with a one-byte reason and draw no screen. |
-| LA-028 | Delegatecall, non-zero gas-refund fields, unlimited approvals, windows over 24 h or inverted, and malformed payloads are refused before any screen, with no override. |
+| LA-028 | Delegatecall (except a MultiSendCallOnly Safe batch), non-zero gas-refund fields, unlimited approvals, windows over 24 h or inverted, and malformed payloads are refused before any screen, with no override. |
 | LA-029 | The device decodes approve and increaseAllowance natively so the unlimited-approval refusal needs no descriptor. |
 | LA-030 | Without a trusted clock the device checks only the window's length and shape and shows both times in UTC. |
 | LA-031 | Safe self-administration calls are shown on a dedicated screen naming the function and every argument. |
@@ -404,3 +408,6 @@ Product questions the decision record does not answer. They are recorded, not de
 | LA-053 | The v2 app carries no XMSS code. |
 | LA-054 | The SDK's ML-DSA is treated as unhardened against side channels. |
 | LA-055 | Production installs come only from the Ledger Live catalog; sideloaded builds never hold a production phrase. |
+| LA-056 | A delegatecall Safe transaction is accepted only to a canonical MultiSendCallOnly address compiled into the app. |
+| LA-057 | A MultiSendCallOnly batch must parse exactly with every leg a Call, or it is refused. |
+| LA-058 | Every leg of a Safe batch is decoded, checked as a single transaction and shown in full, in order. |

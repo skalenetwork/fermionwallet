@@ -69,7 +69,7 @@ The signer MUST refuse each of the following **before showing anything to the re
 
 | # | Refused | Why |
 |---|---|---|
-| 1 | A Safe transaction or module transaction with `operation = DelegateCall` | an owner or approval signature over a delegatecall hands the target the Safe's storage |
+| 1 | A module transaction with `operation = DelegateCall`; a Safe transaction with `operation = DelegateCall` to anything but a canonical `MultiSendCallOnly` deployment ([Safe batches](#safe-batches)) | an owner or approval signature over a delegatecall hands the target the Safe's storage |
 | 2 | A Safe transaction with non-zero `gasPrice`, non-zero `gasToken` or non-zero `refundReceiver` | the refund is paid from the Safe to whoever the host chose |
 | 3 | An unlimited token approval | it outlives every later review |
 | 4 | `validUntil − validFrom > 24 hours`, or `validFrom > validUntil` | the contracts reject it; a signature that can never be used must not be shown |
@@ -78,6 +78,10 @@ The signer MUST refuse each of the following **before showing anything to the re
 "Unlimited approval" covers at least an ERC-20 `approve` (or `increaseAllowance`) whose amount is `2^256 − 1`, wherever it appears — the top-level call, a leg of a batch, or a call inside a decoded descriptor. [SR-026]
 
 These refusals apply on both paths a Safe transaction reaches a signer — as a Fermion Guard approval and as a Fermion Wallet owner signature. On the owner path there may be no Guard on the Safe, so the signer is the only check. [SR-027]
+
+### Safe batches
+
+Decision record clarification C7. A Safe transaction with `operation = DelegateCall` is accepted only when `to` is the canonical `MultiSendCallOnly` deployment for a supported Safe version (1.3.0, 1.4.1, 1.5.0); the signer carries those addresses itself and never takes them from the host. Its calldata MUST be a well-formed `multiSend(bytes)` whose every leg has `operation = Call`; a leg with any other operation, or calldata that does not parse exactly, is refused. Every leg is decoded and checked under the same rules as a single transaction — refusals 3 and 5, the self-administration screen, the undecodable-call warning — and every leg is shown to the reviewer in full, in order. [SR-042] Module transactions get no such exception. [SR-043]
 
 ### Validity window
 
@@ -155,3 +159,5 @@ A signer's firmware or application is part of the key: any code allowed to run t
 | SR-039 | No host software asks for a recovery phrase; restore happens only on the signer. |
 | SR-040 | Each key records its ML-DSA set and is refused under any other. |
 | SR-041 | A phrase-based signer's app is installed only from a verifying channel, and test builds are distinguishable on the signer. |
+| SR-042 | A delegatecall Safe transaction is accepted only to a canonical MultiSendCallOnly deployment held by the signer, with every leg a Call, each leg checked as a single transaction and shown in full. |
+| SR-043 | Module transactions have no delegatecall exception. |
