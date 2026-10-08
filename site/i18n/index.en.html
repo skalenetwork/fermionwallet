@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -276,46 +276,7 @@ footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
 .foot .blurb { color: var(--text-muted); font-size: 14.5px; margin-top: 12px; max-width: 320px; }
 @media (max-width: 819px) { .foot .first { grid-column: 1 / -1; } }
 .legal { margin-top: 40px; font-size: 13px; color: var(--text-muted); }
-
-.lang-switch { font: inherit; font-size: 14px; color: var(--text); background: var(--bg-card);
-  border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; cursor: pointer; }
-@media (max-width: 600px) { .lang-switch { max-width: 84px; padding: 6px 4px; font-size: 13px; } }
-html[dir="rtl"] .code, html[dir="rtl"] pre, html[dir="rtl"] code { direction: ltr; unicode-bidi: isolate; }
 </style>
-<link rel="alternate" hreflang="en" href="https://skalenetwork.github.io/fermionwallet/">
-<link rel="alternate" hreflang="zh" href="https://skalenetwork.github.io/fermionwallet/zh/">
-<link rel="alternate" hreflang="hi" href="https://skalenetwork.github.io/fermionwallet/hi/">
-<link rel="alternate" hreflang="es" href="https://skalenetwork.github.io/fermionwallet/es/">
-<link rel="alternate" hreflang="ar" href="https://skalenetwork.github.io/fermionwallet/ar/">
-<link rel="alternate" hreflang="fr" href="https://skalenetwork.github.io/fermionwallet/fr/">
-<link rel="alternate" hreflang="bn" href="https://skalenetwork.github.io/fermionwallet/bn/">
-<link rel="alternate" hreflang="pt" href="https://skalenetwork.github.io/fermionwallet/pt/">
-<link rel="alternate" hreflang="x-default" href="https://skalenetwork.github.io/fermionwallet/">
-<script>
-function fermionSetLang(l) {
-  try { localStorage.setItem('fermion-lang', l); } catch (e) {}
-  var p = document.querySelector('.lang-switch').getAttribute('data-prefix');
-  location.href = p + (l === 'en' ? '' : l + '/') + location.hash;
-}
-</script>
-<script>
-/* Language by visitor IP: on the English root page only, look the visitor's country up once
-   (api.country.is, no key, no cookies) and move to that country's language. A choice made
-   with the switcher always wins. Any failure, timeout or unmapped country: stay in English. */
-(function () {
-  var L = ["en", "zh", "hi", "es", "ar", "fr", "bn", "pt"], C = {"AE": "ar", "AO": "pt", "AR": "es", "BD": "bn", "BE": "fr", "BF": "fr", "BH": "ar", "BI": "fr", "BJ": "fr", "BO": "es", "BR": "pt", "CD": "fr", "CF": "fr", "CG": "fr", "CI": "fr", "CL": "es", "CM": "fr", "CN": "zh", "CO": "es", "CR": "es", "CU": "es", "CV": "pt", "DJ": "fr", "DO": "es", "DZ": "ar", "EC": "es", "EG": "ar", "ES": "es", "FR": "fr", "GA": "fr", "GN": "fr", "GQ": "es", "GT": "es", "GW": "pt", "HK": "zh", "HN": "es", "HT": "fr", "IN": "hi", "IQ": "ar", "JO": "ar", "KM": "fr", "KW": "ar", "LB": "ar", "LU": "fr", "LY": "ar", "MA": "ar", "MC": "fr", "MG": "fr", "ML": "fr", "MO": "zh", "MR": "ar", "MX": "es", "MZ": "pt", "NE": "fr", "NI": "es", "OM": "ar", "PA": "es", "PE": "es", "PR": "es", "PS": "ar", "PT": "pt", "PY": "es", "QA": "ar", "RW": "fr", "SA": "ar", "SD": "ar", "SG": "zh", "SN": "fr", "ST": "pt", "SV": "es", "SY": "ar", "TD": "fr", "TG": "fr", "TL": "pt", "TN": "ar", "TW": "zh", "UY": "es", "VE": "es", "YE": "ar"}, saved = null;
-  function go(l) { if (l && l !== 'en' && L.indexOf(l) > 0) location.replace(l + '/' + location.hash); }
-  try { saved = localStorage.getItem('fermion-lang'); } catch (e) {}
-  if (saved) { go(saved); return; }
-  if (!window.fetch) return;
-  var ctl = window.AbortController ? new AbortController() : null;
-  var timer = setTimeout(function () { if (ctl) ctl.abort(); }, 1500);
-  fetch('https://api.country.is/', { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
-    .then(function (r) { return r.json(); })
-    .then(function (j) { clearTimeout(timer); go(C[String(j.country || '').toUpperCase()]); })
-    .catch(function () {});
-})();
-</script>
 </head>
 <body>
 
@@ -327,7 +288,6 @@ function fermionSetLang(l) {
       <a class="hide-sm" href="#security">Security</a>
       <a class="hide-sm" href="#faq">FAQ</a>
       <a class="hide-sm" href="https://github.com/skalenetwork/fermionwallet">GitHub</a>
-      <select class="lang-switch" aria-label="Language" data-prefix="" onchange="fermionSetLang(this.value)"><option value="en" selected>English</option><option value="zh">中文</option><option value="hi">हिन्दी</option><option value="es">Español</option><option value="ar">العربية</option><option value="fr">Français</option><option value="bn">বাংলা</option><option value="pt">Português</option></select>
       <a class="btn primary" href="#early-access">Get early access</a>
     </div>
   </div>

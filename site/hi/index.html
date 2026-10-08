@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="hi" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FermionGuard</title>
+<meta name="description" content="Gnosis Safe के लिए एक क्वांटम-सुरक्षित दूसरा हस्ताक्षर। एक Safe Guard इंस्टॉल करें, अपने मालिक और थ्रेशोल्ड बनाए रखें, और हर ट्रांसफ़र के लिए XMSS से हस्ताक्षरित, ऑन-चेन सत्यापित मंज़ूरी ज़रूरी करें।">
+<meta property="og:title" content="FermionGuard — Gnosis Safe के लिए एक क्वांटम-सुरक्षित दूसरा हस्ताक्षर">
+<meta property="og:description" content="कोई माइग्रेशन नहीं। अपने मालिक और थ्रेशोल्ड बनाए रखें। हर ट्रांसफ़र के लिए एक पोस्ट-क्वांटम मंज़ूरी भी ज़रूरी है, जिसकी जाँच ऑन-चेन होती है।">
+<meta property="og:url" content="https://skalenetwork.github.io/fermionwallet/hi/">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://skalenetwork.github.io/fermionwallet/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../assets/fermionguard-icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f6f7f9;
+  --bg-card: #ffffff;
+  --text: #23272f;
+  --text-muted: #5e687e;
+  --border: #e4e7ec;
+  --accent: #07769b; /* ≥4.5:1 on --bg-soft and --accent-soft (WCAG AA) */
+  --accent-strong: #06627f;
+  --accent-soft: #e6f7ff;
+  --on-accent: #ffffff;
+  --ok: #15803d;
+  --code-bg: #16181d;
+  --code-text: #e6e7eb;
+  --code-comment: #7d8590;
+  --code-key: #c792ea;
+  --code-type: #58c4dc;
+  --shadow: 0 1px 2px rgba(16,24,40,.06), 0 8px 24px rgba(16,24,40,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16181d; --bg-soft: #1d2027; --bg-card: #23272f; --text: #f6f7f9;
+    --text-muted: #99a1b3; --border: #343a46; --accent: #58c4dc; --accent-strong: #8ad7ea;
+    --accent-soft: #1b3440; --on-accent: #0f1115; --ok: #4ade80; --code-bg: #0f1115;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #16181d; --bg-soft: #1d2027; --bg-card: #23272f; --text: #f6f7f9;
+  --text-muted: #99a1b3; --border: #343a46; --accent: #58c4dc; --accent-strong: #8ad7ea;
+  --accent-soft: #1b3440; --on-accent: #0f1115; --ok: #4ade80; --code-bg: #0f1115;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.3);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; scroll-padding-top: 72px; }
+body {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg); color: var(--text);
+  line-height: 1.6; -webkit-font-smoothing: antialiased; overflow-x: hidden;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+img { max-width: 100%; display: block; }
+code, pre { font-family: "JetBrains Mono", ui-monospace, monospace; }
+code { font-size: .92em; }
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px; }
+@media (min-width: 720px) { .wrap { padding: 0 32px; } }
+
+/* ---------- nav ---------- */
+nav {
+  position: sticky; top: 0; z-index: 10;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
+}
+nav .wrap { display: flex; align-items: center; gap: 16px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); font-size: 17px; }
+.brand:hover { text-decoration: none; }
+.brand img { width: 34px; height: 34px; border-radius: 8px; }
+.nav-links { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.nav-links a:not(.btn) {
+  color: var(--text); font-weight: 500; font-size: 15px;
+  padding: 6px 12px; border-radius: 999px;
+}
+.nav-links a:not(.btn):hover { background: var(--bg-soft); text-decoration: none; }
+@media (max-width: 860px) { .nav-links .hide-sm { display: none; } }
+.nav-links .btn { padding: 8px 16px; font-size: 14.5px; margin-left: 6px; }
+
+/* ---------- buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 13px 26px; border-radius: 999px;
+  font-weight: 600; font-size: 16px;
+  border: 1px solid var(--border); color: var(--text); background: var(--bg-card);
+  transition: transform .15s, background .15s, border-color .15s;
+}
+.btn:hover { text-decoration: none; border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { background: var(--accent-strong); transform: translateY(-1px); }
+.cta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 32px; }
+.center .cta { justify-content: center; }
+.reassure {
+  display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 18px;
+  font-size: 14.5px; color: var(--text-muted);
+}
+.center .reassure { justify-content: center; }
+.reassure span::before { content: "✓ "; color: var(--ok); font-weight: 700; }
+
+/* ---------- hero ---------- */
+.hero {
+  padding: 64px 0 40px;
+  background: radial-gradient(ellipse 70% 55% at 50% 0%, var(--accent-soft), transparent 70%);
+}
+.hero-grid { display: grid; gap: 48px; align-items: center; grid-template-columns: 1fr; }
+@media (min-width: 1000px) { .hero-grid { grid-template-columns: 1.05fr 1fr; } }
+.pill-tag {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 600; color: var(--accent);
+  background: var(--accent-soft); padding: 6px 14px; border-radius: 999px;
+}
+.hero h1 {
+  font-size: clamp(38px, 6vw, 64px);
+  font-weight: 800; letter-spacing: -0.03em; line-height: 1.05;
+  margin-top: 20px;
+}
+.hero h1 em { font-style: normal; color: var(--accent); }
+.hero .sub { font-size: clamp(18px, 2.2vw, 21px); color: var(--text-muted); margin-top: 20px; max-width: 560px; }
+.hero-shot { border-radius: 16px; overflow: hidden; border: 1px solid var(--border); box-shadow: var(--shadow); background: #0c1626; }
+
+/* ---------- trust bar ---------- */
+.trust { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 22px 0; }
+.trust .wrap { display: flex; flex-wrap: wrap; gap: 10px 32px; justify-content: center; align-items: center; }
+.trust span { font-size: 14.5px; font-weight: 600; color: var(--text-muted); }
+.trust b { color: var(--text); font-weight: 700; }
+
+/* ---------- sections ---------- */
+section { padding: 88px 0; border-top: 1px solid var(--border); }
+section.soft { background: var(--bg-soft); }
+.eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: 13px; font-weight: 700; color: var(--accent); }
+h2 { font-size: clamp(30px, 4.5vw, 46px); font-weight: 800; letter-spacing: -0.025em; line-height: 1.1; margin-top: 8px; }
+.lead { font-size: 19px; color: var(--text-muted); max-width: 720px; margin-top: 16px; }
+.center { text-align: center; }
+.center .lead { margin-left: auto; margin-right: auto; }
+
+.split { display: grid; gap: 48px; align-items: center; grid-template-columns: 1fr; margin-top: 56px; }
+@media (min-width: 960px) { .split { grid-template-columns: 1fr 1fr; } }
+.split > * { min-width: 0; }
+.split.flip > :first-child { order: 2; }
+@media (max-width: 959px) { .split.flip > :first-child { order: 0; } }
+.split h3 { font-size: 26px; font-weight: 700; letter-spacing: -0.015em; line-height: 1.2; }
+.split p { color: var(--text-muted); font-size: 17px; margin-top: 14px; }
+.split ul { margin-top: 16px; list-style: none; }
+.split li { padding: 6px 0 6px 28px; position: relative; color: var(--text-muted); }
+.split li::before { content: ""; position: absolute; left: 4px; top: 14px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.split li strong { color: var(--text); }
+
+.shot { border-radius: 16px; overflow: hidden; border: 1px solid var(--border); box-shadow: var(--shadow); background: #0c1626; }
+.caption { font-size: 14px; color: var(--text-muted); margin-top: 10px; text-align: center; }
+/* The demo recording: its captions are baked in at 900px, so never scale it up,
+   and keep it centred with room for the narration line under it. */
+.demo-shot { margin-top: 48px; }
+.demo-shot > a { display: block; }  /* the image link only — not the caption's links */
+.demo-shot .shot { display: block; width: 100%; max-width: 900px; height: auto; margin: 0 auto; }
+.demo-shot .caption { max-width: 760px; margin-left: auto; margin-right: auto; }
+
+/* ---------- cards ---------- */
+.grid3 { display: grid; gap: 20px; margin-top: 48px; grid-template-columns: 1fr; }
+@media (min-width: 720px) { .grid3 { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1020px) { .grid3 { grid-template-columns: repeat(3, 1fr); } }
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 26px; }
+.card .icon { width: 42px; height: 42px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; margin-bottom: 16px; }
+.card h3 { font-size: 18px; font-weight: 700; }
+.card p { color: var(--text-muted); margin-top: 8px; font-size: 15.5px; }
+.card ul { margin-top: 12px; list-style: none; }
+.card li { font-size: 15px; color: var(--text-muted); padding: 4px 0 4px 22px; position: relative; }
+.card li::before { content: "✓"; position: absolute; left: 0; color: var(--ok); font-weight: 700; }
+
+/* ---------- setup steps ---------- */
+.setup { display: grid; gap: 16px; margin-top: 48px; grid-template-columns: 1fr; counter-reset: s; }
+@media (min-width: 720px) { .setup { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1020px) { .setup { grid-template-columns: repeat(4, 1fr); } }
+.setup .card { counter-increment: s; }
+.setup .card::before {
+  content: counter(s); display: grid; place-items: center;
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--accent); color: var(--on-accent); font-weight: 700; margin-bottom: 14px;
+}
+.time-badge {
+  display: inline-block; margin-top: 28px; font-weight: 600;
+  padding: 8px 18px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-card);
+}
+
+/* ---------- 2 of 2 ---------- */
+.twofactor { display: grid; gap: 20px; grid-template-columns: 1fr; margin-top: 48px; }
+@media (min-width: 820px) { .twofactor { grid-template-columns: 1fr 1fr; } }
+.factor { border-radius: 16px; padding: 28px; border: 1px solid var(--border); background: var(--bg-card); }
+.factor .num { font-size: 13px; font-weight: 700; letter-spacing: .08em; color: var(--text-muted); text-transform: uppercase; }
+.factor h3 { font-size: 22px; font-weight: 700; margin-top: 6px; }
+.factor p { color: var(--text-muted); margin-top: 10px; }
+.factor.q { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* ---------- flow ---------- */
+.flow { display: grid; gap: 14px; margin-top: 48px; grid-template-columns: 1fr; counter-reset: step; }
+@media (min-width: 900px) { .flow { grid-template-columns: repeat(5, 1fr); } }
+.step { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; counter-increment: step; }
+.step::before {
+  content: counter(step); display: grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--accent); color: var(--on-accent); font-weight: 700; font-size: 14px; margin-bottom: 12px;
+}
+.step h3 { font-size: 16px; font-weight: 700; }
+.step p { font-size: 14.5px; color: var(--text-muted); margin-top: 6px; }
+
+/* ---------- code ---------- */
+.code {
+  background: var(--code-bg); color: var(--code-text);
+  border-radius: 16px; padding: 22px 24px;
+  font-size: 13.5px; line-height: 1.65; overflow-x: auto; box-shadow: var(--shadow);
+}
+.code .c { color: var(--code-comment); }
+.code .k { color: var(--code-key); }
+.code .t { color: var(--code-type); }
+.code-title { font-family: "JetBrains Mono", monospace; font-size: 12.5px; color: var(--text-muted); margin-bottom: 8px; }
+
+/* ---------- stats ---------- */
+.stats { display: grid; gap: 20px; grid-template-columns: repeat(2, 1fr); margin-top: 40px; }
+@media (min-width: 820px) { .stats { grid-template-columns: repeat(4, 1fr); } }
+.stat { text-align: center; padding: 20px 8px; }
+.stat .v { font-size: clamp(26px, 4vw, 38px); font-weight: 800; letter-spacing: -0.02em; color: var(--accent); }
+.stat .l { font-size: 14.5px; color: var(--text-muted); margin-top: 4px; }
+
+/* ---------- status ---------- */
+.status { margin-top: 40px; border: 1px solid var(--border); border-radius: 16px; overflow: hidden; background: var(--bg-card); }
+.status-row { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; padding: 16px 22px; border-top: 1px solid var(--border); }
+.status-row:first-child { border-top: none; }
+.status-row .name { font-weight: 600; }
+.status-row .desc { font-size: 14.5px; color: var(--text-muted); }
+.tag { font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 999px; white-space: nowrap; }
+.tag.done { background: #dcfce7; color: #166534; }
+.tag.next { background: var(--accent-soft); color: var(--accent); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tag.done { background: #14361f; color: #86efac; } }
+:root[data-theme="dark"] .tag.done { background: #14361f; color: #86efac; }
+
+/* ---------- faq ---------- */
+.faq { max-width: 820px; margin: 40px auto 0; }
+.faq details { border-bottom: 1px solid var(--border); }
+.faq summary {
+  cursor: pointer; list-style: none; padding: 20px 40px 20px 0; position: relative;
+  font-weight: 600; font-size: 17.5px;
+}
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after {
+  content: "+"; position: absolute; right: 6px; top: 16px;
+  font-size: 24px; font-weight: 400; color: var(--accent); transition: transform .2s;
+}
+.faq details[open] summary::after { transform: rotate(45deg); }
+.faq details p { color: var(--text-muted); padding: 0 0 20px; font-size: 16px; }
+
+/* ---------- final cta ---------- */
+.final { padding: 96px 0; background: radial-gradient(ellipse 70% 60% at 50% 100%, var(--accent-soft), transparent 70%), var(--bg-soft); }
+.final h2 { font-size: clamp(34px, 5.5vw, 56px); }
+.next-steps { display: grid; gap: 16px; grid-template-columns: 1fr; max-width: 900px; margin: 40px auto 0; text-align: left; }
+@media (min-width: 820px) { .next-steps { grid-template-columns: repeat(3, 1fr); } }
+.next-steps .card h3 { font-size: 16px; }
+.fine { font-size: 13.5px; color: var(--text-muted); margin-top: 14px; }
+
+/* ---------- footer ---------- */
+footer { border-top: 1px solid var(--border); padding: 48px 0 64px; }
+.foot { display: grid; gap: 32px; grid-template-columns: repeat(2, 1fr); }
+@media (min-width: 820px) { .foot { grid-template-columns: 2fr 1fr 1fr 1fr; } }
+.foot h2 { font-size: 14px; font-weight: 700; letter-spacing: normal; line-height: 1.6; margin: 0 0 12px; }
+.foot a:not(.brand) { display: block; color: var(--text-muted); font-size: 14.5px; padding: 3px 0; }
+.foot a:not(.brand):hover { color: var(--text); }
+.foot .blurb { color: var(--text-muted); font-size: 14.5px; margin-top: 12px; max-width: 320px; }
+@media (max-width: 819px) { .foot .first { grid-column: 1 / -1; } }
+.legal { margin-top: 40px; font-size: 13px; color: var(--text-muted); }
+
+.lang-switch { font: inherit; font-size: 14px; color: var(--text); background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; cursor: pointer; }
+@media (max-width: 600px) { .lang-switch { max-width: 84px; padding: 6px 4px; font-size: 13px; } }
+html[dir="rtl"] .code, html[dir="rtl"] pre, html[dir="rtl"] code { direction: ltr; unicode-bidi: isolate; }
+</style>
+<link rel="alternate" hreflang="en" href="https://skalenetwork.github.io/fermionwallet/">
+<link rel="alternate" hreflang="zh" href="https://skalenetwork.github.io/fermionwallet/zh/">
+<link rel="alternate" hreflang="hi" href="https://skalenetwork.github.io/fermionwallet/hi/">
+<link rel="alternate" hreflang="es" href="https://skalenetwork.github.io/fermionwallet/es/">
+<link rel="alternate" hreflang="ar" href="https://skalenetwork.github.io/fermionwallet/ar/">
+<link rel="alternate" hreflang="fr" href="https://skalenetwork.github.io/fermionwallet/fr/">
+<link rel="alternate" hreflang="bn" href="https://skalenetwork.github.io/fermionwallet/bn/">
+<link rel="alternate" hreflang="pt" href="https://skalenetwork.github.io/fermionwallet/pt/">
+<link rel="alternate" hreflang="x-default" href="https://skalenetwork.github.io/fermionwallet/">
+<script>
+function fermionSetLang(l) {
+  try { localStorage.setItem('fermion-lang', l); } catch (e) {}
+  var p = document.querySelector('.lang-switch').getAttribute('data-prefix');
+  location.href = p + (l === 'en' ? '' : l + '/') + location.hash;
+}
+</script>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="../assets/fermionguard-icon.svg" alt="">FermionGuard</a>
+    <div class="nav-links">
+      <a class="hide-sm" href="#how">यह कैसे काम करता है</a>
+      <a class="hide-sm" href="#security">सुरक्षा</a>
+      <a class="hide-sm" href="#faq">सवाल-जवाब</a>
+      <a class="hide-sm" href="https://github.com/skalenetwork/fermionwallet">GitHub</a>
+      <select class="lang-switch" aria-label="Language" data-prefix="../" onchange="fermionSetLang(this.value)"><option value="en">English</option><option value="zh">中文</option><option value="hi" selected>हिन्दी</option><option value="es">Español</option><option value="ar">العربية</option><option value="fr">Français</option><option value="bn">বাংলা</option><option value="pt">Português</option></select>
+      <a class="btn primary" href="#early-access">शुरुआती एक्सेस पाएँ</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<header class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="pill-tag">Gnosis Safe पर संपत्ति रखने वाली टीमों के लिए</span>
+      <h1>आपके Safe के लिए एक <em>क्वांटम-सुरक्षित</em> दूसरा हस्ताक्षर</h1>
+      <p class="sub">बस एक Safe Guard इंस्टॉल करें। आपके मालिक, थ्रेशोल्ड और इतिहास बिल्कुल वैसे ही रहते हैं — लेकिन हर ट्रांसफ़र के लिए एक पोस्ट-क्वांटम मंज़ूरी भी ज़रूरी होती है, जिसकी जाँच ऑन-चेन होती है।</p>
+      <div class="cta">
+        <a class="btn primary" href="#early-access">शुरुआती एक्सेस पाएँ</a>
+        <a class="btn" href="#how">देखें यह कैसे काम करता है</a>
+      </div>
+      <div class="reassure">
+        <span>कोई माइग्रेशन नहीं</span>
+        <span>ओपन सोर्स (MIT / LGPL-3.0)</span>
+        <span>NIST SP 800-208 हस्ताक्षर</span>
+      </div>
+    </div>
+    <div>
+      <img class="hero-shot" src="../assets/ui/ui-queue.svg" alt="FermionGuard Safe App: लेन-देन की कतार, जिसमें हर लंबित ट्रांसफ़र अपनी क्वांटम-अनुमति की स्थिति दिखाता है">
+    </div>
+  </div>
+</header>
+
+<div class="trust">
+  <div class="wrap">
+    <span><b>Safe Guard</b> पर आधारित</span>
+    <span><b>XMSS</b> · RFC 8391</span>
+    <span><b>NIST</b> SP 800-208</span>
+    <span><b>Ledger</b> पर कुंजियाँ</span>
+    <span><b>OpenZeppelin</b> के बुनियादी घटक</span>
+    <span><b>ओपन सोर्स</b> · MIT / LGPL-3.0</span>
+  </div>
+</div>
+
+<!-- ============ DEMO ============ -->
+<section id="demo">
+  <div class="wrap center">
+    <div class="eyebrow">इसे काम करते देखें</div>
+    <h2>250,000 dUSD का एक ट्रांसफ़र,<br>पूरी तरह हस्ताक्षरित — फिर भी रुका हुआ</h2>
+    <p class="lead">एक मालिक असली Safe{Wallet} में ट्रांसफ़र पर हस्ताक्षर करता है। वह चलेगा नहीं। क्वांटम एडमिनिस्ट्रेटर डिवाइस पर भुगतान पढ़ता है — टोकन, राशि, प्राप्तकर्ता, वैधता अवधि, Safe और चेन — और एक बार इस्तेमाल होने वाले पोस्ट-क्वांटम हस्ताक्षर से उसे मंज़ूरी देता है। तभी पैसा आगे बढ़ता है।</p>
+  </div>
+  <div class="wrap demo-shot">
+    <a href="../assets/fermionguard-demo.gif" aria-label="रिकॉर्डिंग को पूरे आकार में खोलें"><img class="shot" src="../assets/fermionguard-demo.gif" alt="250,000 dUSD का एक ट्रांसफ़र Safe{Wallet} में पूरी तरह हस्ताक्षरित है फिर भी विफल होता है; क्वांटम एडमिनिस्ट्रेटर एक सिम्युलेटेड Ledger पर एक बार इस्तेमाल होने वाले XMSS हस्ताक्षर से उसे मंज़ूरी देता है; इसके बाद वही ट्रांसफ़र चल जाता है" width="900" height="751" loading="lazy"></a>
+    <p class="caption">लोकल डेमो सेटअप पर शुरू से अंत तक रिकॉर्ड किया गया — एक असली Safe, असली Safe{Wallet} और ऑन-चेन नियम लागू करता Guard। डिवाइस <b>सिम्युलेटेड</b> Ledger है, हार्डवेयर नहीं — Ledger ऐप कहाँ तक पहुँचा है, यह <a href="#status">स्थिति</a> में देखें।<br><a href="../assets/fermionguard-demo.gif">पूरे आकार में खोलें</a>&nbsp;· <a href="https://github.com/skalenetwork/fermionwallet/tree/main/demo/wallet">ख़ुद चलाकर देखें →</a></p>
+  </div>
+</section>
+
+<!-- ============ PROBLEM ============ -->
+<section>
+  <div class="wrap center">
+    <div class="eyebrow">अभी क्यों</div>
+    <h2>ज़्यादा हस्ताक्षरकर्ता किसी मल्टीसिग को<br>क्वांटम-सुरक्षित नहीं बनाते</h2>
+    <p class="lead">हर Safe मालिक ECDSA से हस्ताक्षर करता है। पर्याप्त बड़ा क्वांटम कंप्यूटर ECDSA को तोड़ देता है — आपके सभी हस्ताक्षरकर्ताओं के लिए एक साथ। जिन संपत्तियों को आप दस साल तक रखते हैं, उन्हें ऐसे हस्ताक्षर की ज़रूरत है जो उस दिन के बाद भी टिका रहे।</p>
+  </div>
+  <div class="wrap">
+    <div class="grid3">
+      <div class="card">
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><path d="M19 8v6M22 11h-6"/></svg></div>
+        <h3>मल्टीसिग शासन व्यवस्था है</h3>
+        <p>यह तय करता है कि <em>कौन</em> हस्ताक्षर कर सकता है। जब हस्ताक्षर योजना ही टूट जाए, तो यह कुछ नहीं कर सकता।</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+        <h3>हार्डवेयर कुंजियाँ चोरी रोकती हैं</h3>
+        <p>वे उसी कर्व पर जाली हस्ताक्षर को नहीं रोकतीं — कुंजी को डिवाइस से बाहर जाने की ज़रूरत ही नहीं पड़ती।</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h7"/></svg></div>
+        <h3>ऑफ़-चेन नीति बस एक सलाह है</h3>
+        <p>जिस पॉलिसी इंजन से चेन पूछती ही नहीं, उसे दरकिनार किया जा सकता है। आख़िरी फ़ैसला ऑन-चेन होना चाहिए।</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ HOW IT WORKS ============ -->
+<section class="soft" id="how">
+  <div class="wrap center">
+    <div class="eyebrow">यह कैसे काम करता है</div>
+    <h2>दो स्वतंत्र हस्ताक्षर।<br>एक ही निष्पादन मार्ग।</h2>
+    <p class="lead">FermionGuard एक Safe Guard है — Safe का आधिकारिक प्री-एक्ज़िक्यूशन हुक। मालिक आज की तरह ही हस्ताक्षर करते रहते हैं। Guard लेन-देन को तभी चलने देता है जब उसके साथ मेल खाती पोस्ट-क्वांटम मंज़ूरी भी हो।</p>
+  </div>
+  <div class="wrap">
+    <div class="twofactor">
+      <div class="factor">
+        <div class="num">हस्ताक्षर 1 — कोई बदलाव नहीं</div>
+        <h3>आपके Safe के मालिक</h3>
+        <p>वही मालिक, वही थ्रेशोल्ड, वही हार्डवेयर वॉलेट। बेईमान ऑपरेटरों, खोए हुए डिवाइस और अंदरूनी चूकों से बचाता है।</p>
+      </div>
+      <div class="factor q">
+        <div class="num">हस्ताक्षर 2 — नया जोड़ा गया</div>
+        <h3>एक पोस्ट-क्वांटम मंज़ूरी</h3>
+        <p>एक नामित क्वांटम एडमिनिस्ट्रेटर Ledger पर XMSS कुंजी से हर ट्रांसफ़र को मंज़ूरी देता है। समझौता किए गए हस्ताक्षरकर्ताओं, दोबारा इस्तेमाल की गई मंज़ूरियों, अलाउंस की चोरी — और भविष्य के क्वांटम हमलों से बचाता है।</p>
+      </div>
+    </div>
+
+    <div class="flow">
+      <div class="step"><h3>कतार</h3><p>एक ऑपरेटर Safe{Wallet} में ट्रांसफ़र कतार में डालता है। मालिक हमेशा की तरह हस्ताक्षर करते हैं।</p></div>
+      <div class="step"><h3>चिह्न</h3><p>FermionGuard Safe App उसे 🟡 क्वांटम अनुमति ज़रूरी के रूप में चिह्नित करता है।</p></div>
+      <div class="step"><h3>समीक्षा</h3><p>एडमिनिस्ट्रेटर दो स्वतंत्र स्रोतों से डिकोड किए गए विवरण की समीक्षा करता है।</p></div>
+      <div class="step"><h3>मंज़ूरी</h3><p>Ledger लागू होने वाला हर फ़ील्ड दिखाता है। मंज़ूरी देने के लिए दबाकर रखें।</p></div>
+      <div class="step"><h3>निष्पादन</h3><p>पंक्ति 🟢 हो जाती है। कोई भी इसे चला सकता है; Guard मंज़ूरी की जाँच करके उसे इस्तेमाल कर लेता है।</p></div>
+    </div>
+
+    <div class="split">
+      <div>
+        <img class="shot" src="../assets/ui/ui-approve.svg" alt="हस्ताक्षर से पहले की समीक्षा स्क्रीन, जिसमें डिकोड किया गया टोकन, राशि, प्राप्तकर्ता, nonce और वैधता अवधि दिखती है">
+        <p class="caption">एडमिनिस्ट्रेटर ठीक-ठीक देखता है कि वह किस चीज़ को मंज़ूरी दे रहा है</p>
+      </div>
+      <div>
+        <h3>मंज़ूरियाँ इरादों से नहीं, सटीक लेन-देन से मेल खाती हैं</h3>
+        <p>एक मंज़ूरी में Safe, चेन, टोकन, प्राप्तकर्ता, राशि और एक वैधता अवधि दर्ज होती है। अगर बाद में कोई कतार वाले लेन-देन में बदलाव करता है, तो मंज़ूरी मेल नहीं खाती और Guard उसे ठुकरा देता है।</p>
+        <ul>
+          <li><strong>समय-सीमित:</strong> हर मंज़ूरी आपकी चुनी हुई अवधि तक ही मान्य रहती है।</li>
+          <li><strong>एक बार उपयोग:</strong> लेन-देन चलते ही इस्तेमाल हो जाती है।</li>
+          <li><strong>दो बार जाँची गई:</strong> हस्ताक्षर खुलने से पहले विवरण का दो स्वतंत्र डेटा स्रोतों पर मेल खाना ज़रूरी है।</li>
+          <li><strong>दिखने वाले इनकार:</strong> इनकार भी मंज़ूरियों की तरह हस्ताक्षरित और दर्ज होते हैं।</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="split flip">
+      <div>
+        <img class="shot" src="../assets/ui/ledger/ledger-sign-1.svg" alt="Ledger डिवाइस की स्क्रीन, जिनमें मंज़ूरी का शीर्षक, राशि, प्राप्तकर्ता का पूरा पता और मंज़ूर/अस्वीकार करने का विकल्प दिखता है">
+        <p class="caption">बिना देखे कोई हस्ताक्षर नहीं — डिवाइस वह हर फ़ील्ड दिखाता है जिसे Guard लागू करता है</p>
+      </div>
+      <div>
+        <h3>आपकी टीम जिन टूल्स का पहले से इस्तेमाल करती है, उन्हीं के अंदर काम करता है</h3>
+        <p>FermionGuard, Safe{Wallet} के अंदर एक Safe App और एडमिनिस्ट्रेटर के लिए एक Ledger ऐप के रूप में आता है। जोखिम संकेत किसी के हस्ताक्षर करने से पहले ही नए प्राप्तकर्ताओं, असामान्य राशियों और उन लेन-देनों को उजागर कर देते हैं जिन्हें Guard वैसे भी ठुकरा देता।</p>
+        <p>वेतन भुगतान? 100 तक ट्रांसफ़र वाले पूरे बैच के लिए एक ही मंज़ूरी चाहिए।</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SETUP ============ -->
+<section>
+  <div class="wrap center">
+    <div class="eyebrow">सेटअप</div>
+    <h2>इसे अपने मौजूदा Safe में जोड़ें</h2>
+    <p class="lead">न नया वॉलेट, न नई चेन, न संपत्ति का माइग्रेशन। चार कदम, जिन्हें आपके मौजूदा मालिक सामान्य Safe लेन-देनों से पूरा करते हैं।</p>
+  </div>
+  <div class="wrap">
+    <div class="setup">
+      <div class="card"><h3>Safe App खोलें</h3><p>Safe{Wallet} में FermionGuard जोड़ें। कुछ भी बदलने से पहले यह आपके Safe का संस्करण और मॉड्यूल जाँचता है।</p></div>
+      <div class="card"><h3>कुंजी समारोह करें</h3><p>एडमिनिस्ट्रेटर की कुंजी Ledger के अंदर बनती है। मालिक उसकी पुष्टि करते हैं और उसके पंजीकरण पर साथ में हस्ताक्षर करते हैं।</p></div>
+      <div class="card"><h3>Guard चालू करें</h3><p>मालिक किसी भी दूसरे Safe लेन-देन की तरह एक <code>setGuard</code> लेन-देन पर हस्ताक्षर करते हैं।</p></div>
+      <div class="card"><h3>एक टेस्ट ट्रांसफ़र भेजें</h3><p>बहुत छोटी राशि का एक ट्रांसफ़र पूरी प्रक्रिया से गुज़रता है। उसके पूरा होते ही आपका डैशबोर्ड <strong>सुरक्षित ✓</strong> दिखाता है।</p></div>
+    </div>
+    <div class="center"><span class="time-badge">⏱ मालिक उपलब्ध हों तो लगभग 30 मिनट</span></div>
+  </div>
+</section>
+
+<!-- ============ WHO ============ -->
+<section class="soft">
+  <div class="wrap center">
+    <div class="eyebrow">यह किसके लिए है</div>
+    <h2>उन संपत्तियों के लिए बना जिन्हें दस साल तक सुरक्षित रहना है</h2>
+  </div>
+  <div class="wrap">
+    <div class="grid3">
+      <div class="card">
+        <h3>🏦 कस्टोडियन और बैंक</h3>
+        <p>ग्राहकों की संपत्ति की कस्टडी में एक स्वतंत्र, मानक-आधारित क्रिप्टोग्राफ़िक नियंत्रण जोड़ें।</p>
+        <ul><li>NIST द्वारा स्वीकृत हस्ताक्षर योजना</li><li>अनुपालन के लिए निर्यात योग्य ऑडिट लॉग</li><li>कुंजी समारोह के प्रिंट करने योग्य रिकॉर्ड</li></ul>
+      </div>
+      <div class="card">
+        <h3>🏢 कॉर्पोरेट ट्रेज़री</h3>
+        <p>अपनी मंज़ूरी प्रक्रिया बनाए रखें, और ऐसा बनाएँ कि एक समझौता किया गया हस्ताक्षरकर्ता अकेले पैसा न निकाल सके।</p>
+        <ul><li>मालिक आज की तरह हस्ताक्षर करते रहते हैं</li><li>हर वेतन बैच के लिए एक मंज़ूरी</li><li>असामान्य ट्रांसफ़र पर जोखिम संकेत</li></ul>
+      </div>
+      <div class="card">
+        <h3>🏛️ फ़ाउंडेशन और DAO</h3>
+        <p>सबसे अहम कदमों — शासन से जुड़े बदलावों — पर एक सार्वजनिक, समय-बद्ध जाँच लगाएँ।</p>
+        <ul><li>एडमिन कार्रवाइयों पर 48 घंटे का सार्वजनिक टाइमलॉक</li><li>मालिक बिना क्वांटम मंज़ूरी के इसे रद्द कर सकते हैं</li><li>ओपन सोर्स, ऑन-चेन सत्यापन योग्य</li></ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SECURITY ============ -->
+<section id="security">
+  <div class="wrap center">
+    <div class="eyebrow">सुरक्षा</div>
+    <h2>दरकिनार करना मुश्किल।<br>जाम करना नामुमकिन।</h2>
+    <p class="lead">Guard ऑन-चेन आख़िरी वीटो है — और इसे ऐसे बनाया गया है कि खोई हुई कुंजी या कोई बग कभी आपके फ़ंड को फ़्रीज़ न कर सके।</p>
+  </div>
+  <div class="wrap">
+    <div class="grid3">
+      <div class="card">
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></div>
+        <h3>बाहर निकलने का रास्ता हमेशा है</h3>
+        <p>Ledger खो गया? 14 दिनों की सार्वजनिक उलटी गिनती के बाद मालिक अकेले ही Guard हटा सकते हैं। ख़राब डिवाइस कभी Safe को लॉक नहीं करता।</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <h3>शासन के बदलाव सबको दिखते हैं</h3>
+        <p>Guard हटाने या मालिक बदलने के लिए एक मंज़ूरी <em>और</em> 48 घंटे की सार्वजनिक उलटी गिनती ज़रूरी है, जिसकी सूचना हर मालिक को मिलती है।</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z"/></svg></div>
+        <h3>गड़बड़ी पर बंद</h3>
+        <p>अपग्रेड न होने वाला Guard, जिसमें घटनाओं के लिए सब कुछ तुरंत रोकने वाला पॉज़ है। कोई एडमिन बैकडोर नहीं।</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M9 9h6v6H9z"/></svg></div>
+        <h3>कोई चोर दरवाज़ा नहीं</h3>
+        <p>Safe मॉड्यूल guards को दरकिनार कर देते हैं, इसलिए नामांकन के लिए कोई मॉड्यूल चालू नहीं होना चाहिए — या Safe 1.5+ पर एक जोड़ा हुआ module guard होना चाहिए।</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7 9 18l-5-5"/></svg></div>
+        <h3>अलाउंस की चोरी नहीं</h3>
+        <p><code>approve</code>, <code>permit</code> और <code>transferFrom</code> सीधे ठुकरा दिए जाते हैं, और बैचों की ऑन-चेन हर हिस्से की अलग जाँच होती है।</p>
+      </div>
+      <div class="card">
+        <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 12h18"/></svg></div>
+        <h3>कुंजियाँ जिन्हें बदला नहीं जा सकता</h3>
+        <p>मालिक अपने-अपने डिवाइस पर कुंजी के पूरे सार्वजनिक रूट पर साथ में हस्ताक्षर करते हैं, इसलिए कोई हैक की गई वेबसाइट उसकी जगह दूसरी कुंजी नहीं रख सकती।</p>
+      </div>
+    </div>
+
+    <div class="split flip">
+      <div>
+        <img class="shot" src="../assets/ui/ui-admin.svg" alt="प्रशासनिक कार्रवाई की स्क्रीन, जिसमें 48 घंटे की उलटी गिनती और रद्द करने का बटन है">
+        <p class="caption">शासन के बदलाव धीमे और सार्वजनिक होते हैं; रद्द करना तेज़ है</p>
+      </div>
+      <div>
+        <h3>चुराई गई क्वांटम कुंजी भी चुपचाप क़ब्ज़ा नहीं कर सकती</h3>
+        <p>एडमिनिस्ट्रेटर का Ledger हाथ में होने पर भी हमलावर आपके मालिकों के हस्ताक्षर के बिना पैसा नहीं निकाल सकता, और 48 घंटे की उस सार्वजनिक उलटी गिनती के बिना Guard नहीं हटा सकता जिसे आपके मालिक रद्द कर सकते हैं।</p>
+        <p><a href="https://github.com/skalenetwork/fermionwallet/blob/main/threat-model.md">ख़तरा मॉडल पढ़ें →</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ON-CHAIN PQ ============ -->
+<section class="soft">
+  <div class="wrap center">
+    <div class="eyebrow">आपके इंजीनियरों के लिए</div>
+    <h2>पोस्ट-क्वांटम हस्ताक्षर,<br>EVM में सत्यापित</h2>
+    <p class="lead">XMSS पूरी तरह हैशिंग पर आधारित है, इसलिए चेन इसकी सीधी जाँच करती है — न कोई ओरेकल, न कोई भरोसेमंद सर्वर। सत्यापक RFC 8391 का स्वतंत्र रूप से लिखा गया क्रियान्वयन है, और हम ठीक-ठीक बताते हैं कि उसका प्रमाण कहाँ तक पहुँचता है: RFC का हर मूल घटक, और ग़लत इनपुट को ठुकराने वाली जाँचें, RFC के पंक्ति-दर-पंक्ति लिप्यंतरण के सामने सभी इनपुट के लिए <strong>मशीन से जाँची गई</strong> हैं। इन्हें उस रूट तुलना में जोड़ना, जो आख़िर में किसी सही बने हस्ताक्षर को स्वीकार या अस्वीकार करती है, हाथ से तर्क द्वारा सिद्ध किया गया है, ट्री ऊँचाई 2 पर प्रतीकात्मक रूप से जाँचा गया है और h = 4, 10 और 20 पर RFC वेक्टरों से तय किया गया है।</p>
+  </div>
+  <div class="wrap">
+    <div class="stats">
+      <div class="stat"><div class="v">745,003</div><div class="l">गैस प्रति सत्यापन, h = 20 पर मापी गई</div></div>
+      <div class="stat"><div class="v">~1M</div><div class="l">प्रति कुंजी मंज़ूरियाँ (2<sup>20</sup> लीफ़)</div></div>
+      <div class="stat"><div class="v">11</div><div class="l">Halmos लेमा जो सत्यापक को RFC 8391 के सामने जाँचते हैं, इनमें से दस सभी इनपुट के लिए</div></div>
+      <div class="stat"><div class="v">MIT</div><div class="l">XMSS सत्यापक, RFC से लिखा गया, कोई उधार का कोड नहीं</div></div>
+    </div>
+    <div class="split">
+      <div>
+        <h3>लीफ़ का दोबारा इस्तेमाल बनावट से ही असंभव है</h3>
+        <p>XMSS स्टेटफ़ुल है: एक बार उपयोग होने वाले लीफ़ को दोबारा इस्तेमाल करने से हमलावर जाली हस्ताक्षर बना सकता है। Ledger हस्ताक्षर जारी करने से पहले अपना काउंटर दर्ज कर देता है, और कॉन्ट्रैक्ट इस्तेमाल हुए लीफ़ का बिटमैप रखता है जो किसी भी दोबारा इस्तेमाल को पलट देता है।</p>
+        <p><a href="https://github.com/skalenetwork/fermionwallet/tree/main/contracts">कॉन्ट्रैक्ट देखें →</a> · <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionguard-module.md">Guard विनिर्देश →</a> · <a href="https://github.com/skalenetwork/xmss-solidity/blob/main/PROOF.md">औपचारिक प्रमाण →</a></p>
+      </div>
+      <div>
+        <div class="code-title">contracts/src/QuantumKeyRegistry.sol (सरल रूप)</div>
+<pre class="code"><span class="k">function</span> _verifyAndConsumeXmss(
+    <span class="t">bytes32</span> keyId,
+    <span class="t">bytes32</span> digest,
+    <span class="t">bytes</span> <span class="k">calldata</span> xmssSignature
+) <span class="k">internal</span> {
+    <span class="t">XMSS.Signature</span> <span class="k">memory</span> sig = abi.decode(xmssSignature, (<span class="t">XMSS.Signature</span>));
+    <span class="t">BitMaps.BitMap</span> <span class="k">storage</span> used = _usedLeaves[xmssRoot(keyId)];  <span class="c">// per KEY, not per registration</span>
+    <span class="k">if</span> (used.get(sig.leafIdx)) <span class="k">revert</span> LeafAlreadyUsed(keyId, sig.leafIdx);
+
+    <span class="k">if</span> (!XMSS.verify(digest, sig, publicKey(keyId), treeHeight(keyId)))
+        <span class="k">revert</span> InvalidXmssSignature();  <span class="c">// whole tx rolls back</span>
+
+    used.set(sig.leafIdx);                <span class="c">// burn the one-time leaf</span>
+    <span class="k">emit</span> LeafConsumed(keyId, sig.leafIdx, digest);
+}</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ STATUS ============ -->
+<section id="status">
+  <div class="wrap center">
+    <div class="eyebrow">हम कहाँ हैं</div>
+    <h2>खुले में बनाया जा रहा</h2>
+    <p class="lead">डिज़ाइन और पोस्ट-क्वांटम सत्यापक आज सार्वजनिक हैं। शुरुआती एक्सेस वाली टीमें बाक़ी को आकार देने में मदद करती हैं।</p>
+  </div>
+  <div class="wrap">
+    <div class="status">
+      <div class="status-row">
+        <div><div class="name">XMSS सत्यापक (Solidity)</div><div class="desc">ऑन-चेन लीफ़ उपयोग वाला RFC 8391 सत्यापक (कुंजी रजिस्ट्री में इस्तेमाल हुए लीफ़ का बिटमैप), Foundry टेस्ट और गैस बेंचमार्क</div></div>
+        <span class="tag done">लागू</span>
+      </div>
+      <div class="status-row">
+        <div><div class="name">विनिर्देश और ख़तरा मॉडल</div><div class="desc">Guard, कुंजी रजिस्ट्री, प्री-अप्रूवल इंजन, सेवा, हार्डवेयर नीति</div></div>
+        <span class="tag done">प्रकाशित</span>
+      </div>
+      <div class="status-row">
+        <div><div class="name">Safe App और Ledger स्क्रीन</div><div class="desc">कतार, मंज़ूरी, बैच, कुंजी समारोह, इनकार, आपातकाल और डिवाइस फ़्लो</div></div>
+        <span class="tag done">डिज़ाइन किया गया</span>
+      </div>
+      <div class="status-row">
+        <div><div class="name">XMSS सत्यापक, मशीन से जाँचा गया</div><div class="desc">मूल घटक और इनपुट-सत्यापन जाँचें प्रतीकात्मक निष्पादन से RFC 8391 के बराबर सिद्ध की गई हैं; सही बने हस्ताक्षर का फ़ैसला करने वाली रूट तुलना हाथ से तर्क द्वारा सिद्ध की गई और वेक्टरों से तय की गई है, सामान्य h के लिए मशीन से नहीं जाँची गई — <a href="https://github.com/skalenetwork/xmss-solidity/blob/main/PROOF.md">PROOF.md</a> बताता है कि क्या सिद्ध है और क्या माना गया है। <a href="https://github.com/skalenetwork/xmss-solidity">xmss-solidity</a> के रूप में प्रकाशित</div></div>
+        <span class="tag done">आंशिक रूप से सिद्ध</span>
+      </div>
+      <div class="status-row">
+        <div><div class="name">Guard, कुंजी रजिस्ट्री और प्री-अप्रूवल कॉन्ट्रैक्ट</div><div class="desc">ऑडिट किए गए Safe और OpenZeppelin लाइब्रेरी पर बने; Foundry टेस्ट में असली Safe के साथ इंटीग्रेशन टेस्ट शामिल है। कुंजी रजिस्ट्री की स्टेट मशीन और Guard तथा प्री-अप्रूवल इंजन के अठारह गुण Halmos से निष्पादन योग्य विनिर्देशों के सामने सिद्ध किए गए हैं — बैच डिकोडर इनमें शामिल नहीं है</div></div>
+        <span class="tag done">लागू</span>
+      </div>
+      <div class="status-row">
+        <div><div class="name">Ledger ऐप और Safe App</div><div class="desc">पहला Rust डिवाइस ऐप बनता है, डिवाइस पर ही अपनी कुंजी बनाता है और Ledger के एम्युलेटर में हस्ताक्षर करता है, लेकिन यह निर्धारित ऐप का केवल एक हिस्सा है और इसमें असली फ़ंड नहीं रखने चाहिए; Safe{Wallet} इंटीग्रेशन केवल-पढ़ने वाले तैयारी प्रीव्यू के रूप में लाइव है</div></div>
+        <span class="tag next">विकास जारी</span>
+      </div>
+      <div class="status-row">
+        <div><div class="name">बाहरी सुरक्षा ऑडिट</div><div class="desc">किसी भी mainnet डिप्लॉयमेंट से पहले ज़रूरी</div></div>
+        <span class="tag next">योजना में</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ AUTHOR ============ -->
+<section class="soft">
+  <div class="wrap center">
+    <div class="eyebrow">इसे कौन बना रहा है</div>
+    <h2>एक ऐसे व्यक्ति द्वारा डिज़ाइन किया गया<br>जिसने ख़तरे के दोनों पहलुओं पर काम किया है</h2>
+    <p class="lead">स्टैन (कॉन्स्टेंटिन) क्लाडको — क्वांटम ख़तरा पैदा करने वाली भौतिकी से लेकर उससे बचने वाली क्रिप्टोग्राफ़ी तक।</p>
+  </div>
+  <div class="wrap">
+    <div class="grid3">
+      <div class="card">
+        <h3>⚛️ क्वांटम भौतिकविद</h3>
+        <p>मैक्स प्लांक इंस्टीट्यूट से पीएच.डी.। स्टैनफ़र्ड में नोबेल पुरस्कार विजेता रॉबर्ट बी. लॉफ़लिन के साथ क्वांटम प्रणालियों पर काम किया। लॉस आलामोस नेशनल लेबोरेटरी में Director's Fellow रहे।</p>
+      </div>
+      <div class="card">
+        <h3>🔐 क्रिप्टो-मॉड्यूल परीक्षक</h3>
+        <p>NIST से मान्यता प्राप्त क्रिप्टोग्राफ़िक-मॉड्यूल परीक्षण प्रयोगशाला (CMVP) का नेतृत्व किया, जो FIPS 140-2 और साइड-चैनल सुरक्षा प्रमाणन देती थी।</p>
+      </div>
+      <div class="card">
+        <h3>⛓️ बड़े पैमाने पर ब्लॉकचेन</h3>
+        <p>SKALE के सह-संस्थापक और CTO, जिन्होंने BLS थ्रेशोल्ड क्रिप्टोग्राफ़ी को काग़ज़ से Ethereum-संगत mainnet तक पहुँचाया।</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section id="faq">
+  <div class="wrap center">
+    <div class="eyebrow">सवाल-जवाब</div>
+    <h2>टीमें सबसे पहले ये सवाल पूछती हैं</h2>
+  </div>
+  <div class="wrap">
+    <div class="faq">
+      <details>
+        <summary>क्या हमें अपनी संपत्ति कहीं ले जानी होगी या अपना Safe बदलना होगा?</summary>
+        <p>नहीं। आप अपने मौजूदा Safe पर एक Guard इंस्टॉल करते हैं। मालिक, थ्रेशोल्ड, इतिहास और पते बिल्कुल वैसे ही रहते हैं।</p>
+      </details>
+      <details>
+        <summary>अगर एडमिनिस्ट्रेटर का Ledger खो जाए तो क्या होगा?</summary>
+        <p>आपके मालिक बिना क्वांटम कुंजी के, 14 दिनों की सार्वजनिक उलटी गिनती के बाद, अकेले ही Guard हटा सकते हैं। अगर अनुरोध सही नहीं है, तो आपके मालिक उस अवधि में कभी भी एक सामान्य Safe लेन-देन से उसे रद्द कर सकते हैं। खोया हुआ डिवाइस कभी आपके Safe को हमेशा के लिए लॉक नहीं कर सकता।</p>
+      </details>
+      <details>
+        <summary>क्या इससे हमारे ट्रांसफ़र धीमे हो जाते हैं?</summary>
+        <p>हर ट्रांसफ़र के लिए Ledger पर एडमिनिस्ट्रेटर से एक अतिरिक्त मंज़ूरी चाहिए। बैच — जैसे 100 तक ट्रांसफ़र वाला वेतन भुगतान — पूरे बैच के लिए केवल एक मंज़ूरी माँगते हैं।</p>
+      </details>
+      <details>
+        <summary>गैस में इसकी लागत क्या है?</summary>
+        <p>पोस्ट-क्वांटम हस्ताक्षर की जाँच में लगभग 745,000 गैस लगती है, जो मंज़ूरी बनाते समय एक बार चुकाई जाती है (h = 20 पर 745,003 गैस मापी गई)। लेन-देन चलने के समय की जाँच बस एक लुकअप है।</p>
+      </details>
+      <details>
+        <summary>कौन-से Safe समर्थित हैं?</summary>
+        <p>Safe v1.3.0 और उसके बाद के संस्करण। Safe में कोई मॉड्यूल चालू नहीं होना चाहिए, क्योंकि मॉड्यूल guards को दरकिनार कर देते हैं — या वह Safe 1.5+ पर हो और साथ में FermionGuard का module guard भी इंस्टॉल हो। उसमें fallback handler भी नहीं होना चाहिए: ERC-20 टोकन और ETH सामान्य रूप से काम करते हैं, लेकिन हस्ताक्षरित-संदेश वाली सुविधाएँ (Permit, CowSwap ऑर्डर, साइन-इन) और <code>safeTransferFrom</code> से NFT पाना अभी समर्थित नहीं है।</p>
+      </details>
+      <details>
+        <summary>ML-DSA या Falcon क्यों नहीं, XMSS क्यों?</summary>
+        <p>XMSS, NIST द्वारा स्वीकृत (SP 800-208) हैश-आधारित हस्ताक्षर है, इसलिए EVM लगभग 1M गैस में इसकी जाँच कर सकता है। ML-DSA और Falcon जैसी लैटिस योजनाओं की ऑन-चेन जाँच पर आज करोड़ों गैस लगती।</p>
+      </details>
+      <details>
+        <summary>क्या हम इसे आज प्रोडक्शन में इस्तेमाल कर सकते हैं?</summary>
+        <p>अभी नहीं। पोस्ट-क्वांटम सत्यापक ऊपर बताई गई सीमा तक RFC 8391 के सामने मशीन से जाँचा गया है, और Guard कॉन्ट्रैक्ट लागू और परखे जा चुके हैं, लेकिन अभी कुछ भी ऑडिट नहीं हुआ है; Ledger ऐप और Safe App विकास में हैं, और किसी भी mainnet डिप्लॉयमेंट से पहले बाहरी ऑडिट ज़रूरी है। पहली टीमों में शामिल होने के लिए शुरुआती एक्सेस का अनुरोध करें।</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ============ EARLY ACCESS ============ -->
+<section class="final" id="early-access">
+  <div class="wrap center">
+    <div class="eyebrow">शुरुआती एक्सेस</div>
+    <h2>ज़रूरत पड़ने से पहले<br>अपने Safe को सुरक्षित करें</h2>
+    <p class="lead">हम Safe पर संपत्ति रखने वाली टीमों के पहले समूह को जोड़ रहे हैं। हमें अपने सेटअप के बारे में बताएँ, पायलट शुरू होते ही हम संपर्क करेंगे।</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/skalenetwork/fermionwallet/issues/new?title=Early%20access%3A%20%3Cyour%20organization%3E&amp;body=%2A%2AOrganization%3A%2A%2A%0A%2A%2AYour%20role%3A%2A%2A%0A%2A%2AChain%28s%29%3A%2A%2A%0A%2A%2ASafe%20version%3A%2A%2A%0A%2A%2AOwners%20/%20threshold%3A%2A%2A%0A%2A%2AApproximate%20transfers%20per%20month%3A%2A%2A%0A%2A%2ABest%20way%20to%20reach%20you%3A%2A%2A%0A%0A_This%20issue%20is%20public.%20Please%20don%27t%20include%20anything%20confidential._">शुरुआती एक्सेस का अनुरोध करें</a>
+      <a class="btn" href="https://github.com/skalenetwork/fermionwallet">★ GitHub पर स्टार दें</a>
+    </div>
+    <p class="fine">एक छोटा, सार्वजनिक GitHub फ़ॉर्म खुलता है — कृपया कोई गोपनीय जानकारी न डालें।</p>
+
+    <div class="next-steps">
+      <div class="card"><h3>1 · हमें अपने Safe के बारे में बताएँ</h3><p>चेन, Safe संस्करण, मालिकों की संख्या, ट्रांसफ़र की अनुमानित मात्रा।</p></div>
+      <div class="card"><h3>2 · हम संपर्क करते हैं</h3><p>शुरुआती एक्सेस पायलट शुरू होते ही हम आपसे संपर्क करेंगे।</p></div>
+      <div class="card"><h3>3 · साथ मिलकर शुरुआत</h3><p>अपने मालिकों के साथ कुंजी समारोह करें और Guard चालू करें।</p></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div class="first">
+        <a class="brand" href="#top"><img src="../assets/fermionguard-icon.svg" alt="">FermionGuard</a>
+        <p class="blurb">Gnosis Safe के लिए एक क्वांटम-सुरक्षित दूसरा हस्ताक्षर, जिसे एक Safe Guard ऑन-चेन लागू करता है।</p>
+      </div>
+      <div>
+        <h2>जानें</h2>
+        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/readme.md">परिचय</a>
+        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/ui-help.md">उपयोगकर्ता गाइड</a>
+        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionguardspec.md">विनिर्देश</a>
+      </div>
+      <div>
+        <h2>संदर्भ</h2>
+        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionguard-module.md">Guard</a>
+        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/quantum-key-registry.md">कुंजी रजिस्ट्री</a>
+        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/pre-approval-engine.md">प्री-अप्रूवल इंजन</a>
+        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/ledger-xmss-app.md">Ledger ऐप</a>
+      </div>
+      <div>
+        <h2>सुरक्षा</h2>
+        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/threat-model.md">ख़तरा मॉडल</a>
+        <a href="https://github.com/skalenetwork/fermionwallet/blob/main/hardware-security-policy.md">हार्डवेयर नीति</a>
+        <a href="https://github.com/skalenetwork/fermionwallet/tree/main/contracts">कॉन्ट्रैक्ट</a>
+      </div>
+    </div>
+    <p class="legal">XMSS सत्यापक MIT के तहत; Guard, कुंजी रजिस्ट्री और प्री-अप्रूवल इंजन LGPL-3.0 के तहत · अभी ऑडिट नहीं हुआ — असली फ़ंड के साथ इस्तेमाल न करें।</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,397 @@
+@@ 0 =
+@@ 1
+<a class="hide-sm" href="#how">Como funciona</a>
+      <a class="hide-sm" href="#security">Segurança</a>
+      <a class="hide-sm" href="#faq">Perguntas</a>
+      <a class="hide-sm" href="https://github.com/skalenetwork/fermionwallet">GitHub</a>
+      <a class="btn primary" href="#early-access">Acesso antecipado</a>
+@@ 2
+Para equipes com ativos no Gnosis Safe
+@@ 3
+Uma segunda assinatura <em>resistente à computação quântica</em> para o seu Safe
+@@ 4
+Instale um Safe Guard. Seus proprietários, seu limite de assinaturas e seu histórico continuam exatamente iguais, mas cada transferência passa a exigir também uma aprovação pós-quântica, verificada na blockchain.
+@@ 5
+<a class="btn primary" href="#early-access">Acesso antecipado</a>
+        <a class="btn" href="#how">Veja como funciona</a>
+@@ 6
+<span>Sem migração</span>
+        <span>Código aberto (MIT / LGPL-3.0)</span>
+        <span>Assinaturas NIST SP 800-208</span>
+@@ 7
+<span>Baseado no <b>Safe Guard</b></span>
+    <span><b>XMSS</b> · RFC 8391</span>
+    <span><b>NIST</b> SP 800-208</span>
+    <span>Chaves no <b>Ledger</b></span>
+    <span>Primitivas da <b>OpenZeppelin</b></span>
+    <span><b>Código aberto</b> · MIT / LGPL-3.0</span>
+@@ 8
+Veja funcionando
+@@ 9
+Uma transferência de 250.000 dUSD,<br>totalmente assinada e mesmo assim bloqueada
+@@ 10
+Um proprietário assina a transferência no Safe{Wallet} real. Ela não é executada. O Administrador Quântico lê o pagamento no dispositivo (token, valor, destinatário, janela de validade, Safe e rede) e o aprova com uma assinatura pós-quântica de uso único. Só então o dinheiro se move.
+@@ 11
+Gravado de ponta a ponta no ambiente de demonstração local: um Safe real, o Safe{Wallet} real e o Guard aplicando as regras na blockchain. O dispositivo é o Ledger <b>simulado</b>, não um hardware; veja <a href="#status">Status</a> para saber em que ponto está o app do Ledger.<br><a href="assets/fermionguard-demo.gif">Abrir em tamanho real</a>&nbsp;· <a href="https://github.com/skalenetwork/fermionwallet/tree/main/demo/wallet">Execute você mesmo →</a>
+@@ 12
+Por que agora
+@@ 13
+Mais signatários não tornam<br>um multisig resistente à computação quântica
+@@ 14
+Todo proprietário de um Safe assina com ECDSA. Um computador quântico grande o suficiente quebra o ECDSA, para todos os seus signatários de uma só vez. Ativos guardados por dez anos precisam de uma assinatura que sobreviva a esse dia.
+@@ 15
+Multisig é governança
+@@ 16
+Decide <em>quem</em> pode assinar. Não ajuda quando o próprio esquema de assinatura cai.
+@@ 17
+Chaves de hardware impedem roubo
+@@ 18
+Não impedem uma assinatura forjada sobre a mesma curva: a chave nunca precisa sair do dispositivo.
+@@ 19
+Política fora da blockchain é só um conselho
+@@ 20
+Um mecanismo de políticas que a blockchain não consulta pode ser contornado. A palavra final precisa estar na blockchain.
+@@ 21
+Como funciona
+@@ 22
+Duas assinaturas independentes.<br>Um único caminho de execução.
+@@ 23
+O FermionGuard é um Safe Guard, o gancho oficial do Safe executado antes de cada transação. Os proprietários continuam assinando como hoje. O Guard só deixa a transação rodar se ela também tiver uma aprovação pós-quântica correspondente.
+@@ 24
+Assinatura 1: sem mudanças
+@@ 25
+Os proprietários do seu Safe
+@@ 26
+Os mesmos proprietários, o mesmo limite, as mesmas carteiras de hardware. Protege contra operadores desonestos, dispositivos perdidos e falhas internas.
+@@ 27
+Assinatura 2: nova
+@@ 28
+Uma aprovação pós-quântica
+@@ 29
+Um Administrador Quântico designado aprova cada transferência em um Ledger com uma chave XMSS. Protege contra signatários comprometidos, aprovações reutilizadas, esvaziamento de permissões e futuros ataques quânticos.
+@@ 30
+Fila
+@@ 31
+Um operador coloca uma transferência na fila do Safe{Wallet}. Os proprietários assinam como sempre.
+@@ 32
+Alerta
+@@ 33
+O Safe App do FermionGuard a marca com 🟡 autorização quântica necessária.
+@@ 34
+Revisão
+@@ 35
+O Administrador revisa o conteúdo, decodificado a partir de duas fontes independentes.
+@@ 36
+Aprovação
+@@ 37
+O Ledger mostra cada campo aplicado. Mantenha pressionado para aprovar.
+@@ 38
+Execução
+@@ 39
+A linha fica 🟢. Qualquer pessoa pode executar; o Guard verifica e consome a aprovação.
+@@ 40
+O Administrador vê exatamente o que está aprovando
+@@ 41
+Aprovações correspondem a transações exatas, não a intenções
+@@ 42
+Uma aprovação indica o Safe, a rede, o token, o destinatário, o valor e uma janela de validade. Se alguém editar depois a transação na fila, a aprovação deixa de corresponder e o Guard a recusa.
+@@ 43
+<strong>Com prazo:</strong> cada aprovação vale pela janela que você escolher.
+@@ 44
+<strong>De uso único:</strong> consumida no momento em que a transação é executada.
+@@ 45
+<strong>Conferida duas vezes:</strong> o conteúdo precisa coincidir em duas fontes de dados independentes antes que a assinatura seja liberada.
+@@ 46
+<strong>Recusas visíveis:</strong> as negativas são assinadas e registradas como as aprovações.
+@@ 47
+Nada de assinatura às cegas: o dispositivo mostra cada campo que o Guard aplica
+@@ 48
+Funciona dentro das ferramentas que sua equipe já usa
+@@ 49
+O FermionGuard vem como um Safe App dentro do Safe{Wallet} e um app do Ledger para o Administrador. Alertas de risco destacam destinatários novos, valores incomuns e transações que o Guard rejeitaria de qualquer forma, antes que alguém assine.
+@@ 50
+Folha de pagamento? Um lote inteiro de até 100 transferências precisa de uma única aprovação.
+@@ 51
+Configuração
+@@ 52
+Adicione ao Safe que você já tem
+@@ 53
+Sem carteira nova, sem rede nova, sem migração de ativos. Quatro etapas, feitas pelos seus proprietários atuais com transações comuns do Safe.
+@@ 54
+Abra o Safe App
+@@ 55
+Adicione o FermionGuard no Safe{Wallet}. Ele verifica a versão e os módulos do seu Safe antes de mudar qualquer coisa.
+@@ 56
+Faça a cerimônia de chaves
+@@ 57
+A chave do Administrador é gerada dentro do Ledger. Os proprietários a confirmam e assinam juntos o seu registro.
+@@ 58
+Ative o Guard
+@@ 59
+Os proprietários assinam uma transação <code>setGuard</code>, como qualquer outra transação do Safe.
+@@ 60
+Envie uma transferência de teste
+@@ 61
+Uma transferência de valor ínfimo percorre o fluxo completo. Quando ela é confirmada, seu painel mostra <strong>Protegido ✓</strong>.
+@@ 62
+<span class="time-badge">⏱ Cerca de 30 minutos com os proprietários disponíveis</span>
+@@ 63
+Para quem é
+@@ 64
+Feito para ativos que precisam ficar seguros por uma década
+@@ 65
+🏦 Custodiantes e bancos
+@@ 66
+Adicione um controle criptográfico independente e baseado em padrões à custódia de ativos de clientes.
+@@ 67
+Esquema de assinatura aprovado pelo NIST
+@@ 68
+Registro de auditoria exportável para conformidade
+@@ 69
+Atas imprimíveis da cerimônia de chaves
+@@ 70
+🏢 Tesourarias corporativas
+@@ 71
+Mantenha seu fluxo de aprovação e faça com que um signatário comprometido não baste para mover fundos.
+@@ 72
+Os proprietários continuam assinando como hoje
+@@ 73
+Uma aprovação por lote de folha de pagamento
+@@ 74
+Alertas de risco em transferências incomuns
+@@ 75
+🏛️ Fundações e DAOs
+@@ 76
+Coloque um controle público e com prazo nas operações que mais importam: as mudanças de governança.
+@@ 77
+Prazo público de 48 horas para ações administrativas
+@@ 78
+Os proprietários podem cancelá-lo sem aprovação quântica
+@@ 79
+Código aberto, verificável na blockchain
+@@ 80
+Segurança
+@@ 81
+Difícil de contornar.<br>Impossível de travar.
+@@ 82
+O Guard é o último veto na blockchain, e foi projetado para que nem uma chave perdida nem um bug possam congelar seus fundos.
+@@ 83
+Sempre há uma saída
+@@ 84
+Perdeu o Ledger? Os proprietários sozinhos podem remover o Guard após uma contagem regressiva pública de 14 dias. Um dispositivo inutilizado nunca trava o Safe.
+@@ 85
+Mudanças de governança bem visíveis
+@@ 86
+Remover o Guard ou trocar os proprietários exige uma aprovação <em>e</em> uma contagem regressiva pública de 48 horas, avisada a todos os proprietários.
+@@ 87
+Falha em modo fechado
+@@ 88
+Um Guard não atualizável, com uma pausa rápida que bloqueia tudo em caso de incidente. Sem porta dos fundos administrativa.
+@@ 89
+Sem portas laterais
+@@ 90
+Os módulos do Safe ignoram os guards, então a inscrição exige que nenhum módulo esteja ativado, ou um module guard pareado no Safe 1.5+.
+@@ 91
+Sem esvaziamento de permissões
+@@ 92
+<code>approve</code>, <code>permit</code> e <code>transferFrom</code> são rejeitados de imediato, e os lotes são verificados operação por operação na blockchain.
+@@ 93
+Chaves que não podem ser trocadas
+@@ 94
+Os proprietários assinam juntos a raiz pública completa da chave em seus próprios dispositivos, então um site comprometido não consegue colocar outra chave no lugar.
+@@ 95
+Mudanças de governança são lentas e visíveis; cancelar é rápido
+@@ 96
+Nem mesmo uma chave quântica roubada assume o controle em silêncio
+@@ 97
+Um atacante com o Ledger do Administrador continua sem conseguir mover fundos sem as assinaturas dos seus proprietários, e não pode remover o Guard sem uma contagem regressiva pública de 48 horas que seus proprietários podem cancelar.
+@@ 98
+<a href="https://github.com/skalenetwork/fermionwallet/blob/main/threat-model.md">Leia o modelo de ameaças →</a>
+@@ 99
+Para seus engenheiros
+@@ 100
+Assinaturas pós-quânticas,<br>verificadas na EVM
+@@ 101
+O XMSS usa apenas funções de hash, então a blockchain o verifica diretamente: sem oráculo, sem servidor de confiança. O verificador é uma implementação independente da RFC 8391, e dizemos exatamente até onde vai a sua prova: cada primitiva da RFC, e as verificações que rejeitam entradas malformadas, são <strong>verificadas por máquina</strong> para todas as entradas em relação a uma transcrição linha a linha da RFC. A composição delas na comparação da raiz, que finalmente aceita ou recusa uma assinatura bem formada, é argumentada à mão, verificada simbolicamente com altura de árvore 2 e fixada pelos vetores da RFC em h = 4, 10 e 20.
+@@ 102
+de gas por verificação, medido em h = 20
+@@ 103 =
+@@ 104
+aprovações por chave (2<sup>20</sup> folhas)
+@@ 105
+lemas do Halmos que verificam o verificador em relação à RFC 8391, dez deles para todas as entradas
+@@ 106 =
+@@ 107
+Verificador XMSS escrito a partir da RFC, sem código emprestado
+@@ 108
+Reutilizar uma folha é impossível por construção
+@@ 109
+O XMSS tem estado: reutilizar uma folha de uso único permitiria a um atacante forjar assinaturas. O Ledger grava o seu contador antes de liberar uma assinatura, e o contrato mantém um mapa de folhas usadas que reverte qualquer reutilização.
+@@ 110
+<a href="https://github.com/skalenetwork/fermionwallet/tree/main/contracts">Ver os contratos →</a> · <a href="https://github.com/skalenetwork/fermionwallet/blob/main/fermionguard-module.md">Especificação do Guard →</a> · <a href="https://github.com/skalenetwork/xmss-solidity/blob/main/PROOF.md">Prova formal →</a>
+@@ 111
+contracts/src/QuantumKeyRegistry.sol (simplificado)
+@@ 112
+Onde estamos
+@@ 113
+Construído em público
+@@ 114
+O projeto e o verificador pós-quântico já são públicos. As equipes com acesso antecipado ajudam a moldar o restante.
+@@ 115
+Verificador XMSS (Solidity)
+@@ 116
+Verificador RFC 8391 com consumo de folhas na blockchain (um mapa de folhas usadas no registro de chaves), testes no Foundry e medições de gas
+@@ 117
+Implementado
+@@ 118
+Especificação e modelo de ameaças
+@@ 119
+Guard, registro de chaves, mecanismo de pré-aprovações, serviço, política de hardware
+@@ 120
+Publicado
+@@ 121
+Safe App e telas do Ledger
+@@ 122
+Fluxos de fila, aprovação, lotes, cerimônia de chaves, recusa, emergência e dispositivo
+@@ 123
+Projetado
+@@ 124
+Verificador XMSS, verificado por máquina
+@@ 125
+Primitivas e verificações de validação de entrada provadas equivalentes à RFC 8391 por execução simbólica; a comparação da raiz que decide uma assinatura bem formada é argumentada à mão e fixada por vetores, sem verificação por máquina para h genérico; o <a href="https://github.com/skalenetwork/xmss-solidity/blob/main/PROOF.md">PROOF.md</a> diz o que está provado e o que é suposto. Publicado como <a href="https://github.com/skalenetwork/xmss-solidity">xmss-solidity</a>
+@@ 126
+Provado em parte
+@@ 127
+Contratos do Guard, do registro de chaves e de pré-aprovações
+@@ 128
+Construídos sobre as bibliotecas auditadas do Safe e da OpenZeppelin; os testes do Foundry incluem uma integração com um Safe real. A máquina de estados do registro de chaves e dezoito propriedades do Guard e do mecanismo de pré-aprovações são provadas em relação a especificações executáveis com o Halmos; o decodificador de lotes não está entre elas
+@@ 129
+App do Ledger e Safe App
+@@ 130
+Um primeiro app em Rust para o dispositivo compila, gera a sua chave no dispositivo e assina no emulador do Ledger, mas é uma parte do app especificado e não deve guardar fundos reais; a integração com o Safe{Wallet} está no ar como uma prévia de preparação somente leitura
+@@ 131
+Em desenvolvimento
+@@ 132
+Auditoria de segurança externa
+@@ 133
+Obrigatória antes de qualquer implantação na mainnet
+@@ 134
+Planejada
+@@ 135
+Quem está construindo
+@@ 136
+Projetado por alguém que já<br>trabalhou dos dois lados da ameaça
+@@ 137
+Stan (Konstantin) Kladko: da física que cria a ameaça quântica à criptografia que precisa sobreviver a ela.
+@@ 138
+⚛️ Físico quântico
+@@ 139
+Doutor pelo Instituto Max Planck. Trabalhou com o Nobel Robert B. Laughlin em sistemas quânticos em Stanford. Director's Fellow no Laboratório Nacional de Los Alamos.
+@@ 140
+🔐 Avaliador de módulos criptográficos
+@@ 141
+Dirigiu um laboratório credenciado pelo NIST para testes de módulos criptográficos (CMVP), emitindo certificações FIPS 140-2 e de segurança contra canais laterais.
+@@ 142
+⛓️ Blockchain em escala
+@@ 143
+Cofundador e CTO da SKALE, que levou a criptografia de limiar BLS do papel a uma mainnet alinhada ao Ethereum.
+@@ 144
+Perguntas
+@@ 145
+As primeiras perguntas das equipes
+@@ 146
+Precisamos mover nossos ativos ou mudar nosso Safe?
+@@ 147
+Não. Você instala um Guard no Safe que já tem. Proprietários, limite, histórico e endereços continuam exatamente iguais.
+@@ 148
+O que acontece se o Ledger do Administrador for perdido?
+@@ 149
+Seus proprietários podem remover o Guard sozinhos, sem chave quântica, após uma contagem regressiva pública de 14 dias. Se o pedido não for legítimo, eles podem cancelá-lo a qualquer momento nesse prazo com uma transação comum do Safe. Um dispositivo perdido nunca pode travar o seu Safe para sempre.
+@@ 150
+Isso deixa nossas transferências mais lentas?
+@@ 151
+Cada transferência precisa de uma aprovação extra do Administrador em um Ledger. Lotes, como uma folha de pagamento de até 100 transferências, precisam de uma única aprovação para o lote inteiro.
+@@ 152
+Quanto custa em gas?
+@@ 153
+Verificar a assinatura pós-quântica custa cerca de 745.000 de gas, pagos uma vez quando a aprovação é criada (745.003 de gas medidos em h = 20). A verificação na execução da transação é uma simples consulta.
+@@ 154
+Quais Safes são compatíveis?
+@@ 155
+Safe v1.3.0 e posteriores. O Safe não pode ter módulos ativados, porque os módulos ignoram os guards, ou precisa estar no Safe 1.5+ com o module guard do FermionGuard também instalado. Também não pode ter fallback handler: tokens ERC-20 e ETH funcionam normalmente, mas os recursos de mensagens assinadas (Permit, ordens do CowSwap, login) e o recebimento de NFTs via <code>safeTransferFrom</code> ainda não são compatíveis.
+@@ 156
+Por que XMSS e não ML-DSA ou Falcon?
+@@ 157
+O XMSS é uma assinatura baseada em hash aprovada pelo NIST (SP 800-208), então a EVM consegue verificá-la por cerca de 1M de gas. Esquemas de reticulados como ML-DSA e Falcon custariam hoje dezenas de milhões de gas para serem verificados na blockchain.
+@@ 158
+Podemos usar em produção hoje?
+@@ 159
+Ainda não. O verificador pós-quântico é verificado por máquina em relação à RFC 8391 na medida descrita acima, e os contratos do Guard estão implementados e testados, mas nada foi auditado ainda; o app do Ledger e o Safe App estão em desenvolvimento, e uma auditoria externa é obrigatória antes de qualquer implantação na mainnet. Peça acesso antecipado para estar entre as primeiras equipes.
+@@ 160
+Acesso antecipado
+@@ 161
+Proteja o seu Safe<br>antes de precisar
+@@ 162
+Estamos recebendo um primeiro grupo de equipes com ativos no Safe. Conte-nos sobre a sua configuração e entraremos em contato quando os pilotos abrirem.
+@@ 163
+<a class="btn primary" href="https://github.com/skalenetwork/fermionwallet/issues/new?title=Early%20access%3A%20%3Cyour%20organization%3E&amp;body=%2A%2AOrganization%3A%2A%2A%0A%2A%2AYour%20role%3A%2A%2A%0A%2A%2AChain%28s%29%3A%2A%2A%0A%2A%2ASafe%20version%3A%2A%2A%0A%2A%2AOwners%20/%20threshold%3A%2A%2A%0A%2A%2AApproximate%20transfers%20per%20month%3A%2A%2A%0A%2A%2ABest%20way%20to%20reach%20you%3A%2A%2A%0A%0A_This%20issue%20is%20public.%20Please%20don%27t%20include%20anything%20confidential._">Pedir acesso antecipado</a>
+      <a class="btn" href="https://github.com/skalenetwork/fermionwallet">★ Estrela no GitHub</a>
+@@ 164
+Abre um formulário público curto no GitHub; não inclua nada confidencial.
+@@ 165
+1 · Conte-nos sobre o seu Safe
+@@ 166
+Rede, versão do Safe, número de proprietários, volume aproximado de transferências.
+@@ 167
+2 · Nós retornamos
+@@ 168
+Entraremos em contato quando os pilotos de acesso antecipado abrirem.
+@@ 169
+3 · Implantação em conjunto
+@@ 170
+Faça a cerimônia de chaves e ative o Guard com os seus proprietários.
+@@ 171
+Uma segunda assinatura resistente à computação quântica para o Gnosis Safe, aplicada na blockchain por um Safe Guard.
+@@ 172
+Aprender
+@@ 173
+Visão geral
+@@ 174
+Guia do usuário
+@@ 175
+Especificação
+@@ 176
+Referência
+@@ 177 =
+@@ 178
+Registro de chaves
+@@ 179
+Mecanismo de pré-aprovações
+@@ 180
+App do Ledger
+@@ 181
+Modelo de ameaças
+@@ 182
+Política de hardware
+@@ 183
+Contratos
+@@ 184
+Verificador XMSS sob MIT; Guard, registro de chaves e mecanismo de pré-aprovações sob LGPL-3.0 · Ainda não auditado: não use com fundos reais.
+@@ A1
+Uma segunda assinatura resistente à computação quântica para o Gnosis Safe. Instale um Safe Guard, mantenha seus proprietários e seu limite, e exija para cada transferência uma aprovação assinada com XMSS e verificada na blockchain.
+@@ A2
+FermionGuard: uma segunda assinatura resistente à computação quântica para o Gnosis Safe
+@@ A3
+Sem migração. Mantenha seus proprietários e seu limite. Cada transferência também exige uma aprovação pós-quântica, verificada na blockchain.
+@@ A8
+O Safe App do FermionGuard: uma fila de transações em que cada transferência pendente mostra o seu status de autorização quântica
+@@ A9
+Abrir a gravação em tamanho real
+@@ A10
+Uma transferência de 250.000 dUSD está totalmente assinada no Safe{Wallet} e mesmo assim falha; o Administrador Quântico a aprova em um Ledger simulado com uma assinatura XMSS de uso único; em seguida, a mesma transferência é executada
+@@ A11
+Tela de revisão mostrando o token, o valor, o destinatário, o nonce e a janela de validade decodificados antes da assinatura
+@@ A12
+Telas do dispositivo Ledger mostrando o cabeçalho da aprovação, o valor, o endereço completo do destinatário e a decisão de aprovar ou rejeitar
+@@ A13
+Tela de ação administrativa com uma contagem regressiva de 48 horas e um botão de revogação

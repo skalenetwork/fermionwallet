@@ -32,6 +32,8 @@ jobs:
         run: |
           mkdir -p _site/assets _site/app
           cp site/index.html _site/
+          # The same page in seven more languages, each at /<lang>/ (see site/i18n/README.md).
+          for l in zh hi es ar fr bn pt; do mkdir -p _site/$l && cp site/$l/index.html _site/$l/; done
           cp assets/fermionguard-logo.svg assets/fermionguard-icon.svg assets/og-image.png \
              assets/fermionguard-demo.gif _site/assets/
           cp -r assets/ui _site/assets/
