@@ -3,3 +3,4 @@
 forge-std/=lib/forge-std/src/
 xmss-solidity/=lib/xmss-solidity/src/
 mldsa-solidity/=lib/mldsa-solidity/src/
+pq-verifier-interface/=lib/mldsa-solidity/lib/pq-verifier-interface/src/
