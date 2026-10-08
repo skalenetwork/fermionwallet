@@ -115,7 +115,8 @@ Safe nonce and no `safeTxHash`. [FG-019]
 
 ### Version detection
 
-The Guard reads the Safe's `VERSION()` string and recognises exactly `"1.3.0"`, `"1.4.1"` and `"1.5.0"`.
+The Guard reads the Safe's `VERSION()` string and recognises exactly `"1.3.0"`, `"1.4.1"` and `"1.5.0"` (the L2
+singletons inherit the same constant).
 The module guard slot counts as **wired** only when `VERSION()` is `"1.5.0"` **and** the slot holds this
 Guard; on 1.3.0 and 1.4.1 the slot is ordinary storage the singleton never reads, so a value there is
 ignored. A Safe whose `VERSION()` cannot be read or is not one of the three fails closed. Storage slots are
@@ -251,7 +252,9 @@ Because the Safe has no guard when the batch runs, nothing checks it; the batch 
 
 **A Safe that set the Guard but is not enrolled** (or whose enrollment ended) is protected by nothing and
 must not be bricked by it. For such a Safe, `checkTransaction` allows only: a `CALL` to the Guard's
-`enroll`, `setGuard(address(0))` and `setModuleGuard(address(0))`; everything else reverts `NotEnrolled`.
+`enroll`, `setGuard(address(0))`, `setModuleGuard(address(0))`, `setFallbackHandler(address(0))` and
+`setFallbackHandler(FALLBACK_HANDLER)` (so a Safe whose handler blocks enrollment can fix it); everything else
+reverts `NotEnrolled`.
 `checkModuleTransaction` reverts for it. [FG-028]
 
 **Enrollment ends** when the Safe's guard slot stops holding this Guard. `checkAfterExecution` and
@@ -544,9 +547,11 @@ a Safe-transaction approval: [FG-110]
 **The answer.** The handler returns the form's magic value only if both of these hold, and `0xffffffff`
 otherwise, never reverting on malformed input: [FG-111]
 
-1. the owners' signatures over `safeMessageHash` are valid, checked through the Safe exactly as Safe's own
-   handler checks them; the on-chain `signedMessages` path (empty `signature`) is **not** accepted, because
-   its entries could have been written before enrollment;
+1. the owners' signatures over `safeMessageHash` are valid, checked through the Safe's legacy
+   `checkSignatures(bytes32 dataHash, bytes data, bytes signatures)` with `data` the SafeMessage preimage —
+   the one form present on 1.3.0, 1.4.1 and 1.5.0 (the 1.5.0 handler's `checkSignatures(address, bytes32,
+   bytes)` does not exist on the older versions); the on-chain `signedMessages` path (empty `signature`) is
+   **not** accepted, because its entries could have been written before enrollment;
 2. `isMessageApproved(safe, safeMessageHash, signature)` on the Guard is true: the Safe is enrolled, no
    emergency removal is pending, `safeMessageHash` is not revoked, and either a stored approval with the
    current epoch and a window containing `block.timestamp` exists, or the inline approval verifies (window,
@@ -693,7 +698,7 @@ all of them must fit the 16,777,216-gas per-transaction cap (EIP-7825) together.
 | A thief with the key tries to block removal | Cannot cancel ([FG-087]) |
 | Compromised owners request removal (case 1) | Honest owners cancel, or rescue assets with the Quantum Administrator during the freeze |
 | An attacker holds the owner threshold alone (case 2) | Removes the Guard after 14 days. Residual ([FG-092]) |
-| The Guard is set before enrolling | Only `enroll`, `setGuard(0)` and `setModuleGuard(0)` pass ([FG-028]) |
+| The Guard is set before enrolling | Only `enroll`, the two guard removals and the two allowed handler settings pass ([FG-028]) |
 | Owners sign a Permit2 or CoW order off-chain | The Safe answers ERC-1271 only with a message approval ([FG-111]) |
 | Owners try to install `CompatibilityFallbackHandler` | Reverts ([FG-065]); a Safe that already has it cannot enroll ([FG-024]) |
 | An allowance granted before enrollment | Still spendable with no Safe transaction ([FG-073]) |
@@ -751,7 +756,7 @@ all of them must fit the 16,777,216-gas per-transaction cap (EIP-7825) together.
 | FG-025 | Enrollment stores the public key as code and records the enrollment with a fresh epoch. |
 | FG-026 | A Guard key is used for one Safe only; ML-DSA-44 default, ML-DSA-65 opt-in, ML-DSA-87 accepted. |
 | FG-027 | The recommended setup is one `MultiSendCallOnly` batch run before the Guard is set: module guard, enroll, guard. |
-| FG-028 | For a Safe that is not enrolled, only `enroll`, `setGuard(0)` and `setModuleGuard(0)` pass, and module transactions revert. |
+| FG-028 | For a Safe that is not enrolled, only `enroll`, `setGuard(0)`, `setModuleGuard(0)`, `setFallbackHandler(0)` and `setFallbackHandler(FALLBACK_HANDLER)` pass, and module transactions revert. |
 | FG-029 | When the guard slot no longer holds the Guard, the after-execution hooks end the enrollment, clear a pending removal and bump the epoch. |
 | FG-030 | A quantum approval is an ECDSA and an ML-DSA signature over the same digest; both are required. |
 | FG-031 | The ECDSA half is 65 bytes, checked with `ECDSA.tryRecover`, and must recover to the enrolled admin. |
@@ -834,6 +839,6 @@ all of them must fit the 16,777,216-gas per-transaction cap (EIP-7825) together.
 | FG-108 | The Safe message hash is computed exactly as Safe's own handler computes it, for both forms. |
 | FG-109 | The signer receives the message itself and computes its hash, the Safe message hash and the approval digest. |
 | FG-110 | A `SafeMessageApproval` is accepted stored (`preApproveMessage`) or inline at the end of the ERC-1271 signature. |
-| FG-111 | The handler returns the magic value only with valid owner signatures (never the `signedMessages` path) and a live, unrevoked message approval, and `0xffffffff` otherwise. |
+| FG-111 | The handler returns the magic value only with owner signatures valid under the legacy three-argument `checkSignatures` (never the `signedMessages` path) and a live, unrevoked message approval, and `0xffffffff` otherwise. |
 | FG-112 | A message approval is never consumed and is revoked like any approval. |
 | FG-113 | An inline message approval costs the consuming protocol one ML-DSA verification; the stored form avoids it. |
