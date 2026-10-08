@@ -102,6 +102,11 @@ later entries supersede earlier ones, and several were reversed (monorepo 42→4
 - C9 (calls by the Safe to itself): only the named Safe admin functions are allowed (own screen); any other
   self-call is REFUSED before any screen (takeover vector), even though undecodable external calls are allowed
   with a warning (items 25/26 relaxed external calls only).
+- C10 (ERC-1271 / inline encoding): the validity window applies EVERYWHERE, including ERC-1271 owner signatures,
+  Safe-message approvals and inline guard approvals. Wrapper type SignedHash(bytes32 hash,uint64 validFrom,uint64
+  validUntil); signature blob = validFrom (8 B) ‖ validUntil (8 B) ‖ ECDSA r‖s‖v (65 B) ‖ ML-DSA signature, i.e.
+  2501 / 3390 / 4708 bytes for ML-DSA-44 / 65 / 87; any other length MUST be rejected. The ERC draft and SR specs
+  follow this (writer A's phase1-a 45e0b1b form).
 - Note: commit hashes in the log from before 2026-10-07's history rewrite (contributor-trailer removal) no longer
   exist on GitHub; old→new mapping is in the local backup refs.
 
