@@ -112,6 +112,7 @@ The payload's first byte names the message kind; the rest is the message's field
 | `0x11` | quantum approval of a module transaction | Guard | [`fermion-guard.md`](./fermion-guard.md#modules) |
 | `0x12` | revoke of a stored approval | Guard | [`fermion-guard.md`](./fermion-guard.md#inline-and-stored-approvals) |
 | `0x13` | key rotation | Guard | [`fermion-guard.md`](./fermion-guard.md#key-rotation) |
+| `0x14` | approval of a Safe message (gated fallback handler) | Guard | [`fermion-guard.md`](./fermion-guard.md) |
 
 A payload is fully received and parsed before the first page is drawn; nothing is streamed to the screen [LA-022]. The maximum payload size is set by the app's buffer, which is not yet fixed (not measured); a declared total length above it is refused with `0x6A84` before any data is kept.
 
@@ -163,7 +164,7 @@ The values are the Rust SDK's `StatusWords`, as checked against the built XMSS a
 | `0x6E03` | length inconsistent with the command |
 | `0x6D00` | the app reached a state it should not be able to reach; nothing was signed |
 
-Refusal reasons with `0x6A80`: `01` delegatecall, `02` non-zero gas-refund field, `03` unlimited approval, `04` validity window, `05` malformed payload or path, `06` more than 8 legs [LA-027]. A refusal draws no screen: the host has the code and is the place to explain it.
+Refusal reasons with `0x6A80`: `01` delegatecall, `02` non-zero gas-refund field, `03` unlimited approval, `04` validity window, `05` malformed payload or path, `06` more than 8 legs, `07` Safe self-call that is not a named admin function, `08` Safe message given only as a hash [LA-027]. A refusal draws no screen: the host has the code and is the place to explain it.
 
 ## Acceptance rules
 
@@ -178,14 +179,16 @@ The device decides what it will put on the screen before it draws anything. Thes
 | 3 | an unlimited approval: ERC-20 `approve` (`0x095ea7b3`) or `increaseAllowance` (`0x39509351`) with amount `2^256 − 1` | any call the device decodes, top level or inside a descriptor |
 | 4 | `validUntil − validFrom > 86,400` seconds, or `validFrom > validUntil` | every kind |
 | 5 | malformed: unknown kind, a field out of range, trailing bytes, a path of the wrong shape, an unrenderable time, more than 8 legs | every kind |
+| 6 | a call by the Safe to itself (`to` = the Safe) that is not one of the nine admin functions of [Decoded calls](#decoded-calls), decodable or not, at top level or in a batch leg (decision record C9) | Safe transactions (`0x03`, `0x10`), module transactions (`0x11`) |
+| 7 | a Safe message supplied only as a hash | Safe-message approvals (`0x14`) |
 
-[LA-028] There is no setting, no override and no "review anyway" path for any of them. The device decodes the `approve` and `increaseAllowance` selectors itself, without a descriptor, so rule 3 does not depend on the host supplying one [LA-029].
+[LA-028] There is no setting, no override and no "review anyway" path for any of them. The device decodes the `approve` and `increaseAllowance` selectors and the EIP-2612 `Permit` typed-data type itself, without a descriptor, so rule 3 does not depend on the host supplying one [LA-029]. A self-call is the Safe-takeover vector, so rule 6 refuses it even though an undecodable *external* call only gets a warning [LA-059].
 
 **No trusted clock.** A Ledger has no clock the app can trust, and a host-supplied "now" is the host's word. The device therefore checks the window's length and shape only (rule 4) and shows `Valid from` and `Valid until` as absolute UTC; the contracts enforce `validFrom ≤ block.timestamp ≤ validUntil` on-chain ([`fermion-wallet.md`](./fermion-wallet.md#replay-and-validity-window)) [LA-030].
 
 ### Safe batches
 
-Decision record clarification C7, implementing [`signer-requirements.md`](./signer-requirements.md#safe-batches). A Safe transaction (kind `0x03` or `0x10`) with `operation = DelegateCall` is accepted only when `to` is the canonical `MultiSendCallOnly` deployment of Safe 1.3.0, 1.4.1 or 1.5.0. Those addresses are compiled into the app (the exact list is pinned against the Safe deployments in phase 3); the host cannot add one [LA-056]. The calldata must parse exactly as `multiSend(bytes)` with every leg `operation = Call`; any other leg operation, a truncated leg or trailing bytes is refused with reason `01` or `05` [LA-057]. Each leg is decoded as in [Decoded calls](#decoded-calls) and checked against rules 3 and 5 as if it were a single transaction; an undecodable leg gets the warning page and its five fields. The review shows `Batch: N calls`, then every leg in order, headed `Call 2 of N`, with its `To`, `Value` and decoded call [LA-058]. `Operation` reads `Batch (MultiSendCallOnly)`. Module transactions (kind `0x11`) get no such exception. The number of legs is bounded only by the payload buffer (not measured).
+Decision record clarification C7, implementing [`signer-requirements.md`](./signer-requirements.md#safe-batches). A Safe transaction (kind `0x03` or `0x10`) with `operation = DelegateCall` is accepted only when `to` is the canonical `MultiSendCallOnly` deployment of Safe 1.3.0, 1.4.1 or 1.5.0. Those addresses are compiled into the app (the exact list is pinned against the Safe deployments in phase 3); the host cannot add one [LA-056]. The calldata must parse exactly as `multiSend(bytes)` with every leg `operation = Call`; any other leg operation, a truncated leg or trailing bytes is refused with reason `01` or `05` [LA-057]. Each leg is decoded as in [Decoded calls](#decoded-calls) and checked against rules 3, 5 and 6 as if it were a single transaction; an undecodable leg gets the warning page and its five fields. The review shows `Batch: N calls`, then every leg in order, headed `Call 2 of N`, with its `To`, `Value` and decoded call [LA-058]. `Operation` reads `Batch (MultiSendCallOnly)`. Module transactions (kind `0x11`) get no such exception. The number of legs is bounded only by the payload buffer (not measured).
 
 ### Decoded calls
 
@@ -195,7 +198,8 @@ A call in a Safe transaction or a module transaction is decoded, in this order:
 2. a Safe self-administration function on the Safe itself (`to == safe`): `addOwnerWithThreshold`, `removeOwner`, `swapOwner`, `changeThreshold`, `setGuard`, `setFallbackHandler`, `enableModule`, `disableModule`, `setModuleGuard` → its dedicated screen naming the function and every argument [LA-031];
 3. ERC-20 `transfer`, `transferFrom`, `approve`, `increaseAllowance` → built-in decoding, with the ticker and decimals when a Ledger-signed token descriptor was provided, raw units and the token address otherwise;
 4. a call matched by a Ledger-signed ERC-7730 descriptor provided in this session → the descriptor's labels and formats;
-5. anything else → **undecodable**.
+5. any other call with `to == safe` → **refused** (rule 6);
+6. anything else → **undecodable**.
 
 The device verifies every descriptor's Ledger signature on receipt. A descriptor that fails verification is discarded; the call it would have described is undecodable, never refused for that reason and never decoded [LA-032]. `fermion-sdk` bundles and caches Ledger-signed descriptors for Fermion's own contracts and common protocols and fetches the rest; if a fetch fails it says so, and the device shows the call as undecodable.
 
@@ -203,7 +207,7 @@ The device verifies every descriptor's Ledger signature on receipt. A descriptor
 
 An undecodable call is **not refused** (decision record items 25 and 26). The review opens with the SDK's blind-signing warning page — *This transaction's details are not fully verifiable. If you sign, you could lose all your assets.* — and then shows, as fields: `Contract` (the target, full EIP-55), `Selector` (the 4 bytes), `Value`, `Calldata` (the complete calldata in hex, paged, never truncated) and `Calldata hash` (keccak256 of the calldata, in full). The warning icon then sits on the intent and decision pages [LA-033]. Rules 1–5 are applied first and still refuse.
 
-> **C3 — the device model lags the spec.** The committed model [`demo/ledger-proof/device_spec.py`](../demo/ledger-proof/device_spec.py) (`aa55132` on this branch; `ca48253` in the decision record, before a history rewrite) still **refuses** an undecodable call (`displayable=False` → `Cannot display this call`), and [`demo/ledger-proof/README.md`](../demo/ledger-proof/README.md) lists that as claim R1. This spec follows the decision record and allows it after the warning. Updating the model — the undecodable flow as a warning page plus the five fields above, and R1 narrowed to rules 1–5 — is a phase-3 task, as is the `MultiSendCallOnly` exception of [Safe batches](#safe-batches) (the model refuses every delegatecall). The model also has no revoke, key-rotation or module-transaction flow and no multi-leg batch; those are added in the same phase-3 update.
+> **C3 — the device model lags the spec.** The committed model [`demo/ledger-proof/device_spec.py`](../demo/ledger-proof/device_spec.py) (`aa55132`) still **refuses** an undecodable call (`displayable=False` → `Cannot display this call`), and [`demo/ledger-proof/README.md`](../demo/ledger-proof/README.md) lists that as claim R1. This spec follows the decision record and allows it after the warning. Updating the model — the undecodable flow as a warning page plus the five fields above, and R1 narrowed to rules 1–7 — is a phase-3 task, as are the self-call refusal (rule 6) and the Safe-message flow, as is the `MultiSendCallOnly` exception of [Safe batches](#safe-batches) (the model refuses every delegatecall). The model also has no revoke, key-rotation or module-transaction flow and no multi-leg batch; those are added in the same phase-3 update.
 
 ## Signing flows
 
@@ -226,7 +230,7 @@ Then `Wallet` (the `verifyingContract`), `Network`, `Nonce`, `Valid from`, `Vali
 
 ### Fermion Wallet: plain-text message (kind `0x02`)
 
-For address-ownership proofs and Sign-In with Ethereum. The text is shown in full, paged, never truncated, followed by `Wallet`, `Network`, `Valid from`, `Valid until`, `Key` and the other fields of the message struct ([`fermion-wallet.md`](./fermion-wallet.md#signed-messages)). Intent `Review message`; decision `Sign message?` [LA-038]. The device never signs an arbitrary EIP-712 struct or a permit through this or any other kind.
+For address-ownership proofs and Sign-In with Ethereum. The text is shown in full, paged, never truncated, followed by `Wallet`, `Network`, `Valid from`, `Valid until`, `Key` and the other fields of the message struct ([`fermion-wallet.md`](./fermion-wallet.md#signed-messages)). Intent `Review message`; decision `Sign message?` [LA-038]. The device never signs an arbitrary EIP-712 struct or a permit directly; third-party typed data appears only as the content of a Guard Safe-message approval (kind `0x14`), signed in the Guard's domain.
 
 ### Fermion Wallet: Safe transaction as owner (kind `0x03`)
 
@@ -249,6 +253,20 @@ On Safe 1.5.0 with the Guard as module guard, every module transaction needs an 
 ### Fermion Guard: enableModule
 
 `enableModule(module)` on the Safe itself — in a Guard approval or an owner signature — opens with a warning page of its own, *Enabling a module gives it control of this Safe*, before the intent page; the dedicated admin screen then names `Function: enableModule` and the `Module` address in full [LA-043]. The device does not know the Safe's version; the Guard refuses `enableModule` on Safes before 1.5.0 on-chain ([`fermion-guard.md`](./fermion-guard.md#modules)).
+
+### Fermion Guard: Safe message (kind `0x14`)
+
+Decision record clarification C8: the Guard's gated fallback handler lets the Safe answer ERC-1271 for its own off-chain messages — Permit2 and CoW orders, SIWE — only when the Quantum Administrator approved that message on the device ([`fermion-guard.md`](./fermion-guard.md); [`signer-requirements.md`](./signer-requirements.md#safe-messages)).
+
+The host sends the message itself, in one of two forms: EIP-712 typed data (domain, types, primary type, values) or EIP-191 plain text. The device computes the message's hash (EIP-712 or EIP-191), the Safe's message hash over it, and the approval digest; a message supplied only as a hash is refused (rule 7) [LA-060]. The message is shown as follows [LA-061]:
+
+| Form | Shown |
+|---|---|
+| typed data with a verified Ledger-signed ERC-7730 descriptor | the descriptor's labels and formats (`Spender`, `Amount`, `Expires`, …), with the typed-data domain's `Contract` and `Network` |
+| plain text (SIWE, ownership proofs) | the text in full, paged, never truncated |
+| typed data without a verified descriptor | the blind-signing warning page, then the domain (every field present), `Primary type`, every field as name and raw value (paged, never truncated), and `Message hash` (its EIP-712 hash, in full) [LA-062] |
+
+Rules 3–5 and 7 apply first: an EIP-2612 `Permit` of `2^256 − 1` is refused before any screen. Then `Role: Quantum APPROVAL`, `Safe`, `Network`, `Guard`, `Valid from`, `Valid until`, `Key`, and the remaining fields of the approval struct. Intent `Review message approval`; decision `Sign approval?`. The maximum message size is set by the payload buffer (not measured).
 
 ### Fermion Guard: revoke a stored approval (kind `0x12`)
 
@@ -284,6 +302,7 @@ The SDK's high-level NBGL use cases throughout; nothing draws its own layout [LA
 | Module transaction | if undecodable | `Review module transaction` | `Sign approval?` |
 | Revoke | — | `Review revocation` | `Sign revocation?` |
 | Key rotation | always | `Review key rotation` | `Sign key rotation?` |
+| Safe message | if typed data has no verified descriptor | `Review message approval` | `Sign approval?` |
 | Show address / key | — | address review | `Confirm` |
 
 ### Nano S Plus and Nano X
@@ -341,13 +360,11 @@ Product questions the decision record does not answer. They are recorded, not de
 
 1. **Blind-signing setting.** Ledger's guidelines require blind signing to be enabled by a setting that defaults off. The record allows undecodable calls after a warning, with no setting. Does Ledger's review require the switch?
 2. **Safe batch size.** Whether Safe batches through `MultiSendCallOnly` get a maximum number of legs (the wallet's own batches stop at 8), beyond what the payload buffer allows.
-3. **Safe self-calls to other functions.** A call on the Safe itself that is not one of the nine named admin functions: refused (earlier log rule) or the undecodable-warning path (items 25/26)?
-4. **Unlimited approval, wider.** Does rule 3 also cover `setApprovalForAll(…, true)`, Permit2 approvals, or amounts just below `2^256 − 1`?
-5. **Plain-text message.** Maximum length, and whether non-printable or non-ASCII text is shown escaped, shown as hex, or refused.
-6. **Idle timeout.** None, as in the Ethereum app (assumed here), or an app-level timeout on the decision page?
-7. **Third-party descriptors.** Whether Ledger will sign ERC-20 and ERC-7730 descriptors that a third-party app may verify (open since the XMSS design).
-8. **Slot discovery.** The gap limit `fermion-sdk` uses when scanning slots on restore.
-9. **Guard and Safe messages.** Whether the Guard gates the Safe's own ERC-1271 messages (an earlier log entry's gated fallback handler); if so, a message-approval flow is missing here.
+3. **Unlimited approval, wider.** Does rule 3 also cover `setApprovalForAll(…, true)`, Permit2 approvals, or amounts just below `2^256 − 1`?
+4. **Plain-text message.** For both the wallet message and Safe-message SIWE text: maximum length, and whether non-printable or non-ASCII text is shown escaped, shown as hex, or refused.
+5. **Idle timeout.** None, as in the Ethereum app (assumed here), or an app-level timeout on the decision page?
+6. **Third-party descriptors.** Whether Ledger will sign ERC-20 and ERC-7730 descriptors that a third-party app may verify (open since the XMSS design).
+7. **Slot discovery.** The gap limit `fermion-sdk` uses when scanning slots on restore.
 
 ## Requirement index
 
@@ -380,8 +397,8 @@ Product questions the decision record does not answer. They are recorded, not de
 | LA-025 | The response buffer is wiped after its last byte, at every SIGN, on Quit and on panic. |
 | LA-026 | One signing session at a time; a second SIGN is refused with 0x6986 and the open review dismissed. |
 | LA-027 | Refusals return 0x6A80 with a one-byte reason and draw no screen. |
-| LA-028 | Delegatecall (except a MultiSendCallOnly Safe batch), non-zero gas-refund fields, unlimited approvals, windows over 24 h or inverted, and malformed payloads are refused before any screen, with no override. |
-| LA-029 | The device decodes approve and increaseAllowance natively so the unlimited-approval refusal needs no descriptor. |
+| LA-028 | Delegatecall (except a MultiSendCallOnly Safe batch), non-zero gas-refund fields, unlimited approvals, windows over 24 h or inverted, malformed payloads, non-admin Safe self-calls and hash-only Safe messages are refused before any screen, with no override. |
+| LA-029 | The device decodes approve, increaseAllowance and EIP-2612 Permit natively so the unlimited-approval refusal needs no descriptor. |
 | LA-030 | Without a trusted clock the device checks only the window's length and shape and shows both times in UTC. |
 | LA-031 | Safe self-administration calls are shown on a dedicated screen naming the function and every argument. |
 | LA-032 | A descriptor that fails Ledger-signature verification is discarded and the call is treated as undecodable. |
@@ -411,3 +428,7 @@ Product questions the decision record does not answer. They are recorded, not de
 | LA-056 | A delegatecall Safe transaction is accepted only to a canonical MultiSendCallOnly address compiled into the app. |
 | LA-057 | A MultiSendCallOnly batch must parse exactly with every leg a Call, or it is refused. |
 | LA-058 | Every leg of a Safe batch is decoded, checked as a single transaction and shown in full, in order. |
+| LA-059 | A Safe self-call other than the nine admin functions is refused before any screen, decodable or not. |
+| LA-060 | For a Safe-message approval the device receives the message itself and computes its hash, the Safe message hash and the digest; a hash alone is refused. |
+| LA-061 | Safe-message typed data is shown through a verified ERC-7730 descriptor; plain text is shown in full. |
+| LA-062 | Undecodable typed data is shown after the blind-signing warning with its domain, primary type, every raw field and its hash. |

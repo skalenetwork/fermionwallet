@@ -15,9 +15,9 @@ A conforming signer produces the signatures for the messages the two products de
 | Product | Messages | Defined in |
 |---|---|---|
 | Fermion Wallet | transfer batch (up to 8 legs), plain-text message, Safe transaction signed as a Safe owner | [`fermion-wallet.md`](./fermion-wallet.md#signed-messages), [`fermion-wallet.md`](./fermion-wallet.md#safe-owner-erc-1271) |
-| Fermion Guard | quantum approval of a Safe transaction (inline or stored), module-transaction approval, enableModule, revoke of a stored approval, key rotation | [`fermion-guard.md`](./fermion-guard.md#quantum-approval), [`fermion-guard.md`](./fermion-guard.md#inline-and-stored-approvals), [`fermion-guard.md`](./fermion-guard.md#modules), [`fermion-guard.md`](./fermion-guard.md#key-rotation) |
+| Fermion Guard | quantum approval of a Safe transaction (inline or stored), module-transaction approval, enableModule, approval of a Safe message (gated fallback handler), revoke of a stored approval, key rotation | [`fermion-guard.md`](./fermion-guard.md#quantum-approval), [`fermion-guard.md`](./fermion-guard.md#inline-and-stored-approvals), [`fermion-guard.md`](./fermion-guard.md#modules), [`fermion-guard.md`](./fermion-guard.md#key-rotation) |
 
-A signer MUST NOT produce a Fermion signature over anything else: no arbitrary EIP-712 struct, no permit, no raw hash, no EIP-191 message outside the plain-text message type. [SR-001] A signer MAY support only a subset of the messages above (for example, Guard messages only), and MUST refuse the rest. [SR-002]
+A signer MUST NOT produce a Fermion signature over anything else: no arbitrary EIP-712 struct, no permit, no raw hash, no EIP-191 message outside the plain-text message type. Third-party typed data (a Permit2 or CoW order, a SIWE text) appears only as the *content* of a Guard Safe-message approval, which the signer signs in the Guard's own domain; it is never signed directly. [SR-001] A signer MAY support only a subset of the messages above (for example, Guard messages only), and MUST refuse the rest. [SR-002]
 
 ## Digest
 
@@ -74,14 +74,16 @@ The signer MUST refuse each of the following **before showing anything to the re
 | 3 | An unlimited token approval | it outlives every later review |
 | 4 | `validUntil − validFrom > 24 hours`, or `validFrom > validUntil` | the contracts reject it; a signature that can never be used must not be shown |
 | 5 | A malformed request: unknown domain or type, a field out of range, trailing bytes, more than 8 legs in a wallet batch, a message kind the key's product does not sign | nothing well-defined to show |
+| 6 | A call by the Safe to itself (`to` = the Safe) that is not one of the nine self-administration functions above — at top level or in a batch leg (decision record C9) | a self-call is the takeover vector; the undecodable-call warning applies to external calls only |
+| 7 | A Safe-message approval for which the signer is given only a hash, not the message | nothing to show; the signer never signs a host hash |
 
-"Unlimited approval" covers at least an ERC-20 `approve` (or `increaseAllowance`) whose amount is `2^256 − 1`, wherever it appears — the top-level call, a leg of a batch, or a call inside a decoded descriptor. [SR-026]
+"Unlimited approval" covers at least an ERC-20 `approve` (or `increaseAllowance`) whose amount is `2^256 − 1`, and an EIP-2612 `Permit` whose `value` is `2^256 − 1`, wherever it appears — the top-level call, a leg of a batch, a call inside a decoded descriptor, or the typed data of a Safe message. [SR-026] Refusal 6 is part of [SR-025] and holds wherever a Safe transaction reaches a signer. [SR-044]
 
 These refusals apply on both paths a Safe transaction reaches a signer — as a Fermion Guard approval and as a Fermion Wallet owner signature. On the owner path there may be no Guard on the Safe, so the signer is the only check. [SR-027]
 
 ### Safe batches
 
-Decision record clarification C7. A Safe transaction with `operation = DelegateCall` is accepted only when `to` is the canonical `MultiSendCallOnly` deployment for a supported Safe version (1.3.0, 1.4.1, 1.5.0); the signer carries those addresses itself and never takes them from the host. Its calldata MUST be a well-formed `multiSend(bytes)` whose every leg has `operation = Call`; a leg with any other operation, or calldata that does not parse exactly, is refused. Every leg is decoded and checked under the same rules as a single transaction — refusals 3 and 5, the self-administration screen, the undecodable-call warning — and every leg is shown to the reviewer in full, in order. [SR-042] Module transactions get no such exception. [SR-043]
+Decision record clarification C7. A Safe transaction with `operation = DelegateCall` is accepted only when `to` is the canonical `MultiSendCallOnly` deployment for a supported Safe version (1.3.0, 1.4.1, 1.5.0); the signer carries those addresses itself and never takes them from the host. Its calldata MUST be a well-formed `multiSend(bytes)` whose every leg has `operation = Call`; a leg with any other operation, or calldata that does not parse exactly, is refused. Every leg is decoded and checked under the same rules as a single transaction — refusals 3, 5 and 6, the self-administration screen, the undecodable-call warning — and every leg is shown to the reviewer in full, in order. [SR-042] Module transactions get no such exception. [SR-043]
 
 ### Validity window
 
@@ -89,11 +91,20 @@ Every signed message carries `validFrom` and `validUntil`; the contracts require
 
 ### Undecodable calls
 
-A call the signer cannot decode — no verified descriptor for its target and selector — is **not refused**. It MAY be signed only after a strong warning that the call cannot be verified, followed by: the target address, the 4-byte selector, the value, the complete calldata in hex (paged, never truncated), and `keccak256` of the calldata. [SR-029] Refusals 1–5 still apply first. Undecodable calldata cannot be checked for an unlimited approval; the warning is what the reviewer has.
+A call the signer cannot decode — no verified descriptor for its target and selector — is **not refused**. It MAY be signed only after a strong warning that the call cannot be verified, followed by: the target address, the 4-byte selector, the value, the complete calldata in hex (paged, never truncated), and `keccak256` of the calldata. [SR-029] Refusals 1–7 still apply first; in particular an undecodable call to the Safe itself is refused (refusal 6), not warned about. Undecodable calldata cannot be checked for an unlimited approval; the warning is what the reviewer has.
+
+### Safe messages
+
+Decision record clarification C8: Fermion Guard keeps a gated fallback handler, so the Safe answers ERC-1271 for its own off-chain messages (Permit2, CoW orders, SIWE) only when the Quantum Administrator approved that message. The approval is a Guard struct over the Safe message, defined in [`fermion-guard.md`](./fermion-guard.md).
+
+- The signer MUST receive the message itself — EIP-712 typed data (domain, types, primary type, values) or EIP-191 plain text — and compute its hash, and the Safe's message hash over it, inside its boundary. A message supplied only as a hash is refused (refusal 7). [SR-045]
+- Typed data is shown decoded through a verified Ledger-signed ERC-7730 descriptor. Plain text (SIWE, ownership proofs) is shown in full. [SR-046]
+- Typed data without a verified descriptor is **not refused**: it MAY be signed only after the same strong warning as an undecodable call, followed by the typed-data domain (every field present), the primary type, every field of the message as name and raw value (paged, never truncated), and the message's EIP-712 hash in full. Refusals 3–5 and 7 apply first. [SR-047]
+- Every Safe-message approval also shows the role, the Safe, the chain, the Guard and the validity window. [SR-048]
 
 ### Descriptors
 
-Contract calls are decoded with ERC-7730 descriptors signed by Ledger (Ledger's clear-signing registry). The signer MUST verify the descriptor's signature inside its boundary before using it. A descriptor whose signature does not verify, or that is missing, makes the call undecodable — it never makes it refused, and never makes it decoded. [SR-030] The host supplies descriptors; `fermion-sdk` caches them. The host is trusted for availability only.
+Contract calls and typed-data messages are decoded with ERC-7730 descriptors signed by Ledger (Ledger's clear-signing registry). The signer MUST verify the descriptor's signature inside its boundary before using it. A descriptor whose signature does not verify, or that is missing, makes the call undecodable — it never makes it refused, and never makes it decoded. [SR-030] The host supplies descriptors; `fermion-sdk` caches them. The host is trusted for availability only.
 
 ### Signers without a screen
 
@@ -118,7 +129,7 @@ A signer's firmware or application is part of the key: any code allowed to run t
 
 | ID | Requirement |
 |---|---|
-| SR-001 | A signer produces Fermion signatures only over the message types the two products define: no arbitrary EIP-712, permit, raw hash or other EIP-191 message. |
+| SR-001 | A signer produces Fermion signatures only over the message types the two products define; third-party typed data or text is only ever the content of a Guard Safe-message approval, never signed directly. |
 | SR-002 | A signer may support a subset of the messages and must refuse the rest. |
 | SR-003 | The digest is the EIP-712 digest of the contract's own domain and types, implemented byte for byte; unknown domains or types are refused. |
 | SR-004 | The domain's chainId and verifyingContract come from the request, are shown, and are never defaulted. |
@@ -143,7 +154,7 @@ A signer's firmware or application is part of the key: any code allowed to run t
 | SR-023 | A Safe transaction review shows role, Safe, chain, Safe nonce, to, value, call, operation, safeTxGas and baseGas. |
 | SR-024 | Safe self-administration calls get a dedicated screen naming the function and arguments; enableModule opens with its own warning. |
 | SR-025 | The listed refusals happen before anything is shown, with no override. |
-| SR-026 | An unlimited approval includes at least an ERC-20 approve or increaseAllowance of 2^256 − 1, anywhere in the request. |
+| SR-026 | An unlimited approval includes at least an ERC-20 approve or increaseAllowance, or an EIP-2612 Permit, of 2^256 − 1, anywhere in the request. |
 | SR-027 | The refusals apply on both the Guard-approval and the Safe-owner paths. |
 | SR-028 | A signer without a trusted clock checks the window's length and shape and shows both times; one with a trusted clock should also refuse an expired window. |
 | SR-029 | An undecodable call may be signed only after a strong warning showing target, selector, value, full calldata hex and its keccak256. |
@@ -161,3 +172,8 @@ A signer's firmware or application is part of the key: any code allowed to run t
 | SR-041 | A phrase-based signer's app is installed only from a verifying channel, and test builds are distinguishable on the signer. |
 | SR-042 | A delegatecall Safe transaction is accepted only to a canonical MultiSendCallOnly deployment held by the signer, with every leg a Call, each leg checked as a single transaction and shown in full. |
 | SR-043 | Module transactions have no delegatecall exception. |
+| SR-044 | A Safe self-call other than the nine self-administration functions is refused before any screen, at top level or in a batch leg. |
+| SR-045 | For a Safe-message approval the signer receives the message itself and computes its hash and the Safe message hash; a hash alone is refused. |
+| SR-046 | Safe-message typed data is decoded only through a verified Ledger-signed ERC-7730 descriptor; plain text is shown in full. |
+| SR-047 | Undecodable typed data may be signed only after the strong warning, showing the domain, primary type, every raw field and the message hash. |
+| SR-048 | A Safe-message approval shows the role, Safe, chain, Guard and validity window. |
