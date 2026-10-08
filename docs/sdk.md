@@ -196,10 +196,11 @@ Canonical types: [quantum approval](./fermion-guard.md#quantum-approval),
 ```ts
 interface SafeTx {
   to: Address; value: bigint; data: Hex;
-  operation: 0;                   // Call only; DelegateCall is refused before signing
+  operation: 0 | 1;               // 1 (DelegateCall) only to the canonical MultiSendCallOnly
   safeTxGas: bigint; baseGas: bigint;
-  gasPrice: 0n; gasToken: "0x0000000000000000000000000000000000000000";
-  refundReceiver: "0x0000000000000000000000000000000000000000";
+  gasPrice: bigint;               // must be 0
+  gasToken: Address;              // must be address(0)
+  refundReceiver: Address;        // must be address(0)
   nonce: bigint;                  // the Safe's nonce
 }
 
@@ -219,6 +220,25 @@ function buildRevoke(g: GuardRef, safeTxHash: Bytes32, w: ValidityWindow): Paylo
 /** Rotation: the old key approves the hash of the new, already registered key. */
 function buildRotate(g: GuardRef, newKey: PublicKeys, w: ValidityWindow): Payload<unknown>;
 ```
+
+### Batched Safe transactions
+
+```ts
+interface SafeCall { to: Address; value: bigint; data: Hex }   // every leg is a Call
+
+/** A Safe batch: DelegateCall to the canonical MultiSendCallOnly deployment of the Safe's
+ *  version, data = multiSend(encoded legs). Each leg is pre-checked exactly as a single
+ *  transaction would be (gas-refund and unlimited-approval rules, descriptors, warnings);
+ *  any leg that would be refused alone makes the whole batch refused. */
+function buildMultiSend(g: GuardRef, legs: SafeCall[], nonce: bigint): SafeTx;
+
+/** Decode a batch back into legs; throws DelegateCallRefused for any other delegatecall target
+ *  and NestedOperationRefused for a leg whose operation is not Call. */
+function decodeMultiSend(tx: SafeTx, chainId: bigint): SafeCall[];
+```
+
+The device shows every leg. Module transactions get no delegatecall exception, batched or not.
+The same builder serves a Fermion Wallet signing as a Safe owner.
 
 `unknown` marks message types the guard document defines; the SDK exposes them under the same
 names once fixed.
@@ -397,7 +417,8 @@ All errors extend `FermionError` with a stable `code`.
 
 | Code | Thrown when | Raised by |
 |---|---|---|
-| `DelegateCallRefused` | `operation` is not Call | SDK pre-check and device |
+| `DelegateCallRefused` | `operation` is DelegateCall to anything but the canonical MultiSendCallOnly, or any module delegatecall | SDK pre-check and device |
+| `NestedOperationRefused` | a MultiSendCallOnly leg is not a Call | SDK pre-check and device |
 | `GasRefundRefused` | non-zero `gasPrice`, `gasToken` or `refundReceiver` | SDK pre-check and device |
 | `UnlimitedApprovalRefused` | an approve or permit for an unlimited amount | SDK pre-check and device |
 | `WindowTooLong` | `validUntil - validFrom` over 24 hours | SDK pre-check and device |

@@ -159,6 +159,11 @@ When a Safe transaction is proposed:
    - **Inline:** attached to the owners' signatures and checked when the transaction executes.
    - **Stored:** saved on chain first, so any Safe interface's Execute button works. It is used once.
 
+**Batches.** A Safe batch (several transfers or calls in one transaction, through Safe's standard
+MultiSendCallOnly contract) gets one approval. The Ledger shows **every step** of the batch, and
+checks each step as strictly as a single transaction: if any step would be refused on its own,
+the whole batch is refused. Module transactions cannot be batched this way.
+
 The owners still have to reach the threshold as usual. An approval does nothing for a different
 transaction, a different Safe or a different chain.
 
@@ -208,7 +213,7 @@ enough owner keys and the honest owners do not, 14 days later the Guard comes of
 
 | Refusal | Why |
 |---|---|
-| Delegate call | A Safe transaction that runs another contract's code inside the Safe. It can do anything to the Safe |
+| Delegate call | A Safe transaction that runs another contract's code inside the Safe. It can do anything to the Safe. The only exception is a Safe batch through Safe's standard MultiSendCallOnly contract, where each step is checked and shown on its own |
 | Gas refund | The Safe would pay someone for gas. This has been used to drain Safes |
 | Unlimited approval | Lets someone spend any amount of your tokens forever |
 | Validity window too long | The two times are more than 24 hours apart |

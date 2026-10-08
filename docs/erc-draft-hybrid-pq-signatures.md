@@ -8,7 +8,7 @@ status: Draft
 type: Standards Track
 category: ERC
 created: 2026-10-08
-requires: 191, 712, 1271, 7825
+requires: 191, 712, 1271, 7702, 7825
 ---
 
 ## Abstract
@@ -156,7 +156,7 @@ parameter set.
 **EOA-only classical half.** Checking the classical half through ERC-1271 would make its validity
 depend on arbitrary code, which can change, and would put a second contract's logic inside the
 hybrid check. ECDSA recovery is simple, has no external call, and is what the hardware signers this
-format targets produce. An EIP-7702 delegation set on `admin` later does not matter, because only
+format targets produce. An [EIP-7702](./eip-7702.md) delegation set on `admin` later does not matter, because only
 recovery is used.
 
 **ERC-1271 wrapping.** Signing a foreign hash directly would let one hybrid signature answer for

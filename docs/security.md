@@ -121,7 +121,10 @@ validity window, or a bare hash.
   [display and refusal rules](./signer-requirements.md#display-and-refusal-rules)).
 - The device refuses, before any screen, a Safe transaction with `operation` other than
   Call, non-zero `gasPrice`, `gasToken` or `refundReceiver`, or an unlimited token approval
-  ([acceptance rules](./ledger-app.md#acceptance-rules)).
+  ([acceptance rules](./ledger-app.md#acceptance-rules)). The one delegatecall it accepts is a
+  Safe batch to the canonical MultiSendCallOnly deployment: every leg must be a Call, every leg
+  is checked as if it were a single transaction, and every leg is shown. Module transactions
+  get no such exception.
 - The device refuses a validity window longer than 24 hours and shows both times in UTC. It
   has no trusted clock, so it cannot check that the window is current; the contract does.
 - Keys never leave the device. A compromised host cannot sign without a human pressing the
@@ -279,6 +282,7 @@ release work ([release gates](./release.md#release-gates)); the proof is not don
 | Phrase | **Yes** | Total for that phrase | As for phishing |
 | Device, no PIN | No | Device wiped | Restore phrase on a new device |
 | Device + PIN | Wallet: **yes**. Guard: no | Wallet: drain race. Guard: approvals only | Restore and move (wallet); restore and rotate (guard) |
+| Host disguising a delegatecall as a batch | No | Refused unless the target is the canonical MultiSendCallOnly and every leg is a Call that passes the single-transaction checks | None needed |
 | Relayer | No | Delay | Resubmit through any other relayer or own EOA |
 | Verifier accepts forgeries | Not alone; **yes** with a quantum attacker | ML-DSA half void | New wallet or re-enrollment |
 | Verifier rejects valid signatures | Wallet: **stuck**. Guard: no | Liveness | Guard: emergency removal. Wallet: none |
