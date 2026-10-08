@@ -120,13 +120,13 @@ A payload is fully received and parsed before the first page is drawn; nothing i
 
 ML-DSA public keys and signatures exceed the 258-byte response limit, so they are paged out with `GET_RESPONSE_CHUNK`, 255 bytes per chunk [LA-023].
 
-After the holder approves, `SIGN` answers with the digest it computed and the length of the buffered signature. The buffer is **ML-DSA signature first, ECDSA `r ‖ s ‖ v` last**, so a host cannot hold the classical half without having first received the whole post-quantum half [LA-024]. The host reorders the halves into the wire encoding (ECDSA ‖ ML-DSA) defined by the ERC draft.
+After the holder approves, `SIGN` answers with the digest it computed and the length of the buffered signature. The buffer is `validFrom (8) ‖ validUntil (8) ‖ ML-DSA signature ‖ ECDSA r ‖ s ‖ v (65)`: the window first, exactly as signed, then **ML-DSA, then ECDSA last**, so a host cannot hold the classical half without having first received the whole post-quantum half [LA-024]. It has the length of the decision record's C10 blob (`validFrom ‖ validUntil ‖ ECDSA ‖ ML-DSA`); the host moves the 65 ECDSA bytes in front of the ML-DSA signature to form that blob, or splits the halves for calls that take them separately ([`erc-draft-hybrid-pq-signatures.md`](./erc-draft-hybrid-pq-signatures.md)).
 
 | | ML-DSA-44 | ML-DSA-65 |
 |---|---|---|
 | public key read-out, chunks @255 B | 6 (measured) | 8 (measured) |
 | ML-DSA signature alone, chunks @255 B | 10 (measured) | 13 (measured) |
-| signature buffer with the 65-byte ECDSA half appended | 2,485 B → 10 chunks (computed, not measured) | 3,374 B → 14 chunks (computed, not measured) |
+| signature buffer, window + ML-DSA + ECDSA (C10 blob length) | 2,501 B → 10 chunks (computed, not measured) | 3,390 B → 14 chunks (computed, not measured) |
 
 The buffer is wiped once its last byte has been delivered, at the start of every `SIGN` command (accepted or refused), on Quit, and in the panic hook [LA-025]. `GET_RESPONSE_CHUNK` with `P1 = 00` restarts the current read-out from the beginning; with nothing buffered it answers `0x6901`.
 
@@ -177,7 +177,7 @@ The device decides what it will put on the screen before it draws anything. Thes
 | 1 | `operation = DelegateCall`, except a Safe batch through `MultiSendCallOnly` ([Safe batches](#safe-batches)) | Safe transactions (kinds `0x03`, `0x10`); module transactions (`0x11`) with no exception |
 | 2 | non-zero `gasPrice`, non-zero `gasToken` or non-zero `refundReceiver` | Safe transactions (`0x03`, `0x10`) |
 | 3 | an unlimited approval: ERC-20 `approve` (`0x095ea7b3`) or `increaseAllowance` (`0x39509351`) with amount `2^256 − 1` | any call the device decodes, top level or inside a descriptor |
-| 4 | `validUntil − validFrom > 86,400` seconds, or `validFrom > validUntil` | every kind |
+| 4 | `validUntil − validFrom > 86,400` seconds, or `validFrom > validUntil` | every kind, including Safe-owner signatures (`0x03`) and Safe-message approvals (`0x14`) (decision record C10) |
 | 5 | malformed: unknown kind, a field out of range, trailing bytes, a path of the wrong shape, an unrenderable time, more than 8 legs | every kind |
 | 6 | a call by the Safe to itself (`to` = the Safe) that is not one of the nine admin functions of [Decoded calls](#decoded-calls), decodable or not, at top level or in a batch leg (decision record C9) | Safe transactions (`0x03`, `0x10`), module transactions (`0x11`) |
 | 7 | a Safe message supplied only as a hash | Safe-message approvals (`0x14`) |
@@ -234,7 +234,7 @@ For address-ownership proofs and Sign-In with Ethereum. The text is shown in ful
 
 ### Fermion Wallet: Safe transaction as owner (kind `0x03`)
 
-The wallet is an owner of a Safe and answers the Safe's ERC-1271 check ([`fermion-wallet.md`](./fermion-wallet.md#safe-owner-erc-1271)). The host sends the SafeTx fields, the Safe address and the chain ID. The device applies the acceptance rules, shows the transaction, computes the Safe's `safeTxHash` itself, wraps it in the wallet's domain and signs the wrapped digest [LA-039].
+The wallet is an owner of a Safe and answers the Safe's ERC-1271 check ([`fermion-wallet.md`](./fermion-wallet.md#safe-owner-erc-1271)). The host sends the SafeTx fields, the Safe address and the chain ID. The device applies the acceptance rules, shows the transaction, computes the Safe's `safeTxHash` itself, wraps it with the validity window as `SignedHash(bytes32 hash, uint64 validFrom, uint64 validUntil)` in the wallet's domain (decision record C10) and signs the wrapped digest [LA-039].
 
 The first field is `Role: Sign as Safe OWNER`; then `Safe`, `Network`, `Safe nonce`, the decoded call ([Decoded calls](#decoded-calls)) or the undecodable warning and fields, `Value`, `Operation: Call`, `safeTxGas`, `baseGas`, `Wallet`, `Valid from`, `Valid until`, `Key`. Intent `Review Safe transaction`; decision `Sign as Safe owner?`. A Safe self-administration call uses its dedicated screen, and `enableModule` its warning ([below](#fermion-guard-enablemodule)).
 
@@ -393,7 +393,7 @@ Product questions the decision record does not answer. They are recorded, not de
 | LA-021 | The host sends message fields, never an EIP-712 encoding, struct hash or digest. |
 | LA-022 | A payload is fully received and parsed before the first page is drawn. |
 | LA-023 | Public keys and signatures are read out in 255-byte chunks with GET_RESPONSE_CHUNK. |
-| LA-024 | The signature buffer holds the ML-DSA half first and the ECDSA half last. |
+| LA-024 | The signature buffer holds validFrom and validUntil as signed, then the ML-DSA half, then the ECDSA half last. |
 | LA-025 | The response buffer is wiped after its last byte, at every SIGN, on Quit and on panic. |
 | LA-026 | One signing session at a time; a second SIGN is refused with 0x6986 and the open review dismissed. |
 | LA-027 | Refusals return 0x6A80 with a one-byte reason and draw no screen. |

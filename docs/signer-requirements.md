@@ -29,12 +29,12 @@ The domains, type strings and field order are those of the contract the signatur
 
 - **Domain binding.** The domain's `chainId` and `verifyingContract` MUST come from the request and MUST be shown to the reviewer ([Display and refusal rules](#display-and-refusal-rules)). A signer MUST NOT default either. [SR-004]
 - **Rebuilt, never received.** The signer MUST compute the digest itself, from the fields the reviewer approved. It MUST NOT sign a digest, a `safeTxHash`, a struct hash or any other hash supplied by the host, and MUST NOT accept a host hash even as a cross-check whose mismatch is only reported. [SR-005] Where a message contains a hash of other data — a Safe transaction's `data`, a module transaction's `dataHash` — the signer MUST receive the data itself and hash it, unless the data is shown to the reviewer only as that hash by design (a revoke names the approval it kills by its hash). [SR-006]
-- **Safe owner path.** When a Fermion Wallet signs as a Safe owner, the signer receives the full SafeTx fields plus the Safe address and chain ID, computes the Safe's own `safeTxHash` for that Safe version, then wraps it in the wallet's domain as defined in [`fermion-wallet.md`](./fermion-wallet.md#safe-owner-erc-1271). Both steps happen inside the signer. [SR-007]
+- **Safe owner path.** When a Fermion Wallet signs as a Safe owner, the signer receives the full SafeTx fields plus the Safe address and chain ID, computes the Safe's own `safeTxHash` for that Safe version, then wraps it, with the validity window, as `SignedHash(bytes32 hash, uint64 validFrom, uint64 validUntil)` in the wallet's domain as defined in [`fermion-wallet.md`](./fermion-wallet.md#safe-owner-erc-1271) (decision record C10). Both steps happen inside the signer. [SR-007]
 - **Inline and stored approvals are the same bytes.** A Guard approval is one struct whether the host appends it to the Safe's `signatures` or submits it to `preApprove`. The signer MUST NOT need to know which, and MUST NOT sign differently for either. [SR-008]
 
 ## Signature
 
-- **Hybrid.** Every Fermion signature has two halves: ECDSA over secp256k1 and ML-DSA, both over the same digest. A signer MUST compute both inside its boundary and MUST NOT release either half unless both were computed. [SR-009] The wire encoding (ECDSA ‖ ML-DSA, and its ERC-1271 wrapping) is the ERC draft's.
+- **Hybrid.** Every Fermion signature has two halves: ECDSA over secp256k1 and ML-DSA, both over the same digest. A signer MUST compute both inside its boundary and MUST NOT release either half unless both were computed. [SR-009] The wire encoding is the ERC draft's ([`erc-draft-hybrid-pq-signatures.md`](./erc-draft-hybrid-pq-signatures.md)). Where one `bytes` value carries the signature — ERC-1271 owner signatures, Safe-message approvals, inline Guard approvals — it is the blob `validFrom (8) ‖ validUntil (8) ‖ ECDSA r‖s‖v (65) ‖ ML-DSA signature` (decision record C10); the contracts reject any other length. The `validFrom` and `validUntil` in the blob MUST be the ones in the digest the signer signed. [SR-049]
 - **ECDSA half.** 65 bytes `r ‖ s ‖ v` with `s` in the lower half of the curve order and `v ∈ {27, 28}`. The contracts check it by ECDSA recovery only (OpenZeppelin `tryRecover`, which rejects a high `s`). [SR-010] The ECDSA key's address MUST be an externally owned account: the contracts refuse an address with code at deployment and enrollment, and no contract-wallet admin is supported. [SR-011]
 - **ML-DSA half: pure, empty context.** ML-DSA as in FIPS 204, the external (pure) interface — not HashML-DSA — with an empty context string. The message passed to ML-DSA is the 32-byte digest, so the internal message is `M' = 0x00 ‖ 0x00 ‖ digest`. [SR-012]
 - **Parameter sets.** ML-DSA-44 (algorithm id `0x0101`) is the default; ML-DSA-65 (`0x0102`) is opt-in. The set is fixed per key at creation and the contract stores it. A signer MUST sign with the set its key was enrolled with. [SR-013] The contracts also accept ML-DSA-87 (`0x0103`); a signer MAY produce it. No v2 reference signer does: the Ledger app ships 44 and 65 only, and the nShield signer is a design. [SR-014]
@@ -44,6 +44,7 @@ The domains, type strings and field order are those of the contract the signatur
 | | ML-DSA-44 | ML-DSA-65 | ML-DSA-87 |
 |---|---|---|---|
 | public key / signature bytes | 1312 / 2420 | 1952 / 3309 | 2592 / 4627 |
+| signature blob (C10), bytes | 2501 | 3390 | 4708 |
 | algorithm id | `0x0101` | `0x0102` | `0x0103` |
 
 Sizes are from the [measured-facts table](./v2-decisions.md#measured-facts-cite-these-do-not-retype-from-memory) of the decision record.
@@ -60,7 +61,7 @@ A signature is an authorization. What the reviewer did not see, they did not aut
 - **Addresses in full**, as `0x` + EIP-55 checksummed hex, never truncated. **32-byte values in full.** [SR-020]
 - **Amounts unambiguous.** An amount is shown either decimals-adjusted with the token symbol from a verified descriptor, or as the raw integer labelled as raw units together with the token contract address. A signer MUST NOT guess decimals. [SR-021]
 - **Times as absolute UTC.** `validFrom` and `validUntil` are shown as absolute UTC date-times, never as durations. A time the signer cannot render exactly is refused, not rounded. [SR-022]
-- **A Safe transaction** shows: the role, the Safe address, the chain, the Safe nonce, `to`, `value`, the decoded call (or the undecodable-call warning below), `operation`, `safeTxGas` and `baseGas`. [SR-023]
+- **A Safe transaction** shows: the role, the Safe address, the chain, the Safe nonce, `to`, `value`, the decoded call (or the undecodable-call warning below), `operation`, `safeTxGas`, `baseGas`, `Valid from` and `Valid until`. [SR-023]
 - **Safe self-administration** (`addOwnerWithThreshold`, `removeOwner`, `swapOwner`, `changeThreshold`, `setGuard`, `setFallbackHandler`, `enableModule`, `disableModule`, `setModuleGuard`) is shown on a dedicated screen that names the function and every argument, never as a generic decoded call. `enableModule` additionally opens with its own warning. [SR-024]
 
 ### Refusals
@@ -87,7 +88,7 @@ Decision record clarification C7. A Safe transaction with `operation = DelegateC
 
 ### Validity window
 
-Every signed message carries `validFrom` and `validUntil`; the contracts require `validFrom ≤ block.timestamp ≤ validUntil` and `validUntil − validFrom ≤ 24 h` ([`fermion-wallet.md`](./fermion-wallet.md#replay-and-validity-window)). A signer without a trusted clock cannot check `block.timestamp`; it checks the window's length and shape (refusal 4) and shows both times so the reviewer can judge them. A signer with a trusted clock SHOULD also refuse a `validUntil` already in the past. [SR-028]
+Every signed message carries `validFrom` and `validUntil` — including ERC-1271 owner signatures, Safe-message approvals and inline Guard approvals (decision record C10); the contracts require `validFrom ≤ block.timestamp ≤ validUntil` and `validUntil − validFrom ≤ 24 h` ([`fermion-wallet.md`](./fermion-wallet.md#replay-and-validity-window)). A signer without a trusted clock cannot check `block.timestamp`; it checks the window's length and shape (refusal 4) and shows both times so the reviewer can judge them. A signer with a trusted clock SHOULD also refuse a `validUntil` already in the past. [SR-028]
 
 ### Undecodable calls
 
@@ -135,7 +136,7 @@ A signer's firmware or application is part of the key: any code allowed to run t
 | SR-004 | The domain's chainId and verifyingContract come from the request, are shown, and are never defaulted. |
 | SR-005 | The signer computes the digest from the approved fields and never signs, or cross-checks against, a host-supplied hash. |
 | SR-006 | Hashed sub-data (Safe calldata, module dataHash) is received in full and hashed by the signer, except where a hash is itself the displayed field by design. |
-| SR-007 | On the Safe owner path the signer computes safeTxHash and its wrapping in the wallet domain itself. |
+| SR-007 | On the Safe owner path the signer computes safeTxHash and its SignedHash wrapping, with the validity window, in the wallet domain itself. |
 | SR-008 | Inline and stored Guard approvals are the same signed bytes; the signer does not distinguish them. |
 | SR-009 | Both halves are computed inside the signer over the same digest, and neither is released unless both were computed. |
 | SR-010 | The ECDSA half is 65 bytes r‖s‖v with low s and v in {27, 28}. |
@@ -151,7 +152,7 @@ A signer's firmware or application is part of the key: any code allowed to run t
 | SR-020 | Addresses are shown in full EIP-55; 32-byte values in full. |
 | SR-021 | Amounts are decimals-adjusted from a verified descriptor or shown as raw units with the token address; decimals are never guessed. |
 | SR-022 | validFrom and validUntil are shown as absolute UTC; an unrenderable time is refused. |
-| SR-023 | A Safe transaction review shows role, Safe, chain, Safe nonce, to, value, call, operation, safeTxGas and baseGas. |
+| SR-023 | A Safe transaction review shows role, Safe, chain, Safe nonce, to, value, call, operation, safeTxGas, baseGas and the validity window. |
 | SR-024 | Safe self-administration calls get a dedicated screen naming the function and arguments; enableModule opens with its own warning. |
 | SR-025 | The listed refusals happen before anything is shown, with no override. |
 | SR-026 | An unlimited approval includes at least an ERC-20 approve or increaseAllowance, or an EIP-2612 Permit, of 2^256 − 1, anywhere in the request. |
@@ -177,3 +178,4 @@ A signer's firmware or application is part of the key: any code allowed to run t
 | SR-046 | Safe-message typed data is decoded only through a verified Ledger-signed ERC-7730 descriptor; plain text is shown in full. |
 | SR-047 | Undecodable typed data may be signed only after the strong warning, showing the domain, primary type, every raw field and the message hash. |
 | SR-048 | A Safe-message approval shows the role, Safe, chain, Guard and validity window. |
+| SR-049 | A single-bytes signature is the blob validFrom‖validUntil‖ECDSA‖ML-DSA, with the same window as the signed digest. |
