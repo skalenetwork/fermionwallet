@@ -1,4 +1,115 @@
-# Core spec draft — hybrid ECDSA + ML-DSA-65 (pending feasibility gates)
+# Fermion v2 — decision record
+
+**Writers: implement the CURRENT STATE section below. The decision log after it is history:
+later entries supersede earlier ones, and several were reversed (monorepo 42→44, interface
+45→46, ML-DSA-87 on device 39→48). Where the log and this section disagree, this section wins.**
+
+## CURRENT STATE (authoritative)
+
+### Products and naming
+- Brand **Fermion**. **Fermion Wallet**: post-quantum cold vault (receives anything; sends ETH, ERC-20,
+  ERC-721/1155 deliberately; batches of up to 8 legs; no DeFi, no approve, no arbitrary call, no modules).
+  **Fermion Guard**: post-quantum gate for Safes (full ecosystem). One Ledger app named "Fermion".
+  Client library npm `fermion-sdk`. Repo rename fermionwallet→fermion deferred to the dedicated-domain move.
+- Licence: Fermion repo AGPL-3.0-or-later; all verifier libraries MIT; ERC drafts CC0.
+
+### Signatures and keys
+- Hybrid: ECDSA (secp256k1) + ML-DSA, both over the same 32-byte EIP-712 digest. ML-DSA is pure
+  (FIPS 204 external interface), empty context. Hedged signing on device (deterministic only in test builds).
+- ECDSA half: the admin MUST be an EOA (constructor/enrollment refuse code); checked only by ECDSA recovery.
+  No ERC-1271 admin, no adminIsContract snapshot. ERC-1271 appears only INBOUND (Fermion Wallet answering
+  as a Safe owner, both the bytes32 and legacy bytes forms).
+- Keys derived from the recovery phrase, ONE KEY PER CONTRACT (wallet or Safe), path
+  m/<purpose>'/60'/<slot>'/<role>'/<paramSet>' all hardened (purpose placeholder 204', role 0'=Wallet 1'=Guard,
+  paramSet 0'=44 1'=65); ECDSA key = child 0', ML-DSA seed xi = SHA-256(label ‖ privkey of child 1'),
+  label "FermionWallet/ML-DSA-<set>/xi/v1". BIP-39 passphrase recommended, not required.
+- Parameter sets: ML-DSA-44 default, ML-DSA-65 opt-in at creation/enrollment (both products).
+  ML-DSA-87 is CONTRACT-LEVEL ONLY: accepted by the contracts, but no v2 signer produces it (Ledger app ships
+  44/65 only; nShield app is a design doc). Fermion accepts ML-DSA only — no SLH-DSA/FN-DSA/LMS.
+
+### Contracts
+- Verification: Fermion calls `IPQVerifier` (skalenetwork/pq-verifier-interface) and stores a
+  `uint256 algorithm` per wallet/Safe, restricted to 0x0101 (44), 0x0102 (65), 0x0103 (87). `IMLDSAVerifier`
+  and `ParamSet` are internal to mldsa-solidity. Verifier address fixed at deployment (no switching).
+- Per-key precomputation via MLDSAKeyFactory (registerA/commitA/storeA/registerT; 87 in two A parts).
+  Wallet setup in ONE transaction (commitA + registerT + clone deploy); first transfer stores A (calldata);
+  public key stored as contract code. Unregistered key → full-verify fallback.
+- Replay: sequential nonce; every signed struct carries validFrom + validUntil, contracts enforce
+  validFrom <= block.timestamp <= validUntil and validUntil - validFrom <= 24h.
+- Deployment: Arachnid deterministic deployer 0x4e59b44847b379578588920cA78FbF26c0B4956C, fixed salts, same
+  addresses on every chain (mainnet, Base, Arbitrum, Optimism). Wallets = clones of one implementation
+  (clone-with-immutable-args), created UP FRONT.
+- Fermion Wallet: transfer/batch path (≤8 legs, ETH/ERC-20/721/1155), payable, NFT receiver hooks,
+  ERC-1271 as Safe owner (signs SafeTx: ERC-20/ETH/named Safe admin/ERC-7730 calls; undecodable calls allowed
+  after a strong warning; delegatecall, non-zero gas-refund fields, unlimited approvals always refused) and
+  plain-text messages (SIWE / ownership proofs). Gas paid by the user's EOA or any relayer; no reimbursement.
+- Fermion Guard: one Quantum Administrator per Safe; EVERY Safe transaction needs a quantum approval
+  (only exceptions: emergency-removal calls). Approvals INLINE (appended to Safe signatures) or STORED
+  (preApprove, consumed once; revocable by the Admin (hybrid-signed) or by the Safe itself; key-epoch counter
+  kills old-key approvals). No on-chain spending policy, no pause. Modules only on Safe >=1.5.0 with the guard
+  as module guard, every module tx gated, enableModule has its own device screen. Supports Safe 1.3.0/1.4.1/1.5.0.
+  Key rotation: old key approves the new key's hash. Emergency removal: owners request, 14-day timelock,
+  only owners cancel; while pending the Safe is frozen except cancel, final removal, and rescue transfers
+  (quantum approval + owner threshold). Threat model covers case 1 only (honest owners keep working keys).
+
+### Device and signers
+- Ledger app "Fermion": Nano S Plus, Nano X, Stax/Flex (NBGL UI); Ledger SDK ML-DSA with mldsa_optimization;
+  SDK pinned v26.6.5 87def514 (private MLDSA_internal_* symbols; ask Ledger for a public seeded API).
+  ERC-7730 descriptors: Ledger-signed only, cached in fermion-sdk. Device refuses windows > 24h.
+  Device model (demo/ledger-proof) is checked against the REAL app in Speculos (Nano + Stax/Flex).
+- Signer requirements doc (normative, informational companion to the ERC); Ledger app is the reference signer;
+  nShield CodeSafe signer = design doc + shared Rust signer-core (no SDK yet).
+
+### UIs, SDK, ops
+- fermion-sdk (EIP-712 payloads, WebHID + Ledger Live transport, hybrid/inline Safe signatures, factory
+  registration, open relayer interface, cached descriptors). Safe App: full flow (enroll, approve inline/stored,
+  execute, revoke, rotate, emergency removal). Web UI (github.io previews; dedicated domain before mainnet)
+  + Ledger Live app (both built). No UI ever has a recovery-phrase field.
+- Self-hostable event watcher (removal requests, stored approvals, rotations; email/webhook).
+- Demos use the real Ledger app in Speculos; demo moves to Safe 1.5.0.
+
+### Process
+- Branch ml-dsa-v2; push after each phase; merge to main only when ALL 11 phases are done; v2.0.0;
+  local tag xmss-final on the last XMSS commit (push on request).
+- Phase order: specs → contracts+tests → Ledger Nano → SDK → Safe App → web UI → Stax/Flex → Live App →
+  demos → formal → docs/ERC.
+- No audit gate (state "unaudited" plainly). Formal: invariant fuzz + symbolic proofs for both contracts +
+  machine-checked FIPS 204 equivalence of the verifier with open-source tools (plan to be proposed first).
+- Testing on local chains only before release (EIP-7825 cap enforced, deterministic deployer etched).
+- Docs: docs/fermion-wallet.md (FW-), docs/fermion-guard.md (FG-), docs/ledger-app.md (LA-),
+  docs/signer-requirements.md (SR-), docs/security.md, docs/release.md, docs/sdk.md, docs/nshield-signer.md,
+  docs/user-guide.md, the ERC draft, short readme.md. Fresh requirement IDs.
+
+### Coordinator clarifications (resolve conflicts in the log)
+- C1 (items 46/49/50): Fermion calls IPQVerifier restricted to ML-DSA ids, as above.
+- C2 (item 33): ERC-1271 is inbound only; Open Finding 1 is closed by the EOA rule.
+- C3 (items 17/25/26): the committed device model (ca48253) still REFUSES undecodable calls; the spec follows
+  items 25/26 (allow with warning). Updating the model is a phase-3 task — do not change the spec to match it.
+- C4 (items 47/48): ML-DSA-87 is contract-level only with no shipping signer in v2 (residual-risk table).
+- C5 (item 57 vs checker): phase 1 ADDS docs/*.md and extends check_requirements.py to accept both old and new
+  prefixes; the old docs and old tests are deleted TOGETHER in phase 2. check_doc_links.py scans docs/.
+  contracts/script/describe_spec.py is removed in phase 2 with the specs it describes.
+- C6 (item 14): the ERC specifies the hybrid signature encoding (ECDSA ‖ ML-DSA), digest/context rules and
+  ERC-1271 wrapping, and REFERENCES pq-verifier-interface for the verifier interface instead of re-specifying it.
+
+## Measured facts (cite these; do not retype from memory)
+| | ML-DSA-44 | ML-DSA-65 | ML-DSA-87 |
+|---|---|---|---|
+| pk / sig bytes | 1312 / 2420 | 1952 / 3309 | 2592 / 4627 |
+| verify, key registered (via interface) | 2.68M | 3.66M | 5.53M |
+| verify, from scratch | 5.75M | 9.13M | 14.23M |
+| one-tx wallet setup | 5.55M | 9.53M | 14.99M |
+| first transfer (stores A) | 5.90M | 9.56M | 16.30M (store A parts ahead) |
+| later transfer | 2.82M | 3.83M | 5.60M |
+| APDU chunks @255 B: sig / pk | 10 / 6 | 13 / 8 | 19 / 11 |
+- Per-tx cap EIP-7825 = 16,777,216 (2^24, live since Fusaka 2025-12-03); mainnet block gas 60M (2026-10-07).
+  Glamsterdam (Q4 2026) reprices gas — re-measure after.
+- Ledger (Speculos): keygen+sign peak 10,092 B (mldsa_optimization), same for 44/65; Nano S Plus 6.6 KB spare;
+  Nano X fits only without XMSS + heap 2048. No side-channel hardening documented in Ledger's SDK.
+- Pins: mldsa-solidity (v1.0.0 pending), pq-verifier-interface 6efa8e3, xmss-solidity (v1.1.0 pending),
+  OpenZeppelin acd4ff74, Safe smart-account dc437e8f, forge-std v1.16.2, solc 0.8.37 via_ir.
+
+# Decision log (chronological; superseded entries kept for history)
 
 ## Keys (device)
 - secp256k1: BIP-32, unchanged path (as today's ECDSA half).
