@@ -91,6 +91,11 @@ later entries supersede earlier ones, and several were reversed (monorepo 42→4
   contracts/script/describe_spec.py is removed in phase 2 with the specs it describes.
 - C6 (item 14): the ERC specifies the hybrid signature encoding (ECDSA ‖ ML-DSA), digest/context rules and
   ERC-1271 wrapping, and REFERENCES pq-verifier-interface for the verifier interface instead of re-specifying it.
+- C7 (MultiSend vs "delegatecall always refused"): Safe batches run as a DELEGATECALL to MultiSendCallOnly.
+  Rule: delegatecall is refused EXCEPT to the canonical MultiSendCallOnly deployment (address pinned per Safe
+  version, as the XMSS-era guard did); every leg must be a CALL and is decoded and checked under the same rules
+  as a single transaction (device shows every leg). Module transactions get no such exception. Applies to the
+  Guard, the device and the Fermion Wallet owner path alike; covers emergency-removal rescue batches.
 
 ## Measured facts (cite these; do not retype from memory)
 | | ML-DSA-44 | ML-DSA-65 | ML-DSA-87 |
