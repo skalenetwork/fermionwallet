@@ -83,7 +83,7 @@ later entries supersede earlier ones, and several were reversed (monorepo 42→4
 ### Coordinator clarifications (resolve conflicts in the log)
 - C1 (items 46/49/50): Fermion calls IPQVerifier restricted to ML-DSA ids, as above.
 - C2 (item 33): ERC-1271 is inbound only; Open Finding 1 is closed by the EOA rule.
-- C3 (items 17/25/26): the committed device model (ca48253) still REFUSES undecodable calls; the spec follows
+- C3 (items 17/25/26): the committed device model (aa55132; ca48253 before the history rewrite) still REFUSES undecodable calls; the spec follows
   items 25/26 (allow with warning). Updating the model is a phase-3 task — do not change the spec to match it.
 - C4 (items 47/48): ML-DSA-87 is contract-level only with no shipping signer in v2 (residual-risk table).
 - C5 (item 57 vs checker): phase 1 ADDS docs/*.md and extends check_requirements.py to accept both old and new
@@ -96,6 +96,14 @@ later entries supersede earlier ones, and several were reversed (monorepo 42→4
   version, as the XMSS-era guard did); every leg must be a CALL and is decoded and checked under the same rules
   as a single transaction (device shows every leg). Module transactions get no such exception. Applies to the
   Guard, the device and the Fermion Wallet owner path alike; covers emergency-removal rescue batches.
+- C8 (log "Product roles" omitted from CURRENT STATE): Fermion Guard keeps the GATED FALLBACK HANDLER: the Safe's
+  own ERC-1271 answers (Permit2, CoW, SIWE) are given only for messages the Quantum Administrator approved on the
+  device, so off-chain signatures cannot bypass the guard. The device therefore needs a Safe-message approval flow.
+- C9 (calls by the Safe to itself): only the named Safe admin functions are allowed (own screen); any other
+  self-call is REFUSED before any screen (takeover vector), even though undecodable external calls are allowed
+  with a warning (items 25/26 relaxed external calls only).
+- Note: commit hashes in the log from before 2026-10-07's history rewrite (contributor-trailer removal) no longer
+  exist on GitHub; old→new mapping is in the local backup refs.
 
 ## Measured facts (cite these; do not retype from memory)
 | | ML-DSA-44 | ML-DSA-65 | ML-DSA-87 |
